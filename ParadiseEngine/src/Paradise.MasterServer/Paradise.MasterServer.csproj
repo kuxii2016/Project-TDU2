@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Paradise.MasterServer</RootNamespace>
+    <AssemblyName>Paradise.MasterServer</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Paradise.Core\Paradise.Core.csproj" />
+  </ItemGroup>
+
+</Project>

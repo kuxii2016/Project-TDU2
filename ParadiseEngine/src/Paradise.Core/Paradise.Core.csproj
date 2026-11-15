@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Paradise.Core</RootNamespace>
+    <AssemblyName>Paradise.Core</AssemblyName>
+    <!-- Wie im Unity-Projekt: Maus/Texteingabe der Flash-Oberflächen (VmfPlayer) über FlashInput -->
+    <DefineConstants>$(DefineConstants);ENABLE_LEGACY_INPUT_MANAGER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepuPhysics" />
+    <PackageReference Include="Silk.NET.Vulkan" />
+    <PackageReference Include="Silk.NET.Vulkan.Extensions.KHR" />
+    <PackageReference Include="Silk.NET.Shaderc" />
+    <PackageReference Include="Silk.NET.Shaderc.Native" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bekannte Bigfile-Pfade (9.905 Einträge): nötig, um gepackte Installationen ohne lose Dateien
+         verzeichnisweise aufzulisten (die .map speichert nur Hashes). -->
+    <EmbeddedResource Include="Files\bigfile-names.tsv" LogicalName="Paradise.Core.Files.bigfile-names.tsv" />
+  </ItemGroup>
+
+</Project>

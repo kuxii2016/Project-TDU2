@@ -1,0 +1,35 @@
+<Window x:Class="Paradise.Launcher.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Einstellungen" Height="240" Width="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" Background="#1b1d22">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Text="Master-URL:" Foreground="#e6e6e6" VerticalAlignment="Center" Margin="0,6"/>
+        <TextBox x:Name="MasterBox" Grid.Column="1" Grid.ColumnSpan="2" Margin="8,6" VerticalAlignment="Center"/>
+
+        <TextBlock Text="Spielername:" Grid.Row="1" Foreground="#e6e6e6" VerticalAlignment="Center" Margin="0,6"/>
+        <TextBox x:Name="NameBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="8,6" VerticalAlignment="Center"/>
+
+        <TextBlock Text="Spiel-exe:" Grid.Row="2" Foreground="#e6e6e6" VerticalAlignment="Center" Margin="0,6"/>
+        <TextBox x:Name="ExeBox" Grid.Row="2" Grid.Column="1" Margin="8,6" VerticalAlignment="Center"/>
+        <Button Content="…" Grid.Row="2" Grid.Column="2" Width="32" Margin="0,6" Click="OnBrowse"/>
+
+        <StackPanel Grid.Row="4" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Abbrechen" Padding="14,6" Margin="0,0,8,0" Click="OnCancel"/>
+            <Button Content="Speichern" Padding="14,6" FontWeight="Bold" Click="OnSave"/>
+        </StackPanel>
+    </Grid>
+</Window>

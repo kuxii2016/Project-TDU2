@@ -1,0 +1,53 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.Core", "src\Paradise.Core\Paradise.Core.csproj", "{C74CE135-7911-4B73-880A-7FE52FE9EC39}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.Game", "src\Paradise.Game\Paradise.Game.csproj", "{04146A72-2077-47AA-9163-44278F86EC5F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.Launcher", "src\Paradise.Launcher\Paradise.Launcher.csproj", "{4FC8827B-6C97-431C-80CA-161AF457B749}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.MasterServer", "src\Paradise.MasterServer\Paradise.MasterServer.csproj", "{5DADEA4A-9032-4A80-9F0D-CD8AB3412437}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TDU2Server", "..\Server\TDU2Server.csproj", "{2AE16DA4-9259-FC56-61F1-077C4536C08D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C74CE135-7911-4B73-880A-7FE52FE9EC39}.Debug|x64.ActiveCfg = Debug|x64
+		{C74CE135-7911-4B73-880A-7FE52FE9EC39}.Debug|x64.Build.0 = Debug|x64
+		{C74CE135-7911-4B73-880A-7FE52FE9EC39}.Release|x64.ActiveCfg = Release|x64
+		{C74CE135-7911-4B73-880A-7FE52FE9EC39}.Release|x64.Build.0 = Release|x64
+		{04146A72-2077-47AA-9163-44278F86EC5F}.Debug|x64.ActiveCfg = Debug|x64
+		{04146A72-2077-47AA-9163-44278F86EC5F}.Debug|x64.Build.0 = Debug|x64
+		{04146A72-2077-47AA-9163-44278F86EC5F}.Release|x64.ActiveCfg = Release|x64
+		{04146A72-2077-47AA-9163-44278F86EC5F}.Release|x64.Build.0 = Release|x64
+		{4FC8827B-6C97-431C-80CA-161AF457B749}.Debug|x64.ActiveCfg = Debug|x64
+		{4FC8827B-6C97-431C-80CA-161AF457B749}.Debug|x64.Build.0 = Debug|x64
+		{4FC8827B-6C97-431C-80CA-161AF457B749}.Release|x64.ActiveCfg = Release|x64
+		{4FC8827B-6C97-431C-80CA-161AF457B749}.Release|x64.Build.0 = Release|x64
+		{5DADEA4A-9032-4A80-9F0D-CD8AB3412437}.Debug|x64.ActiveCfg = Debug|x64
+		{5DADEA4A-9032-4A80-9F0D-CD8AB3412437}.Debug|x64.Build.0 = Debug|x64
+		{5DADEA4A-9032-4A80-9F0D-CD8AB3412437}.Release|x64.ActiveCfg = Release|x64
+		{5DADEA4A-9032-4A80-9F0D-CD8AB3412437}.Release|x64.Build.0 = Release|x64
+		{2AE16DA4-9259-FC56-61F1-077C4536C08D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2AE16DA4-9259-FC56-61F1-077C4536C08D}.Debug|x64.Build.0 = Debug|Any CPU
+		{2AE16DA4-9259-FC56-61F1-077C4536C08D}.Release|x64.ActiveCfg = Release|Any CPU
+		{2AE16DA4-9259-FC56-61F1-077C4536C08D}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {39718695-3A10-448E-A105-A64E30E69B77}
+	EndGlobalSection
+EndGlobal

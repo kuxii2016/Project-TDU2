@@ -1,0 +1,29 @@
+{
+  "tcpPort": 7777,
+  "udpPort": 7778,
+  "dataDir": "data",
+  "starterCars": [
+    "Delta_Integrale_Evo_2",
+    "Mustang_Fastback_68",
+    "Esprit_S3"
+  ],
+  "startSpot": "ESTOL_B",
+  "startIsland": "ibiza",
+  "startMoney": 25000,
+  "maxPlayers": 64,
+  "motd": "Willkommen auf dem TDU2-Server",
+  "webEnabled": true,
+  "webHost": "0.0.0.0",
+  "webPort": 8080,
+  "masterEnabled": true,
+  "masterUrl": "http://localhost:8080",
+  "masterId": "",
+  "masterName": "Mein TDU2-Server",
+  "masterHost": "",
+  "masterPort": 0,
+  "masterModMessage": "",
+  "masterVersion": "TDU2MapUnity",
+  "masterLocked": false,
+  "masterHeartbeatMs": 10000,
+  "masterRetryMs": 15000
+}

@@ -1,0 +1,22 @@
+<Project>
+
+  <!-- Zentrale Paketversionen (Central Package Management).
+       Alle Projekte verweisen nur auf <PackageReference Include="..."/> ohne Version. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Physik: reines C#, keine native DLL -> passt zur Ein-Datei-exe -->
+    <PackageVersion Include="BepuPhysics" Version="2.5.0-beta.27" />
+
+    <!-- Vulkan-Bindings: managed, braucht nur vulkan-1.dll aus dem Grafiktreiber -->
+    <PackageVersion Include="Silk.NET.Vulkan" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.22.0" />
+
+    <!-- Shader-Compiler (GLSL->SPIR-V) zur Laufzeit; Native-Paket wird in die exe eingebettet -->
+    <PackageVersion Include="Silk.NET.Shaderc" Version="2.22.0" />
+    <PackageVersion Include="Silk.NET.Shaderc.Native" Version="2.22.0" />
+  </ItemGroup>
+
+</Project>

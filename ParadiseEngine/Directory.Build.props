@@ -1,0 +1,47 @@
+<Project>
+
+  <!--
+    Gemeinsame Einstellungen für alle Projekte der Paradise Engine.
+    Hier zentral gepflegt, damit Core, Game, Launcher und MasterServer
+    nicht auseinanderdriften.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+
+    <Company>KuxiiSoft</Company>
+    <Product>Paradise Engine</Product>
+    <RootNamespacePrefix>Paradise</RootNamespacePrefix>
+    <Version>0.1.0</Version>
+
+    <!-- Für lesbare Crash-Reports: vollständige Debug-Infos auch im Release.
+         Die .pdb bleibt bei dir; sie wird NICHT mit der exe ausgeliefert. -->
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <!--
+    Eine-Datei-exe: beim 'dotnet publish' wird alles in eine .exe gepackt.
+    Trimming bleibt AUS, weil es mit Reflection und Obfuscation Probleme macht.
+    Native Abhängigkeiten (falls je welche) werden mit eingebettet.
+  -->
+  <PropertyGroup Condition="'$(PublishSingleFileProfile)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Alles (auch native DLLs wie shaderc_shared) in das Extraktionsverzeichnis
+         entpacken. Sonst findet Silk.NET.Shaderc seine Native nicht und die exe
+         crasht beim Pipeline-Build (FileNotFound). Bleibt EINE verteilbare .exe. -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

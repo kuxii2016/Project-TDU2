@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Paradise.Game</RootNamespace>
+    <AssemblyName>Test Drive Unlimited 2</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe-/App-Icon (Explorer, Verknüpfung, Fenster). game.ico liegt im Hauptordner. -->
+    <ApplicationIcon Condition="Exists('..\..\game.ico')">..\..\game.ico</ApplicationIcon>
+    <Copyright>(C) 2026 by KuxiiSoft</Copyright>
+    <Title>Test Drive Unlimited 2 Custom Engine</Title>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Paradise.Core\Paradise.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Speicherbereinigung: Streaming erzeugt viel Müll im Large Object Heap (Bänke, Netze). Standard-GC räumt den erst bei
+       seltenen Gen2-Läufen und gibt kaum Speicher zurück (Prozess wuchs auf > 7 GB). ConserveMemory: öfter Gen2 + LOH verdichten. -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+    <RuntimeHostConfigurationOption Include="System.GC.RetainVM" Value="false" />
+  </ItemGroup>
+
+  <!-- Start-Logo (GAME_MODE_BOOTMENU) in die exe einbetten: ParadiseEngine\startup.png -->
+  <ItemGroup Condition="Exists('..\..\startup.png')">
+    <EmbeddedResource Include="..\..\startup.png" LogicalName="startup.png" />
+  </ItemGroup>
+
+  <!-- game.ico (liegt im ParadiseEngine-Hauptordner) als Fallback neben die exe. -->
+  <ItemGroup Condition="Exists('..\..\game.ico')">
+    <None Include="..\..\game.ico" Link="game.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
