@@ -49,6 +49,9 @@ namespace Paradise.Core.Vehicles
 
         bool GraphReady => _graphNet != null && _buildTask == null && _roads.Count > 0;
 
+        /// <summary>Geladenes Straßennetz der Insel (null, solange es lädt) – auch für das Tunnellicht (World/TunnelLight).</summary>
+        public IaNetwork? Network => _graphNet;
+
         /// <summary>Straßennetz der Insel (Unity: Minimap.Network) im Hintergrund laden und als Graph aufbereiten.</summary>
         public void Bind(string? bnkDir, string? islandBank)
         {

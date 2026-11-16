@@ -304,11 +304,13 @@ namespace Paradise.Core.Vehicles
                 var vp = Current.VisualPose; vp.position.Y -= _terrainDrop; Current.VisualPose = vp;
             }
             Current.LateUpdate(dt);
-            _fx?.LateUpdate(dt, U.Rot(Camera.rotation, Vec.Right), U.Rot(Camera.rotation, Vec.Up));
+            _fx?.LateUpdate(dt, U.Rot(Camera.rotation, Vec.Right), U.Rot(Camera.rotation, Vec.Up), Camera.position);
             _lights?.Update(dt);
             // Unity TDU2Weather.UpdateCarDirt: Regen (Rain > 0,2) wäscht den Schmutz auf der Straße ab (DBCarDirtData)
             if (_dirt != null) _dirt.Raining = Paradise.Core.World.WorldWeather.Rain > 0.2f;
             _dirt?.Update(dt);
+            // Original 0x718140: Tunnelfaktor des Spielerautos (Abstand zum nächsten Tunnelende auf der Straße), Kamera im Umkreis von 100 m
+            Paradise.Core.World.TunnelLight.Update(dt, _minimap?.Gps.Network, ToGame(Current.VisualPose.position), ToGame(Camera.position));
             _gauges?.LateUpdate(dt);
             if (_hud != null) { _hud.ShowHud = ShowHud; _hud.LateUpdate(_r.Width, _r.Height); }
             if (_minimap != null)

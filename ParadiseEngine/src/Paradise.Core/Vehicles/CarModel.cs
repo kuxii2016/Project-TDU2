@@ -814,7 +814,6 @@ namespace Paradise.Core.Vehicles
             if (u == "BODY_MR" || u == "BODY_LR" || u.EndsWith("_MR") || u.EndsWith("_LR") || u.Contains("_LR_") || u.Contains("_MR_")) return true;
             if (u == "D_SBOX" || u == "D_SHADOW" || u == "D_HEADLIGHT" || u == "D_REVERSING" || u == "D_BREAKING") return true;
             if (u.StartsWith("D_WHEEL")) return true;                            // Hilfs-Zylinder (Radvolumen, verzerrt skaliert)
-            if (u.StartsWith("EXO_FX")) return true;                             // Auspuff-Effekte
             if (u == "BIKE_STAND") return true;                                  // Motorrad-Ständer: im Spiel eingeklappt
             if (u == "D_SPLANE") return true;
             return false;
@@ -826,7 +825,6 @@ namespace Paradise.Core.Vehicles
             string u = n.ToUpperInvariant();
             if (u.StartsWith("WLR_")) return true;
             if (u.Contains("SBOX") || u == "D_SHADOW" || u == "D_HEADLIGHT" || u == "D_REVERSING" || u == "D_BREAKING") return true;
-            if (u.StartsWith("EXO_FX")) return true;
             return false;
         }
 
@@ -842,6 +840,9 @@ namespace Paradise.Core.Vehicles
 
         /// <summary>Light flare points (FA_L = headlight, FA_B = brake light, FA_R = reverse light, FA_S = taillight, FA_W = turn signal): used only as anchors, without a mesh.</summary>
         static bool AnchorOnly(string n) => n.StartsWith("FA_", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Auspuff-Effektpunkte (exe 0x73d747: EXH_FX0..3, sonst EXO_FX0..3) – nur Lage, kein Mesh.</summary>
+        static bool ExhaustFxNode(string n) => n.StartsWith("EXH_FX", StringComparison.OrdinalIgnoreCase) || n.StartsWith("EXO_FX", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Headlight projection surface (“headlight”, headlightcaustics.2db): a quad approximately 9x11 m in size in front of the car,
@@ -1244,7 +1245,7 @@ namespace Paradise.Core.Vehicles
                 if (skip(name)) { skipped.Add(h.Offset); continue; }
                 var parent = h.ParentOffset != 0 && goByHie.TryGetValue(h.ParentOffset, out var pt) ? pt : root;
                 bool lampMesh = _traffic && AnchorOnly(name);
-                goByHie[h.Offset] = AddNode(cs, ins, parent, getTex, matCache, replace, tint, lampMesh || (!AnchorOnly(name) && !WheelPlaceholder(name)), interior);
+                goByHie[h.Offset] = AddNode(cs, ins, parent, getTex, matCache, replace, tint, lampMesh || (!AnchorOnly(name) && !WheelPlaceholder(name) && !ExhaustFxNode(name)), interior);
             }
         }
 

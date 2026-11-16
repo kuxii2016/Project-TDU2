@@ -37,6 +37,12 @@ public struct HeightmapInfo
     public float Radius;
     public int Tiles;          // 16
     public float Spacing;      // 3 / 24 / 384 m
+    /// <summary>
+    /// Kacheln (Tiles×Tiles, Index = Z-Kachel·Tiles + X-Kachel), die das Original nicht als Höhenraster zeichnet:
+    /// HMAP-Kachelsatz (24 Byte: 4 float LOD-Fehler, float Mittelhöhe, u32) mit Fehler −1. Dort liegt das Gelände als
+    /// Objekt "BLOCK" im Sektor (Tunnelportale; dessen Material wird wie TD_Ground mit der Sektortextur gezeichnet).
+    /// </summary>
+    public bool[]? HoleTiles;
 }
 
 /// <summary>
@@ -122,7 +128,7 @@ public sealed class Scene3DD
     private static HeightmapInfo ReadHmap(byte[] d, Chunk c)
     {
         int p = c.DataOffset;
-        return new HeightmapInfo
+        var info = new HeightmapInfo
         {
             Present = true,
             HalfSize = Bin.F32(d, p + 16),
@@ -130,6 +136,17 @@ public sealed class Scene3DD
             Tiles = (int)Bin.U32(d, p + 32),
             Spacing = Bin.F32(d, p + 44),
         };
+        // Kachelsätze ab +48 (je 24 Byte); LOD-Fehler < 0 = Loch-Kachel (Ibiza: 2–4 Kacheln je Tunnelsektor)
+        int t = info.Tiles, rec = p + 48;
+        if (t > 0 && t <= 64 && rec + t * t * 24 <= c.End)
+        {
+            bool any = false;
+            var holes = new bool[t * t];
+            for (int i = 0; i < t * t; i++)
+                if (Bin.F32(d, rec + i * 24) < 0f) { holes[i] = true; any = true; }
+            if (any) info.HoleTiles = holes;
+        }
+        return info;
     }
 
     public InsRecord GetIns(int offset)

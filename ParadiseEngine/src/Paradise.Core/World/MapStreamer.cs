@@ -14,7 +14,7 @@ namespace Paradise.Core.World;
 ///   LOD0 = Sektor-Banks (volles Terrain + Objekte + Spot-Exteriors)
 /// Statt GameObjects entstehen <see cref="Node"/>s (Mesh-Zeichenaufträge + RenderObjects).
 /// Koordinaten: Spielkoordinaten; Render-Raum = Spielkoordinaten * <see cref="RootMatrix"/> (Unity: _root.localPosition).
-/// Noch nicht portiert (folgen): Wasser, Vegetation/ObjectLibrary, WorldActors, Gras, TerrainHoles, Wetter/Licht.
+/// Noch nicht portiert (folgen): Wasser, Vegetation/ObjectLibrary, WorldActors, Gras, Wetter/Licht.
 /// </summary>
 public sealed class MapStreamer : IDisposable
 {
@@ -34,12 +34,8 @@ public sealed class MapStreamer : IDisposable
     public bool LoadWorldActors = true;
     public bool LoadSpotExteriors = true;
     public float VegetationDistance = 1100f;   // Unity: 1000
+    /// <summary>Tunnelportale: HMAP-Loch-Kacheln auslassen und das Sektormodell BLOCK als Gelände zeichnen (wie das Original).</summary>
     public bool CutTunnelPortals = true;
-    /// <summary>Tunnel-Schnittzellen ohne Boden darunter zurücknehmen (C++ PruneUncoveredCarveCells).</summary>
-    public bool PruneTunnelCells = true;
-    /// <summary>Auch die Fahr-Maske beschneiden. Standard false: sonst stehen Bergwände in der Röhre (siehe PruneUncoveredCells).</summary>
-    public bool PruneDriveMask = false;
-    public bool CutTerrainUnderGround = false;   // Unity: true – schnitt an Felskanten Löcher ins Gelände (Test 09.11.)
     public bool ShowSignText = true;
     public bool ShowWater = true;
     /// <summary>Wolkenkuppel des Originals (fx/clouds.bnk, World/TDU2Clouds).</summary>
@@ -101,11 +97,9 @@ public sealed class MapStreamer : IDisposable
         public double LoadMs;
         public BankModel Model = null!;
         public MeshData? Terrain;
-        // Kollisionsnetz des Geländes: wie Terrain, aber mit der Fahr-Maske der Tunnel (driveHoles) –
-        // an flachen Tunneln muss das Gelände über der Fahrbahn mit verschwinden, sonst steht dort eine
-        // unsichtbare Wand (Unity: TerrainCollider aus TerrainHoles.Compute). null = wie Terrain.
-        public MeshData? TerrainCollider;
-        // Fahr-Maske der Tunnel (Zellen [z * cells + x]): dort liefert TryGetGroundHeight keine Höhe mehr.
+        // Skirt-Stücke (Engine-Zusatz zum LOD1, siehe TerrainMeshBuilder.BuildSectorSkirts) – nicht in der Kollision
+        public List<(MeshData Mesh, Vector2 Probe)>? Skirts;
+        // Loch-Kacheln des HMAP als Zellen [z * cells + x]: dort liefert TryGetGroundHeight keine Rasterhöhe (BLOCK gilt).
         public bool[]? DriveHoles;
         public PowerWires.PenFile? Pen;
         public List<(Spot spot, BankModel model)> Exteriors = new();
@@ -139,9 +133,10 @@ public sealed class MapStreamer : IDisposable
         public PowerWires.SectorWires? Wires;
         public readonly List<StaticCollider> Colliders = new();
         public SectorPayload? Data;
-        // Fahr-Maske der Tunnel (Raster [z * cells + x], cells = Heights.Size - 1): Zellen, deren
-        // Gelände für die Durchfahrt weggeschnitten ist (Kollision + Rückfall-Bodenhöhe).
+        // Loch-Kacheln des HMAP (Raster [z * cells + x], cells = Heights.Size - 1): Rückfall-Bodenhöhe meidet sie.
         public bool[]? DriveHoles;
+        // Skirt-Stücke mit Probe-Punkt (Welt) jenseits der Kante: aus, solange dort ein LOD0-Sektor steht
+        public readonly List<(Node Node, Vector3 Probe)> Skirts = new();
         public float WireWait;
         public double WireNextTry;
     }
@@ -736,13 +731,11 @@ public sealed class MapStreamer : IDisposable
         bool objs = LoadSectorObjects, place = LoadVegetation || LoadOtherPlacements || LoadActors || LoadWorldActors, grass = LoadGrass;
         float skirt = SectorSkirt;
         bool cutTunnels = CutTunnelPortals && objs;
-        bool cutGround = CutTerrainUnderGround;
         bool wires = ShowPowerWires;
         var st = new SectorState { Key = k };
         var exteriors = LoadSpotExteriors ? SpotsInSector(k) : new List<(Spot, string)>();
         var tex = _textures;
         var origin = WorldLayout.SectorOrigin(k);
-        var neighborBanks = cutTunnels ? NeighborBankPaths(k, origin) : null;
         st.Task = Task.Run(() =>
         {
             var swl = System.Diagnostics.Stopwatch.StartNew();
@@ -751,73 +744,24 @@ public sealed class MapStreamer : IDisposable
             if (objs) { try { TextureAnimations.PrepareUva(model.Bank); } catch (Exception) { } }   // Textur-Animationen (.uva)
             // Sektortexturen global bekannt machen (Library-Objekte wie Felsen nutzen Texturen aus der Sektorbank)
             tex.IndexBank(model.Bank);
-            bool[]? holes = null, driveHoles = null;
-            if (cutTunnels && model.Heights != null)
+            bool[]? holes = null;
+            // Tunnelportale wie das Original: Loch-Kacheln aus dem HMAP (LOD-Fehler −1) werden nicht gezeichnet, an ihrer
+            // Stelle liegt das Sektormodell BLOCK (Gelände mit ausgespartem Portal), gleiches Material und gleiche Colormap.
+            if (cutTunnels && model.Heights != null && model.TerrainScene?.Heightmap.HoleTiles is { } holeTiles)
+                holes = TerrainMeshBuilder.HoleCells(model.Heights, model.TerrainScene.Heightmap.Tiles, holeTiles);
+            var terrain = model.Heights != null ? TerrainMeshBuilder.BuildSector(model.Heights, holes) : null;
+            if (terrain != null && holes != null && model.Objects != null)
             {
-                try
-                {
-                    List<Vector3>? extra = null;
-                    int extraTris = 0;
-                    if (neighborBanks != null)
-                        foreach (var (nbPath, off) in neighborBanks)
-                        {
-                            var t = TunnelTriangles.Get(nbPath);
-                            if (t.Length == 0) continue;
-                            extra ??= new List<Vector3>();
-                            for (int i = 0; i < t.Length; i++) extra.Add(t[i] + off);
-                            extraTris += t.Length / 3;
-                        }
-                    holes = TerrainHoles.Compute(model.Heights, model.AllObjectSets(), extra, out driveHoles);
-                    if (holes != null)
-                    {
-                        int hc = model.Heights.Size - 1, n = 0;
-                        for (int i = 0; i < holes.Length; i++) if (holes[i]) n++;
-                        if (n > 0) Log.Debug($"CutTunnel {k}: {n} Zellen, Nachbar-Dreiecke={extraTris}");
-                    }
-                    // PruneUncoveredCarveCells (C++): eine Schnittzelle ohne Boden darunter ist ein Loch – man sieht
-                    // hindurch. Solche Zellen behalten ihr Gelände (vorheriger Zustand). Gilt nur für die SICHT-Maske:
-                    // die Fahr-Maske ist die Obermenge des Tunnelquerschnitts, aus ihr entsteht das Kollisionsnetz und
-                    // die Bodenhöhen-Sperre. Wird sie mit beschnitten, steht das Berggelände wieder mitten in der Röhre
-                    // (gemessen 6–8 m hohe Wände in 6 von 15 Ibiza-Tunnelsektoren) und das Auto kommt nicht durch.
-                    // Läuft VOR der Boden-Abdeckung, damit deren Zellen nicht mit weggeräumt werden.
-                    if (PruneTunnelCells && holes != null)
-                    {
-                        var (pv, pd) = TerrainHoles.PruneUncoveredCells(model.Heights, model.AllObjectSets(), extra, holes, PruneDriveMask ? driveHoles : null);
-                        if (pv != 0 || pd != 0)
-                            Log.Debug($"CutTunnel {k}: {pv} Sicht-/{pd} Fahr-Zellen ohne Boden behalten Gelände");
-                    }
-                }
-                catch (Exception ex) { model.Log.Add("TerrainHoles: " + ex.Message); Log.Warn($"TerrainHoles {k}: {ex}"); }
+                int bt = TerrainMeshBuilder.AppendTerrainBlock(terrain, model.Objects, model.Heights!);
+                if (bt == 0) Log.Warn($"Sektor {k}: Loch-Kacheln ohne BLOCK-Gelände");
             }
-            // Gelände unter Straßen/Gehwegen/Plätzen (City-Mesh) nicht darstellen – sonst schauen Erdflecken durch den Boden.
-            if (objs && cutGround && model.Heights != null)
-            {
-                try
-                {
-                    var cover = TerrainHoles.ComputeGroundCover(model.Heights, model.AllObjectSets(), out int coverN);
-                    if (cover != null)
-                    {
-                        driveHoles ??= holes != null ? (bool[])holes.Clone() : new bool[cover.Length];
-                        if (holes == null) holes = cover;
-                        else for (int ci = 0; ci < cover.Length; ci++) holes[ci] |= cover[ci];
-                    }
-                }
-                catch (Exception ex) { model.Log.Add("GroundCover: " + ex.Message); }
-            }
-            var terrain = model.Heights != null ? TerrainMeshBuilder.BuildSector(model.Heights, skirt, holes) : null;
-            // Kollisionsnetz aus der Fahr-Maske (Unity: terrainCollider). Die Sicht-Maske lässt bei tiefen
-            // Tunneln das Bergdach stehen; die Fahr-Maske räumt bei flachen Tunneln zusätzlich das Gelände
-            // über der Fahrbahn weg – sonst blockiert die Höhenkarte die Durchfahrt (unsichtbare Wand am
-            // Portal). Nur bauen, wenn sie sich von der Sicht-Maske unterscheidet.
-            var terrainCollider = terrain;
-            if (model.Heights != null && driveHoles != null && !SameMask(holes, driveHoles))
-                terrainCollider = TerrainMeshBuilder.BuildSector(model.Heights, skirt, driveHoles);
+            var skirts = model.Heights != null ? TerrainMeshBuilder.BuildSectorSkirts(model.Heights, skirt, holes) : null;
             var payload = new SectorPayload
             {
                 Model = model,
                 Terrain = terrain,
-                TerrainCollider = terrainCollider,
-                DriveHoles = driveHoles,
+                Skirts = skirts,
+                DriveHoles = holes,
             };
             if (wires && model.Bank != null)
             {
@@ -1002,6 +946,25 @@ public sealed class MapStreamer : IDisposable
         foreach (var node in list) node.Active = Lod1Wanted(node, key);
     }
 
+    /// <summary>
+    /// Sektor-Skirts nur zeigen, wo jenseits der Kante kein LOD0-Sektor steht (dort grenzt das gröbere LOD1 an).
+    /// Zwischen zwei LOD0-Sektoren sind die Kanten höhengleich (geprüft) – ein Skirt hinge sonst z. B. in Tunnel
+    /// unter Sektorgrenzen (Ibiza Straße 869/907).
+    /// </summary>
+    void UpdateSkirts()
+    {
+        foreach (var st in _sectors.Values)
+        {
+            if (!st.Built && st.Skirts.Count == 0) continue;
+            foreach (var (node, probe) in st.Skirts)
+            {
+                var nk = WorldLayout.SectorAt(probe.X, probe.Z);
+                bool lod0 = !nk.Equals(st.Key) && _sectors.TryGetValue(nk, out var ns) && ns.Built;
+                node.Active = !lod0;
+            }
+        }
+    }
+
     void BuildSector(SectorState st, SectorPayload data)
     {
         st.Model = data.Model;
@@ -1026,6 +989,14 @@ public sealed class MapStreamer : IDisposable
             var mat = MaterialFactory.CreateTerrainMaterial(color, splat, d1, d2, DetailTiling, DetailStrength);
             st.Res.Owned.Add(mat);
             st.Nodes.Add(CreateMeshNode("Terrain", origin, data.Terrain, mat, st.Res));
+            if (data.Skirts != null)
+                foreach (var (sm, probe) in data.Skirts)
+                {
+                    if (sm.SubMeshes[0].Count == 0) continue;
+                    var sn = CreateMeshNode("TerrainSkirt", origin, sm, mat, st.Res);
+                    st.Nodes.Add(sn);
+                    st.Skirts.Add((sn, origin + new Vector3(probe.X, 0f, probe.Y)));
+                }
         }
         tbs = Lap("Sektor bauen: Gelände", tbs);
 
@@ -1077,6 +1048,7 @@ public sealed class MapStreamer : IDisposable
             st.Wires = new PowerWires.SectorWires { Pen = data.Pen, Origin = WorldLayout.SectorOrigin(st.Key) };
         st.Built = true;
         SetLod1Visible(st.Key);
+        UpdateSkirts();
         TryAddVegetation(st);
         tbs = Lap("Sektor bauen: Vegetation/LOD", tbs);
         // Leitungen der Nachbarn, deren Masten hier stehen, neu auflösen
@@ -1085,33 +1057,6 @@ public sealed class MapStreamer : IDisposable
         TryAddActors(st);
         if (Physics != null) _colliderQueue.Enqueue(st);
         Lap("Sektor bauen: Akteure", tbs);
-    }
-
-    /// <summary>Zwei Höhenraster-Masken vergleichen (gleiche Länge, gleiche Zellen).</summary>
-    static bool SameMask(bool[]? a, bool[]? b)
-    {
-        if (ReferenceEquals(a, b)) return true;
-        if (a == null || b == null || a.Length != b.Length) return false;
-        for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
-        return true;
-    }
-
-    /// <summary>Kanten-Nachbarn eines Sektors (N/O/S/W) samt Versatz ihrer Bank-lokalen Koordinaten zu diesem Raster.</summary>
-    List<(string path, Vector3 offset)> NeighborBankPaths(SectorKey k, Vector3 origin)
-    {
-        var list = new List<(string, Vector3)>();
-        if (_index == null) return list;
-        float s = WorldLayout.SectorSize, half = s * 0.5f;
-        var ox = new float[4] { -1f, s + 1f, half, half };
-        var oz = new float[4] { half, half, -1f, s + 1f };
-        for (int i = 0; i < 4; i++)
-        {
-            var wk = WorldLayout.SectorAt(origin.X + ox[i], origin.Z + oz[i]);
-            if (wk.Equals(k)) continue;
-            if (!_index.SectorBanks.TryGetValue(wk, out var nbPath) || string.IsNullOrEmpty(nbPath)) continue;
-            list.Add((nbPath, WorldLayout.SectorOrigin(wk) - origin));
-        }
-        return list;
     }
 
     // ------------------------------------------------------------------ Library / Platzierungen / World Actors
@@ -1629,6 +1574,7 @@ public sealed class MapStreamer : IDisposable
         st.Model?.Release();
         foreach (var em in st.ExtraModels) em.Release();
         SetLod1Visible(k);
+        UpdateSkirts();
     }
 
     void UnloadArea(AreaKey k)
@@ -1690,7 +1636,7 @@ public sealed class MapStreamer : IDisposable
         int lodKeys = 0; foreach (var l in _lod1BySector.Values) lodKeys += l.Count;
         return $"Areas {_areas.Count}, Sektoren {_sectors.Count}, Knoten {nodes}, Objekte {objs}, Kollider der Kacheln {cols}, Kollider-Aufträge {ColliderJobs}, " +
                $"LOD1-Listen {_lod1BySector.Count}/{lodKeys}/{_lod1Keys.Count}, Texturen global {_textures?.LoadedCount ?? 0}/{_textures?.Count ?? 0}, " +
-               $"Bibliothek {_library?.BuiltCount ?? 0}, Kollisionsnetze Bibliothek {_libColl.Count}, Tunnel-Cache {TunnelTriangles.Count}, " +
+               $"Bibliothek {_library?.BuiltCount ?? 0}, Kollisionsnetze Bibliothek {_libColl.Count}, " +
                $"Textur-Animationen {TextureAnimations.ActiveCount}, Ampeln {TrafficLights.Count}, Material-Nachladen {MaterialFactory.PendingTextures}";
     }
 
@@ -1890,8 +1836,8 @@ public sealed class MapStreamer : IDisposable
             var st = _colliderQueue.Dequeue();
             if (!st.Built || !_sectors.TryGetValue(st.Key, out var cur) || !ReferenceEquals(cur, st)) { st.Data = null; continue; }
             var origin = WorldLayout.SectorOrigin(st.Key);
-            // Kollisionsnetz: die Fahr-Maske der Tunnel (driveHoles), sonst das sichtbare Gelände.
-            var terrain = st.Data?.TerrainCollider ?? st.Data?.Terrain;
+            // Kollisionsnetz = sichtbares Gelände (Raster ohne Loch-Kacheln + BLOCK), ohne Skirts
+            var terrain = st.Data?.Terrain;
             // Das sichtbare Gelände wird im Shader um TerrainLower abgesenkt (_TDU2TerrainLower) -> Kollider genauso tief,
             // sonst fahren die Räder auf Gelände ~10 cm über dem sichtbaren Boden
             var to = origin - new Vector3(0f, TerrainColliderLower, 0f);
@@ -2035,9 +1981,7 @@ public sealed class MapStreamer : IDisposable
         if (!_sectors.TryGetValue(k, out var st) || !st.Built || st.Model?.Heights == null) return false;
         var o = WorldLayout.SectorOrigin(k);
         var g = st.Model.Heights;
-        // Tunnel / Brücken: die Zellen der Fahr-Maske sind aus dem Gelände geschnitten (Kollisionsnetz
-        // TerrainCollider). Der Rückfall darf dort nicht die Berg-Oberfläche über der Röhre liefern –
-        // sonst stehen die Räder im Tunnel auf dem Bergdach und das Auto springt (ParadiseEngine).
+        // Loch-Kacheln (Tunnelportale): dort gilt BLOCK statt des Rasters – keine Rasterhöhe liefern.
         if (st.DriveHoles != null)
         {
             int cells = g.Size - 1;

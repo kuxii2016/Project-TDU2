@@ -153,8 +153,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _shadowOnly = new();
     private int _cShadow;
 
-    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning }
-    private const int PipeCount = 32;
+    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning }
+    private const int PipeCount = 33;
 
     // ------------------------------------------------------------------ Zustand
     private readonly bool _validation;
@@ -949,7 +949,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.SkyStars => PipeId.SkyStars,
         MaterialKind.SkyMoon => PipeId.SkyMoon,
         MaterialKind.Lightning => PipeId.Lightning,
-        MaterialKind.Particle => PipeId.Particle,
+        MaterialKind.Particle => mat.Additive ? PipeId.ParticleAdd : PipeId.Particle,
         MaterialKind.Flare => PipeId.Flare,
         MaterialKind.MapTerrain => PipeId.MapTerrain,
         MaterialKind.MapRoad => PipeId.MapRoad,
@@ -2133,6 +2133,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             case MaterialKind.Cloud:
                 SetVec(f, 0, d.CloudWeight, 0f, 0f, 0f);
                 break;
+            case MaterialKind.Particle:
+                SetVec(f, 0, d.Lit, 0f, 0f, 0f);   // td_particle: 1 = VS mit __AmbLight_Ambient_0 / __DirLight_Diffuse_0
+                break;
             case MaterialKind.MapTerrain:
                 SetVec(f, 0, col.X, col.Y, col.Z, col.W);
                 SetVec(f, 1, d.Brightness, d.Relief, 0, 0);
@@ -2174,7 +2177,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.UpdateDescriptorSets(_device, (uint)(n + 1), writes, 0, null);
 
         mat.Set = set;
-        mat.Additive = (d.Kind == MaterialKind.Transparent || d.Kind == MaterialKind.SpriteGlow) && d.Additive;
+        mat.Additive = (d.Kind == MaterialKind.Transparent || d.Kind == MaterialKind.SpriteGlow || d.Kind == MaterialKind.Particle) && d.Additive;
         mat.WaterSort = d.Kind == MaterialKind.Water && d.Ocean ? (d.OceanLevel >= 2 ? float.MaxValue : d.OceanLevel == 1 ? 3e38f : 2e38f) : float.MaxValue;
     }
 
@@ -2562,7 +2565,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreatePipeline(c, PipeId.SkyStars, GameShaders.SkyStarsVert, GameShaders.SkyStarsFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.SkyMoon, GameShaders.MoonVert, GameShaders.MoonFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.Lightning, GameShaders.FxVert, GameShaders.LightningFrag, _objectSetLayout, true, blend: 2);   // TD_Lightning: SRCALPHA/ONE
-        CreatePipeline(c, PipeId.Particle, GameShaders.FxVert, GameShaders.ParticleFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.Particle, GameShaders.FxVert, GameShaders.TdParticleFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.ParticleAdd, GameShaders.FxVert, GameShaders.TdParticleFrag, _objectSetLayout, true, blend: 2);   // .2DM SrcAlpha/One
         CreatePipeline(c, PipeId.Flare, GameShaders.FxVert, GameShaders.FlareFrag, _objectSetLayout, true, blend: 6);
     }
 

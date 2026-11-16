@@ -49,8 +49,18 @@ public static class TerrainMeshBuilder
                     if (hx < hc && hz < hc && holes[hz * hc + hx]) continue;
                 }
                 int v00 = j * vx + i, v10 = v00 + 1, v01 = v00 + vx, v11 = v01 + 1;
-                tris.Add(v00); tris.Add(v01); tris.Add(v10);
-                tris.Add(v10); tris.Add(v01); tris.Add(v11);
+                if (((x0 + i + z0 + j) & 1) == 0)
+                {
+                    // Diagonale wie das Original (aus BLOCK abgelesen, alle Ibiza-Sektoren mit BLOCK):
+                    // (x+z) gerade -> (0,0)-(1,1), ungerade -> (1,0)-(0,1)
+                    tris.Add(v00); tris.Add(v01); tris.Add(v11);
+                    tris.Add(v00); tris.Add(v11); tris.Add(v10);
+                }
+                else
+                {
+                    tris.Add(v00); tris.Add(v01); tris.Add(v10);
+                    tris.Add(v10); tris.Add(v01); tris.Add(v11);
+                }
             }
 
         if (skirt > 0f)
@@ -118,11 +128,138 @@ public static class TerrainMeshBuilder
         _ => k * vx + (vx - 1),
     };
 
-    /// <summary>LOD0: kompletter Sektor.</summary>
-    public static MeshData BuildSector(HeightGrid g, float skirt, bool[]? holes = null)
+    /// <summary>
+    /// Zellmaske ((Size−1)²) aus den HMAP-Loch-Kacheln (Tiles×Tiles, Index = Z·Tiles + X): das Original zeichnet diese
+    /// Kacheln nicht als Höhenraster (LOD-Fehler −1), dort liegt das Sektormodell BLOCK.
+    /// </summary>
+    public static bool[] HoleCells(HeightGrid g, int tiles, bool[] holeTiles)
+    {
+        int n = g.Size - 1, per = n / tiles;
+        var cells = new bool[n * n];
+        for (int tz = 0; tz < tiles; tz++)
+            for (int tx = 0; tx < tiles; tx++)
+            {
+                if (!holeTiles[tz * tiles + tx]) continue;
+                for (int z = tz * per; z < (tz + 1) * per; z++)
+                    for (int x = tx * per; x < (tx + 1) * per; x++) cells[z * n + x] = true;
+            }
+        return cells;
+    }
+
+    /// <summary>
+    /// Sektormodell BLOCK (Gelände an den Loch-Kacheln, Portalöffnung ausgespart) an das Sektorgelände anhängen.
+    /// Original (0xc50e74): dessen Material (Shaderset 0xa0a0a1a1a2a2a3a3) wird wie TD_Ground mit der Sektortextur
+    /// gezeichnet – die Vertices sind sektorlokal und decken sich an den Kachelrändern exakt mit dem Höhenraster
+    /// (geprüft sector-3-0-3-7: 485 von 569 Vertices auf Rasterpunkten mit gleicher Höhe). UV wie das Raster (Position/Extent).
+    /// Liefert die Zahl angehängter Dreiecke.
+    /// </summary>
+    public static int AppendTerrainBlock(MeshData terrain, ObjectSet objects, HeightGrid g)
+    {
+        var scene = objects.Scene;
+        if (scene == null || objects.Materials == null) return 0;
+        var tris = terrain.SubMeshes[0];
+        int added = 0;
+        var byOffset = new Dictionary<int, HieRecord>();
+        foreach (var h in scene.Hierarchy) byOffset[h.Offset] = h;
+        var leaves = new List<(InsRecord ins, Matrix4x4 m)>();
+        if (scene.Hierarchy.Count > 0) foreach (var h in scene.Hierarchy) leaves.Add((scene.GetIns(h.InsOffset), scene.WorldMatrix(h, byOffset)));
+        else foreach (var off in scene.InsOffsets) { var i = scene.GetIns(off); leaves.Add((i, i.Matrix)); }
+        foreach (var (ins, m) in leaves)
+        {
+            if (ins.Lods.Length == 0 || (ins.Key != ObjectBuilder.BlockKey && ins.Lods[0].ObjKey != ObjectBuilder.BlockKey)) continue;
+            if (!objects.Meshes.TryGetValue(ins.Lods[0].ObjKey, out var md) || md == null) continue;
+            var bank = scene.ReadMaterialBank(ins.MaterialBankOffset);
+            bool hasN = md.Normals.Count == md.Positions.Count;
+            for (int s = 0; s < md.SubMeshes.Count; s++)
+            {
+                int mi = md.SubMeshMaterialIndex[s];
+                ulong mk = mi >= 0 && mi < bank.Length ? bank[mi] : 0;
+                if (!objects.Materials.Materials.TryGetValue(mk, out var def) || def.ShaderSet != ObjectBuilder.TerrainBlockShader) continue;
+                var map = new Dictionary<int, int>();
+                foreach (int vi in md.SubMeshes[s])
+                {
+                    if (!map.TryGetValue(vi, out int ni))
+                    {
+                        ni = terrain.Positions.Count;
+                        map[vi] = ni;
+                        var p = Vector3.Transform(md.Positions[vi], m);
+                        terrain.Positions.Add(p);
+                        terrain.Normals.Add(hasN ? Vector3.Normalize(Vector3.TransformNormal(md.Normals[vi], m)) : Vector3.UnitY);
+                        terrain.UV0.Add(new Vector2(p.X / g.Extent, p.Z / g.Extent));
+                    }
+                    tris.Add(ni);
+                }
+                added += md.SubMeshes[s].Count / 3;
+            }
+        }
+        return added;
+    }
+
+    /// <summary>LOD0: kompletter Sektor, ohne Skirts (das Original hat keine; Kanten benachbarter Sektoren sind höhengleich).</summary>
+    public static MeshData BuildSector(HeightGrid g, bool[]? holes = null)
     {
         int n = g.Size - 1;
-        return BuildGrid(g, 0, 0, n, n, new Vector2(g.Extent, g.Extent), skirt, "SectorTerrain", holes);
+        return BuildGrid(g, 0, 0, n, n, new Vector2(g.Extent, g.Extent), 0f, "SectorTerrain", holes);
+    }
+
+    /// <summary>
+    /// Skirt-Stücke eines Sektors (Engine-Zusatz gegen Risse zum gröberen LOD1 – im Original nicht vorhanden): links, rechts
+    /// und je zwei Hälften unten/oben (die Nachbarreihe ist um einen halben Sektor versetzt). Probe = sektorlokaler Punkt
+    /// knapp jenseits der Kante; das Stück wird nur gezeigt, solange der Nachbarsektor dort nicht als LOD0 steht
+    /// (sonst hinge es z. B. in Tunnel unter Sektorgrenzen). Loch-Kacheln bekommen keinen Skirt.
+    /// </summary>
+    public static List<(MeshData Mesh, Vector2 Probe)> BuildSectorSkirts(HeightGrid g, float depth, bool[]? holes)
+    {
+        var list = new List<(MeshData, Vector2)>();
+        if (depth <= 0f) return list;
+        int n = g.Size - 1, h = n / 2;
+        float e = g.Extent, q = e * 0.25f;
+        list.Add((Skirt(g, depth, holes, Edge.Left, 0, n), new Vector2(-1f, e * 0.5f)));
+        list.Add((Skirt(g, depth, holes, Edge.Right, 0, n), new Vector2(e + 1f, e * 0.5f)));
+        list.Add((Skirt(g, depth, holes, Edge.Bottom, 0, h), new Vector2(q, -1f)));
+        list.Add((Skirt(g, depth, holes, Edge.Bottom, h, n), new Vector2(e - q, -1f)));
+        list.Add((Skirt(g, depth, holes, Edge.Top, 0, h), new Vector2(q, e + 1f)));
+        list.Add((Skirt(g, depth, holes, Edge.Top, h, n), new Vector2(e - q, e + 1f)));
+        return list;
+    }
+
+    /// <summary>Ein Skirt-Band entlang einer Rasterkante, Vertices k0..k1 (eigene Vertices, beidseitig).</summary>
+    private static MeshData Skirt(HeightGrid g, float depth, bool[]? holes, Edge edge, int k0, int k1)
+    {
+        var md = new MeshData { Name = "SectorSkirt" };
+        var tris = new List<int>();
+        int n = g.Size - 1;
+        float sp = g.Spacing, ext = g.Extent;
+        for (int k = k0; k <= k1; k++)
+        {
+            var (gx, gz) = edge switch
+            {
+                Edge.Bottom => (k, 0), Edge.Top => (k, n), Edge.Left => (0, k), _ => (n, k),
+            };
+            float y = g.Get(gx, gz);
+            var nrm = g.NormalAt(gx, gz);
+            var uv = new Vector2(gx * sp / ext, gz * sp / ext);
+            md.Positions.Add(new Vector3(gx * sp, y, gz * sp)); md.Normals.Add(nrm); md.UV0.Add(uv);
+            md.Positions.Add(new Vector3(gx * sp, y - depth, gz * sp)); md.Normals.Add(nrm); md.UV0.Add(uv);
+        }
+        for (int k = k0; k < k1; k++)
+        {
+            var (cx, cz) = edge switch
+            {
+                Edge.Bottom => (k, 0), Edge.Top => (k, n - 1), Edge.Left => (0, k), _ => (n - 1, k),
+            };
+            if (holes != null && holes[cz * n + cx]) continue;   // Loch-Kachel: dort liegt BLOCK
+            int a = (k - k0) * 2, c = a + 1, b = a + 2, d = a + 3;
+            tris.Add(a); tris.Add(b); tris.Add(c);
+            tris.Add(b); tris.Add(d); tris.Add(c);
+            tris.Add(a); tris.Add(c); tris.Add(b);
+            tris.Add(b); tris.Add(c); tris.Add(d);
+        }
+        md.SubMeshes.Add(tris);
+        md.SubMeshMaterialIndex.Add(0);
+        md.SubMeshIsSprite.Add(false);
+        md.SubMeshUvSets.Add(1);
+        return md;
     }
 
     /// <summary>LOD1: zerlegt ein Area-Raster (257², 24 m) in Sektor-Footprints (32×32 Zellen, ungerade Reihen um 16 Zellen versetzt).</summary>

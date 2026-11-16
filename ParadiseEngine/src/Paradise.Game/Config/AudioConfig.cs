@@ -17,11 +17,11 @@ public sealed class AudioConfig
     /// <summary>Fahrzeug (Motor, Reifen, Hupe …) – Unity TDU2VehicleManager.Volume.</summary>
     public float Vehicle { get; set; } = 0.34f;
     /// <summary>Reifenquietschen (Faktor auf den Fahrzeugsound).</summary>
-    public float TireSqueal { get; set; } = 0.25f;
+    public float TireSqueal { get; set; } = 0.3f;
     /// <summary>Schaltgeräusche (Faktor auf den Fahrzeugsound).</summary>
-    public float GearShift { get; set; } = 0.25f;
+    public float GearShift { get; set; } = 0.3f;
     /// <summary>Umgebungsgeräusche der Insel (ambiences.xmb: Stadt, Meer, Wald …, Regen) – Core/Audio/TDU2Ambience.</summary>
-    public float Ambience { get; set; } = 0.45f;
+    public float Ambience { get; set; } = 0.25f;
 
     // ---------------- Autoradio (Unity TDU2Radio: Inspektor-Werte; Sender/Lautstärke gelten nur für die Sitzung)
     /// <summary>Sender beim Start: off, hariba, kalua (eigene MP3 in SharedAssets/Radio), roadtrack.</summary>

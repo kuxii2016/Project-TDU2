@@ -43,6 +43,12 @@ namespace Paradise.Core.Formats
         public int LanesBack, LanesFwd;
         public int NameOffset;
         public float Length;
+        /// <summary>
+        /// Straßenart (Byte 17 des Abschnitts; exe liest sie in 0x5f10f0 als [Abschnitt+0x11]): 6 = Tunnel (0x5ee6e0: Typ == 6),
+        /// Namen in der exe-Tabelle bei 0x15047xx (… OFFROAD, CIRCUIT, DEGRADED_ROAD, TUNNEL).
+        /// </summary>
+        public byte Type;
+        public bool IsTunnel => Type == 6;
         /// <summary>Punkte: Knoten (Index 3k) und je zwei Kontrollpunkte dazwischen (kubische Bezier-Segmente).</summary>
         public Vector3[] Points = System.Array.Empty<Vector3>();
         /// <summary>Querneigung je Knoten (Radiant).</summary>
@@ -207,6 +213,7 @@ namespace Paradise.Core.Formats
                         LanesFwd = d[p + 9],
                         NameOffset = Bin.U16(d, p + 10),
                         Length = Bin.U16(d, p + 18),
+                        Type = d[p + 17],
                         Points = new Vector3[pts],
                         Bank = new float[pts / 3 + 1],
                     };

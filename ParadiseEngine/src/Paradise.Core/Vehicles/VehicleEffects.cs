@@ -6,28 +6,30 @@ namespace Paradise.Core.Vehicles
 {
     /// <summary>
     /// Bodenschatten (wie im Spiel: Schattentextur "shadow.2db" aus common_car.bnk unter dem Auto, auf den Boden projiziert),
-    /// Reifenspuren (Brems-/Driftspuren bei Längs- oder Querschlupf; Ringpuffer, verblassen nicht), Staub auf Erde/Gras und
-    /// glühende Bremsscheiben (<see cref="BrakeGlow"/>). Portiert aus TDU2VehicleEffects (Unity). Alles im Unity-Raum
+    /// Reifenspuren (Brems-/Driftspuren bei Längs- oder Querschlupf; Ringpuffer, verblassen nicht), Partikeleffekte des Originals
+    /// (Reifen/Auspuff, <see cref="CarParticles"/>) und glühende Bremsscheiben (<see cref="BrakeGlow"/>). Portiert aus TDU2VehicleEffects (Unity). Alles im Unity-Raum
     /// (Fahrzeug-lokal zum Physik-Ursprung), gezeichnet mit VehicleManager.UnityToRender.
     /// </summary>
     public sealed class VehicleEffects : IDisposable
     {
         public Vehicle Vehicle = null!;
         public bool GroundShadow = true;
-        public float ShadowStrength = 0.75f;
+        public float ShadowStrength = 0.8f;
         // Reifenspuren
         public bool Skidmarks = true;
         public int MaxSkidQuads = 3000;
         public float SkidLongSlip = 3.5f;     // m/s Längsschlupf (Durchdrehen/Blockieren)
-        public float SkidLatSlip = 2.2f;      // m/s Querschlupf (Driften)
+        public float SkidLatSlip = 3.5f;      // m/s Querschlupf (Driften)
+        /// <summary>Querspur erst ab diesem Schräglaufwinkel (rad) – wie die Tire-Skid-Werte der exe (Min Slip Angle) über den Winkel,
+        /// nicht über die Quergeschwindigkeit (die ist bei hohem Tempo auch in normalen Kurven groß).</summary>
+        public float SkidMinSlipAngle = 0.25f;
         public float SkidOpacity = 0.55f;
         /// <summary>Fahrspuren auf Erde/Gras (Farbe der eingedrückten Erde)</summary>
         public (byte r, byte g, byte b) OffroadColor = (70, 52, 34);
         public float OffroadOpacity = 0.6f;
-        // Staub (Erde/Feldwege)
+        // Partikeleffekte des Originals (fx/vfx_car.bnk) – ersetzt den Unity-Staub
         public bool Dust = true;
-        public Vector4 DustColor = new Vector4(0.62f, 0.52f, 0.40f, 0.35f);
-        DustCloud? _dust;
+        CarParticles? _particles;
         bool[] _lastOff = Array.Empty<bool>();
         /// <summary>Glühende Bremsscheiben (null = Auto ohne Scheibenmaterial).</summary>
         public BrakeGlow? Glow { get; private set; }
@@ -40,7 +42,7 @@ namespace Paradise.Core.Vehicles
         Vector3[] _lastPos = Array.Empty<Vector3>();
         bool[] _lastValid = Array.Empty<bool>();
         int[] _lastIndex = Array.Empty<int>();
-        Vector3 _camRight = Vec.Right, _camUp = Vec.Up;
+        Vector3 _camRight = Vec.Right, _camUp = Vec.Up, _camPos;
 
         readonly IRenderer _r;
         IGpuMesh? _quad;
@@ -69,7 +71,7 @@ namespace Paradise.Core.Vehicles
             }
             int n = v != null ? v.Wheels.Length : 0;
             _lastPos = new Vector3[n]; _lastValid = new bool[n]; _lastIndex = new int[n]; _lastOff = new bool[n];
-            if (Dust) _dust = new DustCloud(_r, 400, DustColor, _blob ?? (_blob = BlobTexture(_r)));
+            if (Dust && v != null) { _particles = new CarParticles(); _particles.Setup(v, model, _r); }
             Glow = BrakeGlow.Create(model, _r);
             if (Skidmarks && (_skid == null || _skidOwner != _r))
             {
@@ -124,138 +126,18 @@ namespace Paradise.Core.Vehicles
         {
             _shadowModel.Translation -= d;
             for (int i = 0; i < _lastPos.Length; i++) _lastPos[i] -= d;
-            _dust?.Shift(d);
+            _particles?.Shift(d);
         }
 
         /// <summary>Unity LateUpdate (Lage aus <see cref="Vehicle.VisualPose"/>); Kamera rechts/oben im Unity-Raum für den Staub.</summary>
-        public void LateUpdate(float dt, Vector3 camRight, Vector3 camUp)
+        public void LateUpdate(float dt, Vector3 camRight, Vector3 camUp, Vector3 camPos = default)
         {
             if (Vehicle == null) return;
-            _camRight = camRight; _camUp = camUp;
+            _camRight = camRight; _camUp = camUp; _camPos = camPos;
             UpdateShadow();
             UpdateSkids();
-            UpdateDust(dt);
+            _particles?.Update(dt);
             Glow?.Simulate(Vehicle, dt);
-        }
-
-        // ------------------------------------------------------------------ Staub
-        /// <summary>
-        /// Staubwolke hinter den Rädern auf Erde/Gras. Eigenes kleines Partikelsystem (Kamera-Billboards in einem Mesh).
-        /// </summary>
-        sealed class DustCloud : IDisposable
-        {
-            struct P { public Vector3 Pos, Vel; public float Age, Life, Size; }
-            readonly P[] _p; int _count;
-            readonly ObjectVertex[] _v; readonly uint[] _t;
-            readonly Vector4 _col;
-            readonly IGpuMaterial _mat;
-            readonly Random _rnd = new Random();
-
-            public DustCloud(IRenderer r, int max, Vector4 col, IGpuTexture tex)
-            {
-                _col = col;
-                _p = new P[max];
-                _v = new ObjectVertex[max * 4]; _t = new uint[max * 6];
-                for (int i = 0; i < max; i++)
-                {
-                    uint b = (uint)(i * 4);
-                    _t[i * 6] = b; _t[i * 6 + 1] = b + 1; _t[i * 6 + 2] = b + 2; _t[i * 6 + 3] = b; _t[i * 6 + 4] = b + 2; _t[i * 6 + 5] = b + 3;
-                }
-                _mat = r.CreateMaterial(new MaterialDesc { Kind = MaterialKind.Particle, Name = "Dust", Main = tex });
-            }
-
-            float Range(float a, float b) => a + (float)_rnd.NextDouble() * (b - a);
-            Vector3 InsideUnitSphere()
-            {
-                while (true)
-                {
-                    var v = new Vector3(Range(-1, 1), Range(-1, 1), Range(-1, 1));
-                    if (v.LengthSquared() <= 1f) return v;
-                }
-            }
-
-            public void Emit(Vector3 pos, Vector3 vel, int n)
-            {
-                for (int k = 0; k < n; k++)
-                {
-                    if (_count >= _p.Length) return;
-                    _p[_count++] = new P
-                    {
-                        Pos = pos + InsideUnitSphere() * 0.3f,
-                        Vel = vel + InsideUnitSphere() * 0.8f,
-                        Life = Range(1.2f, 2.2f),
-                        Size = Range(0.5f, 1.0f),   // Engine: kleiner (Unity 1,2–2,4 m wirkte zu groß)
-                    };
-                }
-            }
-
-            public float Random01() => (float)_rnd.NextDouble();
-
-            public void Shift(Vector3 d) { for (int i = 0; i < _count; i++) _p[i].Pos -= d; }
-
-            public void Update(float dt)
-            {
-                int n = 0;
-                for (int i = 0; i < _count; i++)
-                {
-                    var p = _p[i];
-                    p.Age += dt;
-                    if (p.Age >= p.Life) continue;
-                    p.Vel *= 1f / (1f + 1.5f * dt);
-                    p.Vel.Y += 0.15f * dt;
-                    p.Pos += p.Vel * dt;
-                    _p[n++] = p;
-                }
-                _count = n;
-            }
-
-            public void Render(IRenderer r, Vector3 right, Vector3 up, Matrix4x4 unityToRender)
-            {
-                if (_count == 0) return;
-                for (int i = 0; i < _count; i++)
-                {
-                    var p = _p[i];
-                    int b = i * 4;
-                    float t = p.Age / p.Life;
-                    float a = Mathf.Clamp01(t / 0.15f) * (1f - t);
-                    float s = p.Size * Mathf.Lerp(0.6f, 1.8f, t) * 0.5f;
-                    Vector3 rr = right * s, u = up * s;
-                    uint c = ObjectVertex.PackColor((byte)(_col.X * 255), (byte)(_col.Y * 255), (byte)(_col.Z * 255), (byte)(Mathf.Clamp01(_col.W * a) * 255));
-                    _v[b] = new ObjectVertex { Position = p.Pos - rr - u, Normal = Vec.Up, Color = c, Uv0 = new Vector2(0, 0) };
-                    _v[b + 1] = new ObjectVertex { Position = p.Pos - rr + u, Normal = Vec.Up, Color = c, Uv0 = new Vector2(0, 1) };
-                    _v[b + 2] = new ObjectVertex { Position = p.Pos + rr + u, Normal = Vec.Up, Color = c, Uv0 = new Vector2(1, 1) };
-                    _v[b + 3] = new ObjectVertex { Position = p.Pos + rr - u, Normal = Vec.Up, Color = c, Uv0 = new Vector2(1, 0) };
-                }
-                r.DrawDynamic(_v.AsSpan(0, _count * 4), _t.AsSpan(0, _count * 6), _mat, unityToRender);
-            }
-
-            public void Dispose() => _mat.Dispose();
-        }
-
-        float _dustAcc;
-        void UpdateDust(float frameDt)
-        {
-            if (_dust == null || Vehicle == null) return;
-            float kmh = Vehicle.SpeedKmh;
-            var ws = Vehicle.Wheels;
-            _dustAcc += frameDt;
-            float dt = _dustAcc;
-            if (_dustAcc >= 0.04f) { _dustAcc = 0f; } else dt = 0f;   // Ausstoß ~25x je Sekunde, Bewegung jedes Bild
-            // Engine: nur beim Fahren (im Stand erzeugte das Restrutschen der Räder Staub)
-            if (Mathf.Abs(kmh) < 5f) dt = 0f;
-            for (int i = 0; i < ws.Length && dt > 0f; i++)
-            {
-                var w = ws[i];
-                if (!w.Grounded || w.Surface == 0 || w.Front && ws.Length > 2 && kmh > 1f && !w.Driven) continue;
-                float slip = Mathf.Abs(w.LongSlipVel) + Mathf.Abs(w.LatSlipVel);
-                float rate = Mathf.Clamp01((kmh - 10f) / 70f) * 14f + slip * 3f;   // Partikel je Sekunde
-                if (w.Surface == 1) rate *= 0.35f;                                  // Gras staubt kaum
-                int count = Mathf.FloorToInt(rate * dt + _dust.Random01());
-                if (count <= 0) continue;
-                _dust.Emit(w.ContactPoint + Vec.Up * (0.25f - Drop(w.GroundCollider)),
-                    -Vehicle.VisualPose.forward * Mathf.Min(kmh / 3.6f * 0.15f, 3f) + Vec.Up * 0.4f, count);
-            }
-            _dust.Update(frameDt);
         }
 
         // ------------------------------------------------------------------ Reifenspuren
@@ -266,7 +148,8 @@ namespace Paradise.Core.Vehicles
             for (int i = 0; i < ws.Length && i < _lastPos.Length; i++)
             {
                 var w = ws[i];
-                float slip = Mathf.Max(Mathf.Abs(w.LongSlipVel) / SkidLongSlip, Mathf.Abs(w.LatSlipVel) / SkidLatSlip);
+                float slip = Mathf.Max(Mathf.Abs(w.LongSlipVel) / SkidLongSlip,
+                    Mathf.Min(Mathf.Abs(w.LatSlipVel) / SkidLatSlip, Mathf.Abs(w.SlipAngle) / SkidMinSlipAngle));
                 bool off = w.Surface != 0;
                 // Asphalt: schwarze Gummispuren nur beim Rutschen. Erde/Gras: helle Fahrspur schon beim Rollen (Reifen drücken
                 // den Boden ein), kräftiger beim Rutschen – kein Gummiabrieb.
@@ -450,7 +333,7 @@ namespace Paradise.Core.Vehicles
         /// <summary>Zeichnen; <paramref name="unityToRender"/> = Spiegelung (Unity -&gt; Spiel) x RootMatrix.</summary>
         public void Render(Matrix4x4 unityToRender)
         {
-            _dust?.Render(_r, _camRight, _camUp, unityToRender);
+            _particles?.Render(_r, _camRight, _camUp, _camPos, unityToRender);
             if (!_shadowActive || _quad == null || _shadowMat == null) return;
             _r.DrawMesh(_quad, _shadowMat, _shadowModel * unityToRender);
         }
@@ -459,7 +342,7 @@ namespace Paradise.Core.Vehicles
         {
             _quad?.Dispose(); _quad = null;
             _shadowMat?.Dispose(); _shadowMat = null;
-            _dust?.Dispose(); _dust = null;
+            _particles?.Dispose(); _particles = null;
             _blob?.Dispose(); _blob = null;
         }
     }

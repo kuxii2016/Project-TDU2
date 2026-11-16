@@ -108,6 +108,11 @@ public sealed class Renderable
 public static class ObjectBuilder
 {
     /// <summary>Distanz aus dem Dateiwert (vermutlich quadratisch gespeichert). 0 = unbegrenzt.</summary>
+    /// <summary>Name/Hash des Straßennetz-Modells eines Sektors ("NETWORK").</summary>
+    public const ulong NetworkKey = 0x004b524f5754454eUL;
+    /// <summary>Gelände-Ersatz an Loch-Kacheln: Sektormodell "BLOCK", Material-Shaderset 0xa0a0a1a1a2a2a3a3 ("tunnel_mesh").</summary>
+    public const ulong BlockKey = 0x4b434f4c42UL, TerrainBlockShader = 0xa0a0a1a1a2a2a3a3UL;
+
     public static float LodDistance(float raw, float scale) => raw > 0f ? MathF.Sqrt(raw) * scale : float.PositiveInfinity;
 
     /// <summary>Lichtkegel/-schein der Straßenlaternen (FX_LIGHT, FX_SHAFT): nur nachts sichtbar.</summary>
@@ -117,7 +122,7 @@ public static class ObjectBuilder
     public static Renderable? GetRenderable(
         MeshData? md, ulong geoKey, ulong[] materialBank, Material2DM? matLib,
         Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> getTex,
-        BuildResources res, ObjectBuildOptions opt, int bankOffset, IRenderer r)
+        BuildResources res, ObjectBuildOptions opt, int bankOffset, IRenderer r, HashSet<ulong>? wetMaterials = null)
     {
         object scope = (object?)matLib ?? (object?)md ?? res;
         var cacheKey = (scope, (long)geoKey ^ ((long)bankOffset << 1));
@@ -135,6 +140,9 @@ public static class ObjectBuilder
             MaterialDef? def = null;
             if (mk != 0 && matLib != null) matLib.Materials.TryGetValue(mk, out def);
             if (def != null && def.IsOcean && opt.SkipOcean && opt.OceanMaterial == null) continue;
+            // Geländeblock (Shaderset 0xa0a0a1a1a2a2a3a3): kein Objekt, sondern Teil des Geländes (TerrainMeshBuilder.AppendTerrainBlock).
+            // Original 0xc50e74: Material wie TD_Ground mit Sektortextur (Sampler +0x150) + SECTROFF.
+            if (def != null && def.ShaderSet == TerrainBlockShader) continue;
             // FX_*: Lichtvolumen weglassen – außer den Lichtkegeln der Laternen (FX_LIGHT/FX_SHAFT), die nachts leuchten
             if (def != null && opt.SkipEffects && def.IsEffect && !IsLampBeam(def.Name)) continue;
             int uvSets = i < md.SubMeshUvSets.Count ? md.SubMeshUvSets[i] : 1;
@@ -147,7 +155,7 @@ public static class ObjectBuilder
                 else if (opt.MaterialOverride != null && opt.MaterialOverride(def, getTex) is { } om) mat = om;   // gehört dem Aufrufer
                 else
                 {
-                    mat = MaterialFactory.CreateObjectMaterial(def, getTex, sprite, tintUv, fourUv);
+                    mat = MaterialFactory.CreateObjectMaterial(def, getTex, sprite, tintUv, fourUv, wetMaterials != null && wetMaterials.Contains(mk));
                     if (mat != null && !MaterialFactory.IsShared(mat)) res.Owned.Add(mat);
                 }
                 res.Materials[cacheMat] = mat;
@@ -325,6 +333,16 @@ public static class ObjectBuilder
             }
         }
 
+        // WFX_WetGrd (FUN_00aa0a30): Regen nur auf den Materialien des Sektormodells "NETWORK" (Hash 0x004b524f5754454e).
+        // Der Schalter sitzt im Original am Material – teilt ein anderes Objekt ein NETWORK-Material, wird es ebenfalls nass.
+        HashSet<ulong>? wet = null;
+        foreach (var (ins, _) in Leaves())
+        {
+            if (ins.Key != NetworkKey && (ins.Lods.Length == 0 || ins.Lods[0].ObjKey != NetworkKey)) continue;
+            wet ??= new HashSet<ulong>();
+            foreach (var k in scene.ReadMaterialBank(ins.MaterialBankOffset)) if (k != 0) wet.Add(k);
+        }
+
         foreach (var (ins, m) in Leaves())
         {
             var bankKeys = scene.ReadMaterialBank(ins.MaterialBankOffset);
@@ -333,7 +351,7 @@ public static class ObjectBuilder
             foreach (var lod in ins.Lods)
             {
                 set.Meshes.TryGetValue(lod.ObjKey, out var md);
-                var rr = GetRenderable(md, lod.ObjKey, bankKeys, set.Materials, getTex, res, opt, ins.MaterialBankOffset, r);
+                var rr = GetRenderable(md, lod.ObjKey, bankKeys, set.Materials, getTex, res, opt, ins.MaterialBankOffset, r, wet);
                 if (rr == null) continue;
                 first ??= rr;
                 lods.Add(new RenderLod { Parts = rr.Parts, MaxDistance = LodDistance(lod.RawDistance, opt.LodDistanceScale) });

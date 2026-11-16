@@ -245,7 +245,7 @@ public static class MaterialFactory
     public static bool IsShared(IGpuMaterial? m) => m != null && (m == _fallback || m == _water || m == _pool);
 
     /// <param name="getTexture">key, wrapU, wrapV -> Textur (lokal oder global)</param>
-    public static IGpuMaterial? CreateObjectMaterial(MaterialDef? def, Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> getTexture, bool sprite = false, bool tintUv = false, bool fourUv = false)
+    public static IGpuMaterial? CreateObjectMaterial(MaterialDef? def, Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> getTexture, bool sprite = false, bool tintUv = false, bool fourUv = false, bool wetGround = false)
     {
         var r = Renderer ?? throw new InvalidOperationException("MaterialFactory.Renderer nicht gesetzt.");
         if (def == null) return Fallback;
@@ -254,14 +254,14 @@ public static class MaterialFactory
         if (def.IsPoolWater || def.Name.Equals("Water", StringComparison.OrdinalIgnoreCase)) return PoolWater;
 
         var missing = new List<ulong>();
-        var d = BuildObjectDesc(def, getTexture, sprite, tintUv, fourUv, missing, out var info);
+        var d = BuildObjectDesc(def, getTexture, sprite, tintUv, fourUv, wetGround, missing, out var info);
         if (d == null) return null;
         var mat = r.CreateMaterial(d);
         _info.AddOrUpdate(mat, info);
         // Textur noch nicht bekannt (liegt in einer Bank, die erst später indiziert wird) -> später das GANZE Material neu
         // entscheiden (Kind, Lightmap-Verstärkung, Palette, Fenster ...), nicht nur die Textur einsetzen
         if (missing.Count > 0)
-            _pending.Add(new PendingMat { Mat = mat, Def = def, Get = getTexture, Sprite = sprite, TintUv = tintUv, FourUv = fourUv, Missing = missing });
+            _pending.Add(new PendingMat { Mat = mat, Def = def, Get = getTexture, Sprite = sprite, TintUv = tintUv, FourUv = fourUv, WetGround = wetGround, Missing = missing });
         return mat;
     }
 
@@ -270,7 +270,7 @@ public static class MaterialFactory
     /// nicht gefundene Textur landet in <paramref name="missing"/>. null = Material ausgeblendet (Leuchteffekt aus).
     /// </summary>
     private static MaterialDesc? BuildObjectDesc(MaterialDef def, Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> getTexture0, bool sprite, bool tintUv, bool fourUv,
-        List<ulong> missing, out MaterialInfo info)
+        bool wetGround, List<ulong> missing, out MaterialInfo info)
     {
         info = null!;
         IGpuTexture? getTexture(ulong k, TextureWrap u, TextureWrap v)
@@ -384,7 +384,9 @@ public static class MaterialFactory
             }
             if (marks != null) { d.Marks = marks; d.MarksMode = true; }
             if (marks2 != null) { d.Marks2 = marks2; d.Marks2Mode = true; }
-            d.WetSurface = def.IsRoad;   // Regen/Pfützen nur TD_Road (WFX_WetGrd: nur MAT-GUID c8ad93c95455291b)
+            // Regen/Pfützen wie WFX_WetGrd (FUN_00aa0a30/0890): nur TD_Road-Materialien (MAT-GUID c8ad93c95455291b) des
+            // NETWORK-Modells eines Sektors – nicht jedes TD_Road-Material (Tunnelwände/-decken, Brücken-Unterseiten)
+            d.WetSurface = def.ShaderSet == MaterialDef.ShaderRoad && wetGround;   // exakt TD_Road – nicht "Road…"-Namen wie RoadTunnelMater (0xe8ad93c00455291b)
             if (def.ShaderSet == 0xc913741cbe17490dUL || def.ShaderSet == 0x18315cacac6cff57UL)
                 d.NightEmit = def.ShaderSet == 0xc913741cbe17490dUL ? 2.5f : 1.5f;
             // Nachtfenster der Gebäude (TD_Building mit GLOSS + WINDOWMAP, luminance_power.x > 0)
@@ -483,6 +485,7 @@ public static class MaterialFactory
         public IGpuMaterial Mat = null!;
         public MaterialDef Def = null!;
         public Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> Get = null!;
+        public bool WetGround;   // Material des NETWORK-Modells (Regen/Pfützen)
         public bool Sprite, TintUv, FourUv;
         public List<ulong> Missing = null!;
         public long Since = Environment.TickCount64;
@@ -527,7 +530,7 @@ public static class MaterialFactory
             var missing = new List<ulong>();
             MaterialDesc? d;
             MaterialInfo info;
-            try { d = BuildObjectDesc(p.Def, (k, u, v) => p.Get(k, u, v) ?? get(k, u, v), p.Sprite, p.TintUv, p.FourUv, missing, out info); }
+            try { d = BuildObjectDesc(p.Def, (k, u, v) => p.Get(k, u, v) ?? get(k, u, v), p.Sprite, p.TintUv, p.FourUv, p.WetGround, missing, out info); }
             catch (Exception) { continue; }
             if (d == null) { _pending.RemoveAt(i); continue; }
             // Neon-Maske / laufende Textur-Animation: die Hauptebene bleibt die der Animation

@@ -53,8 +53,12 @@ public sealed class HeightGrid
         float tx = System.Math.Clamp(fx - x0, 0f, 1f), tz = System.Math.Clamp(fz - z0, 0f, 1f);
         float h00 = Heights[z0 * Size + x0], h10 = Heights[z0 * Size + x0 + 1];
         float h01 = Heights[(z0 + 1) * Size + x0], h11 = Heights[(z0 + 1) * Size + x0 + 1];
-        float a = h00 + (h10 - h00) * tx, b = h01 + (h11 - h01) * tx;
-        return a + (b - a) * tz;
+        // auf dem gezeichneten Dreieck (Diagonale wie das Original, TerrainMeshBuilder.BuildGrid)
+        if (((x0 + z0) & 1) == 0)
+            return tz >= tx ? h00 + (h11 - h01) * tx + (h01 - h00) * tz
+                            : h00 + (h10 - h00) * tx + (h11 - h10) * tz;
+        return tx + tz <= 1f ? h00 + (h10 - h00) * tx + (h01 - h00) * tz
+                             : h11 + (h01 - h11) * (1f - tx) + (h10 - h11) * (1f - tz);
     }
 
     public Vector3 NormalAt(int x, int z)

@@ -1488,6 +1488,21 @@ void main() {
     outColor = vec4(TDU2Fog(c.rgb, vWorld), c.a);
 }";
 
+    // Partikel (td_particle.sob): ps = Textur x Vertexfarbe, ohne Nebel. Beleuchtete Variante (vs 04/05): Farbe x
+    // lerp(__AmbLight_Ambient_0, __DirLight_Diffuse_0, 0,75) im Gamma-Raum -> hier linear (pow 2,2). m.color.x = beleuchtet (.2DM).
+    public const string TdParticleFrag = Common + ObjectMat + @"
+layout(set = 0, binding = 0) uniform sampler2D mainTex;
+layout(location = 0) in vec4 vColor;
+layout(location = 1) in vec2 vUv0;
+layout(location = 2) in vec3 vWorld;
+layout(location = 0) out vec4 outColor;
+void main() {
+    vec4 c = texture(mainTex, vUv0) * vColor;
+    if (m.color.x > 0.5 && fr.skyMul.y > 0.5)
+        c.rgb *= pow(max(mix(fr.skyAmbient.rgb, fr.skyDiffuse.rgb, 0.75), vec3(0.0)), vec3(2.2));
+    outColor = c;
+}";
+
     // TDU2/Flare: tex x _Color x _Intensity (in der Vertexfarbe), Nebel nach Schwarz (UNITY_APPLY_FOG_COLOR(.., 0))
     public const string FlareFrag = Common + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;

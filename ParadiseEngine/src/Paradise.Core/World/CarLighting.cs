@@ -8,7 +8,9 @@ namespace Paradise.Core.World;
 ///
 /// 0x744990 – Lichtwerte je Bild für das Auto (Ausgabe: Ambient, DirLight diffuse, DirLight specular, Richtung):
 ///   1. Außen: Ambient = sun_ambient, Diffus = sun_diffuse, Glanz = sun_specular (Wetter, roh – Gamma-Raum, kein "d − a"
-///      wie im Unity-Projekt). Im Tunnel wird zu den tunnel_light_* übergeblendet (Faktor am Auto, noch nicht portiert).
+///      wie im Unity-Projekt). Im Tunnel (Faktor [+0x2ad0] > 0, World/TunnelLight) werden die drei Farben zu
+///      tunnel_light_ambient / _diffuse / _specular übergeblendet (0x40b80c lerp, Faktor = Tunnelfaktor).
+///      Offen: die Lichtrichtung (0x7148e0) wird ebenso zur Tunnelrichtung (0x19cc100) übergeblendet – hier noch Sonnenrichtung.
 ///      Im Interieur (Spielmodi 3, 0x1d, 0x1e, 8, 0x16, 0x23) kommt das Licht vom Umgebungsobjekt der Szene (noch nicht portiert:
 ///      dort bleibt <see cref="CarLightGlobals.On"/> aus und die Autos nutzen das bisherige Licht).
 ///   2. Für Autos (car+0x79a0): Ambient ×= car_sun_ambiant_factor, Diffus ×= car_sun_diffuse_factor,
@@ -52,6 +54,15 @@ public static class CarLighting
         var amb = Xyz(S("sun_ambient", new Vector4(0.58f, 0.67f, 0.82f, 0)));
         var dif = Xyz(S("sun_diffuse", new Vector4(2.01f, 1.74f, 1.36f, 0)));
         var spc = Xyz(S("sun_specular", new Vector4(1f, 1f, 1f, 0)));
+
+        // 1b. Tunnel: lerp(Sonne, tunnel_light_*, Tunnelfaktor) – 0x744b03..0x744d2e, nur wenn der Faktor > 0
+        float tf = TunnelLight.Factor;
+        if (tf > 0f)
+        {
+            amb = Vector3.Lerp(amb, Xyz(S("tunnel_light_ambient", new Vector4(amb, 0f))), tf);
+            dif = Vector3.Lerp(dif, Xyz(S("tunnel_light_diffuse", new Vector4(dif, 0f))), tf);
+            spc = Vector3.Lerp(spc, Xyz(S("tunnel_light_specular", new Vector4(spc, 0f))), tf);
+        }
 
         // 2. Faktoren für Autos
         amb *= S("car_sun_ambiant_factor", Vector4.One).X;
