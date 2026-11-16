@@ -13,9 +13,9 @@ namespace Paradise.Core.Vehicles
     /// Spielkoordinaten sind rechtshändig (+X = links) -> X wird gespiegelt. Ergebnis (<see cref="position"/>, <see cref="rotation"/>)
     /// im Unity-Raum wie das Fahrzeug; die Engine-Kamera übernimmt es gespiegelt.
     /// </summary>
-    public sealed class TDU2VehicleCamera
+    public sealed class VehicleCamera
     {
-        public TDU2Vehicle? Target;
+        public Vehicle? Target;
         public CameraDatabase? Cameras;
         public int CarId;
         public int Mode = 20;
@@ -39,16 +39,22 @@ namespace Paradise.Core.Vehicles
         float _dt, _time;
         InputState? _input;
 
-        public TDU2VehicleCamera(float near = 1f) { _origNear = near; nearClipPlane = near; }
+        public VehicleCamera(float near = 1f) { _origNear = near; nearClipPlane = near; }
 
         /// <summary>Floating Origin: Weltverschiebung (Unity-Raum) nachführen.</summary>
         public void Shift(Vector3 d) { position -= d; _smoothPos -= d; }
 
         public void NextMode()
         {
-            var order = Cameras != null ? Cameras.SwitchOrder : new[] { 21, 20, 23, 24, 22 };
+            var order = (Cameras != null ? Cameras.SwitchOrder : new[] { 21, 20, 23, 22, 24 }).Where(mode => mode != 22).ToArray(); //mode 22 is Invalid or Other type of camera, so we skip it
+
+            if (order.Length == 0)
+                return;
+
             int idx = System.Array.IndexOf(order, Mode);
-            Mode = order[(idx + 1 + order.Length) % order.Length];
+            int next = (idx + 1) % order.Length;
+            int nextMode = order[next];
+            Mode = nextMode;
             _init = false;
         }
 

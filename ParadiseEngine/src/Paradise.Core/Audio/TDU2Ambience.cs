@@ -11,6 +11,7 @@ namespace Paradise.Core.Audio;
 /// Environment.TypeID. Tag/Nacht wählt Name_Resource_Day/Night (ohne Nacht-Datei die Tag-Datei),
 /// Wechsel mit 2,5 s Überblendung, Regen als zweite Schicht (Rain[0], Lautstärke über die Kurve).
 /// Wav-Name = &lt;Name_Resource&gt; klein + ".wav" im selben Ordner (spec 1, FUN_00cbf3e0).
+/// Donner: Lightning[] (eclair_*), beim Einschlag ein zufälliger Eintrag (0x657340, siehe <see cref="PlayLightning"/>).
 /// </summary>
 public sealed class TDU2Ambience : IDisposable
 {
@@ -29,6 +30,10 @@ public sealed class TDU2Ambience : IDisposable
     readonly Dictionary<int, Env> _envs = new();
     readonly Dictionary<string, AudioClip?> _clips = new(StringComparer.OrdinalIgnoreCase);
     string? _rainName;
+    readonly List<(string name, float volume)> _thunder = new();
+    AudioVoice? _thunderVoice;
+    bool _active;
+    readonly Random _rnd = new();
     float _rainVolume = 1f;
     (float x, float y)[] _rainCurve = { (0f, 0f), (1f, 1f) };
 
@@ -81,6 +86,14 @@ public sealed class TDU2Ambience : IDisposable
                 if (pts != null && pts.Items.Count >= 2)
                     a._rainCurve = pts.Items.Select(p => (p.F("X"), p.F("Y"))).OrderBy(p => p.Item1).ToArray();
             }
+            var lightning = root["Lightning"];
+            if (lightning != null)
+                foreach (var l in lightning.Items)
+                {
+                    var n = l.S("Name", "") ?? "";
+                    if (n.Length > 0) a._thunder.Add((n, l.F("Volume", 1f)));
+                }
+            Log.Info($"Umgebung: {island}: {a._thunder.Count} Donner ({string.Join(", ", a._thunder.Select(t => t.name))})");
             Log.Info($"Umgebung: {island}: {a._envs.Count} Einträge ({string.Join(", ", a._envs.Values.Select(v => v.Type + "=" + v.Name))}), Regen '{a._rainName}'");
             return a;
         }
@@ -113,6 +126,7 @@ public sealed class TDU2Ambience : IDisposable
     /// </summary>
     public void Update(int zoneType, bool night, float rain, bool active, float dt)
     {
+        _active = active;
         for (int i = 0; i < 2; i++)
             if (_stopIn[i] > 0f && (_stopIn[i] -= dt) <= 0f) { _slot[i]?.Stop(); _slot[i] = null; }
 
@@ -153,6 +167,23 @@ public sealed class TDU2Ambience : IDisposable
         }
     }
 
+    /// <summary>
+    /// Donner beim Einschlag (Original 0x657340 auf dem Umgebungs-Manager, aufgerufen von WFX_Lightning beim Übergang Stehen →
+    /// Ausblenden): nichts, solange der vorige Donner noch spielt oder die Umgebung aus ist; sonst Eintrag rand() % Anzahl,
+    /// Clip-Abstände 999999/1000000 (also ohne Abschwächung), Lautstärke = Umgebungslautstärke · Eintrag.Volume.
+    /// </summary>
+    public void PlayLightning()
+    {
+        if (!_active || _thunder.Count == 0) return;
+        if (_thunderVoice != null && _thunderVoice.IsPlaying) return;
+        var (name, vol) = _thunder[_rnd.Next(0, 32768) % _thunder.Count];
+        var clip = Clip(name);
+        if (clip == null) return;
+        _thunderVoice = new AudioVoice { Clip = clip, Loop = false };
+        _thunderVoice.Volume = Volume * vol;
+        _thunderVoice.Play();
+    }
+
     void SwitchTo(string? key, Env? env)
     {
         // alter Eintrag: ausblenden, danach anhalten
@@ -176,6 +207,7 @@ public sealed class TDU2Ambience : IDisposable
     {
         for (int i = 0; i < 2; i++) { _slot[i]?.Stop(); _slot[i] = null; }
         _rain?.Stop(); _rain = null;
+        _thunderVoice?.Stop(); _thunderVoice = null;
         _curKey = null;
     }
 }

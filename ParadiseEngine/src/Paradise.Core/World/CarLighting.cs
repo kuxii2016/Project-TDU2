@@ -23,7 +23,7 @@ namespace Paradise.Core.World;
 ///   TD_CarPaint2: ENVCOEFF = (t · F.z, F.w, F.x, F.y), F = car_fresnel_coeff_power_boost_specular
 ///   TD_CarPaint:  ENVCOEFF.x = t (y bleibt der Materialwert)
 /// </summary>
-public static class TDU2CarLighting
+public static class CarLighting
 {
     /// <summary>Schalter aus Game/Config (GraphicsConfig.OriginalCarLight). Aus = bisheriges Unity-Licht am Auto.</summary>
     public static bool Enabled;

@@ -12,10 +12,10 @@ namespace Paradise.Game.Screens;
 /// das Menü bestätigt und schließt sich selbst.
 /// Tasten: Pfeile/WASD oder 1–4 (oben Verdeck, rechts Blinker rechts, unten Fenster, links Blinker links), Zubehör-Taste/ESC schließt.
 /// </summary>
-public static class TDU2AccessoryMenu
+public static class AccessoryMenu
 {
     const string Menu = "/HUD/ig_menu";
-    static TDU2Accessories? _acc;
+    static CarAccessories? _acc;
     static float _openedAt;
     static bool _hudShown;
     public static bool IsOpen { get; private set; }
@@ -30,7 +30,7 @@ public static class TDU2AccessoryMenu
     static readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     static float Now => (float)_clock.Elapsed.TotalSeconds;   // Unity Time.unscaledTime
 
-    public static bool Open(TDU2Accessories? acc, bool bike = false)
+    public static bool Open(CarAccessories? acc, bool bike = false)
     {
         var h = Hud;
         if (h == null || acc == null || h.Find(Menu) == null) return false;

@@ -10,9 +10,9 @@ namespace Paradise.Core.Vehicles
     /// Wert 0..420 entspricht 0..264.5°). Gedreht wird um die Achse Ruhelage -> Referenzlage (_2).
     /// Ohne hud.ini: Drehzahl = rpm_max, Tacho = Vmax (+5 %, 20er-Schritte), 264.5°. Portiert aus TDU2VehicleGauges (Unity).
     /// </summary>
-    public sealed class TDU2VehicleGauges
+    public sealed class VehicleGauges
     {
-        public TDU2Vehicle? Vehicle;
+        public Vehicle? Vehicle;
         public float SpeedScaleMax = 360f, RpmScaleMax = 10000f;
         public float NeedleDamping = 12f;
 
@@ -24,7 +24,7 @@ namespace Paradise.Core.Vehicles
         bool _mph;
         Needle? _spd, _rpm;
 
-        public void Setup(TDU2Vehicle v, CarModel? model, GaugeConfig? cfg = null)
+        public void Setup(Vehicle v, CarModel? model, GaugeConfig? cfg = null)
         {
             Vehicle = v;
             _mph = v?.Car != null && !v.Car.Kmh;

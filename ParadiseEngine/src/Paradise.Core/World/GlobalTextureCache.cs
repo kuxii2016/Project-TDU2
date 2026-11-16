@@ -23,8 +23,15 @@ public static class TextureInfo
         up.Linear = linear;
         long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
         IGpuTexture tex;
-        try { tex = r.CreateTexture(up); }
-        catch (Exception ex) { Diagnostics.Log.Warn($"Textur {def.Name}: {ex.Message}"); return null; }
+        try
+        {
+            tex = r.CreateTexture(up);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log.Warn($"Textur {def.Name}: {ex.Message}");
+            return null;
+        }
         long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
         _info.AddOrUpdate(tex, new Info { Packed = def.LooksPacked(), MeanLum = def.MeanLum() });
         long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -121,9 +128,16 @@ public sealed class GlobalTextureCache
     /// <summary>Bank aus einem Pfad indizieren (ignoriert Fehler/fehlende Datei).</summary>
     public void IndexBankFile(string? path)
     {
-        if (string.IsNullOrEmpty(path) || !GameFiles.Exists(path)) return;
-        try { IndexBank(BnkArchive.Open(path)); }
-        catch (Exception ex) { Diagnostics.Log.Warn($"Texturindex {path}: {ex.Message}"); }
+        if (string.IsNullOrEmpty(path) || !GameFiles.Exists(path))
+            return;
+        try
+        {
+            IndexBank(BnkArchive.Open(path));
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log.Warn($"Texturindex {path}: {ex.Message}");
+        }
     }
 
     public bool Contains(ulong key) { lock (_index) return _index.ContainsKey(key); }

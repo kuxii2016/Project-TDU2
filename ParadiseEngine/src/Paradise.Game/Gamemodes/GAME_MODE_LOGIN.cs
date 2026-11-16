@@ -752,7 +752,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
         else TDU2Session.Begin(r);
         var save = TDU2Session.Save;
         // Kilometerstände des Spielstands in den Tacho (Unity ApplyOdometers)
-        foreach (var o in save.odometers) if (o != null && o.meters > 0) TDU2VehicleHud.SetOdometer(o.carId, o.meters);
+        foreach (var o in save.odometers) if (o != null && o.meters > 0) VehicleHud.SetOdometer(o.carId, o.meters);
         if (_pushImported) { _pushImported = false; TDU2Session.SaveAsync(); Log.Info("Savegame: übernommener lokaler Spielstand an den Server geschickt"); }
         var vm = Vm!; var s = Streamer!;
         string island = s.Index?.IslandName ?? "";
@@ -783,7 +783,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
             if (car == null) foreach (var n in save.ownedCars) { car = vm.FindCar(n); if (car != null) break; }
         }
         var spots = s.Spots?.Spots;
-        var gp = _cfg.GamePcStart ? TDU2GamePC.Load(vm.BnkDir) : null;
+        var gp = _cfg.GamePcStart ? GamePC.Load(vm.BnkDir) : null;
         var home = spots != null ? gp?.FindHouse(spots) : null;
         if (gp != null && home == null && gp.Houses.Count > 0) Log.Warn("GamePC.cpr: Standard-Haus " + string.Join("/", gp.Houses) + " liegt nicht auf " + island);
         var dealer = FindSpot(string.IsNullOrEmpty(r.startSpot) ? "ESTOL_B" : r.startSpot);
@@ -814,7 +814,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
     }
 
     /// <summary>Neues Profil nach GamePC.cpr: DefaultCarConfig = aktuelles Auto, DefaultGarageConfig = weitere Autos, DefaultMoney.</summary>
-    bool StartFromGamePc(TDU2GamePC gp, Spot? home, Spot? fallback)
+    bool StartFromGamePc(GamePC gp, Spot? home, Spot? fallback)
     {
         var save = TDU2Session.Save;
         var vm = Vm!;

@@ -22,7 +22,7 @@ public static class TrafficLights
         public int Shown = -1;
     }
 
-    public static float GreenTime = 14f, AmberTime = 3f, AllRedTime = 2f;
+    public static float GreenTime = 14f, AmberTime = 2f, AllRedTime = 4f;
     /// <summary>Raster, in dem Ampeln zur selben Kreuzung (gleicher Versatz) gezählt werden (m).</summary>
     public static float JunctionCell = 70f;
     public static bool SwapAxis = false;

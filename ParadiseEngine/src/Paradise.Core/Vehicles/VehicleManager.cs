@@ -28,8 +28,8 @@ namespace Paradise.Core.Vehicles
         public CameraDatabase? Cameras { get; private set; }
         public PhysicsConfig? Physics { get; private set; }
         public readonly List<CarPhysics> Available = new List<CarPhysics>();
-        public TDU2Vehicle? Current { get; private set; }
-        public TDU2VehicleCamera Camera { get; } = new TDU2VehicleCamera(1f);
+        public Vehicle? Current { get; private set; }
+        public VehicleCamera Camera { get; } = new VehicleCamera(1f);
 
         readonly IRenderer _r;
         readonly PhysicsWorld _world;
@@ -41,10 +41,10 @@ namespace Paradise.Core.Vehicles
         CarAssets? _assets;
         CarModel? _model;
         VehicleRigidbody? _rb;
-        TDU2VehicleEffects? _fx;
-        TDU2VehicleAudio? _audio;
-        TDU2VehicleLights? _lights;
-        TDU2CarDirt? _dirt;
+        VehicleEffects? _fx;
+        VehicleAudio? _audio;
+        VehicleLights? _lights;
+        CarDirt? _dirt;
         /// <summary>
         /// Darstellungsabsenkung des Geländes (MapStreamer.TerrainLower, Shader _TDU2TerrainLower): das sichtbare Gelände liegt so viel
         /// tiefer als sein Kollider. Stehen Räder auf dem Gelände, wird das Auto (nur die Darstellung) genauso tief gezeichnet –
@@ -55,20 +55,20 @@ namespace Paradise.Core.Vehicles
         /// <summary>Gelände-Kollider (MapStreamer: "&lt;Sektor&gt; Gelände").</summary>
         public static bool IsTerrain(StaticCollider? c) => c != null && c.Name != null && c.Name.EndsWith(" Gelände", StringComparison.Ordinal);
         /// <summary>Verschmutzung des aktuellen Autos (Waschanlage: Wash()).</summary>
-        public TDU2CarDirt? Dirt => _dirt;
-        TDU2VehicleGauges? _gauges;
-        TDU2VehicleHud? _hud;
-        TDU2Minimap? _minimap;
+        public CarDirt? Dirt => _dirt;
+        VehicleGauges? _gauges;
+        VehicleHud? _hud;
+        Minimap? _minimap;
         /// <summary>Minimap (hud.bnk, Straßennetz der Insel).</summary>
-        public TDU2Minimap? Minimap => _minimap;
+        public Minimap? Minimap => _minimap;
         /// <summary>Inselbank für das Straßennetz der Minimap (MapStreamer.Index.IslandBank).</summary>
         public Func<string?>? IslandBank;
         /// <summary>Fahr-HUD (gauges.bnk) an/aus.</summary>
         public bool ShowHud = true;
         int _headlights = -1;   // -1 = noch nie gesetzt: Original-Lichtsteuerung startet im Modus 1 (Wetter schaltet)
         /// <summary>Lichter/Sound des aktuellen Autos (null ohne Auto).</summary>
-        public TDU2VehicleLights? Lights => _lights;
-        public TDU2VehicleAudio? Audio => _audio;
+        public VehicleLights? Lights => _lights;
+        public VehicleAudio? Audio => _audio;
         // Interpolation (Unity: RigidbodyInterpolation.Interpolate): Lage vor/nach dem letzten Physikschritt
         Vector3 _prevPos, _curPos; Quaternion _prevRot = Quaternion.Identity, _curRot = Quaternion.Identity;
         string _status = "";
@@ -298,7 +298,7 @@ namespace Paradise.Core.Vehicles
             foreach (var w in Current.Wheels) { if (!w.Grounded) continue; onGround++; if (IsTerrain(w.GroundCollider)) onTerrain++; }
             float dropTarget = onGround > 0 ? lower * onTerrain / onGround : _terrainDrop;
             _terrainDrop = Mathf.Lerp(_terrainDrop, dropTarget, 1f - MathF.Exp(-dt * 12f));
-            TDU2VehicleEffects.TerrainDrop = lower;
+            VehicleEffects.TerrainDrop = lower;
             if (_terrainDrop > 1e-4f)
             {
                 var vp = Current.VisualPose; vp.position.Y -= _terrainDrop; Current.VisualPose = vp;
@@ -306,6 +306,8 @@ namespace Paradise.Core.Vehicles
             Current.LateUpdate(dt);
             _fx?.LateUpdate(dt, U.Rot(Camera.rotation, Vec.Right), U.Rot(Camera.rotation, Vec.Up));
             _lights?.Update(dt);
+            // Unity TDU2Weather.UpdateCarDirt: Regen (Rain > 0,2) wäscht den Schmutz auf der Straße ab (DBCarDirtData)
+            if (_dirt != null) _dirt.Raining = Paradise.Core.World.WorldWeather.Rain > 0.2f;
             _dirt?.Update(dt);
             _gauges?.LateUpdate(dt);
             if (_hud != null) { _hud.ShowHud = ShowHud; _hud.LateUpdate(_r.Width, _r.Height); }
@@ -394,7 +396,7 @@ namespace Paradise.Core.Vehicles
             Camera.Shift(dU);
             _hud?.Shift(dU);
             _fx?.Shift(dU);
-            TDU2VehicleEffects.ShiftSkids(dU);
+            VehicleEffects.ShiftSkids(dU);
         }
 
         // ------------------------------------------------------------------ Laden / Spawnen
@@ -407,7 +409,7 @@ namespace Paradise.Core.Vehicles
             {
                 var before = _world.Origin;
                 _world.ShiftOrigin(cameraGame);   // Ursprung an die Spawnstelle
-                TDU2VehicleEffects.ShiftSkids(U.Mirror(_world.Origin - before));
+                VehicleEffects.ShiftSkids(U.Mirror(_world.Origin - before));
             }
             var fwd = U.ProjectOnPlane(U.Mirror(cameraForwardGame), Vec.Up);
             if (fwd.LengthSquared() < 1e-3f) fwd = Vec.Forward;
@@ -431,7 +433,7 @@ namespace Paradise.Core.Vehicles
             if (Current != null || _model != null) Despawn();
             var before = _world.Origin;
             _world.ShiftOrigin(game);   // Ursprung an die Spawnstelle (wie SpawnAt)
-            TDU2VehicleEffects.ShiftSkids(U.Mirror(_world.Origin - before));
+            VehicleEffects.ShiftSkids(U.Mirror(_world.Origin - before));
             var fwd = U.ProjectOnPlane(U.Mirror(forwardGame), Vec.Up);
             if (fwd.LengthSquared() < 1e-3f) fwd = Vec.Forward;
             var pos = ToUnity(game);
@@ -474,7 +476,7 @@ namespace Paradise.Core.Vehicles
             string bnk = _bnkDir; var db = Database; int color = _colorIndex; bool snd = LoadSound;
             // gekaufte Ausstattung (Autohändler: Lack, Felgen, Innenraum) – Unity TDU2VehicleManager.Load
             int rim = 0, interior = 0;
-            if (TDU2CarChoices.TryGet(car.FileName, out var ch)) { color = _colorIndex = ch.Color; rim = ch.Rim; interior = ch.Interior; _colorFromChoice = true; }
+            if (CarChoices.TryGet(car.FileName, out var ch)) { color = _colorIndex = ch.Color; rim = ch.Rim; interior = ch.Interior; _colorFromChoice = true; }
             else if (_colorFromChoice) { color = _colorIndex = 0; _colorFromChoice = false; }   // Lack eines anderen Autos nicht übernehmen
             _status = "Lade " + car.ModelName + " ...";
             _loadTask = Task.Run(() => CarAssets.Load(bnk, db, car, color, snd, rim, interior));
@@ -532,13 +534,13 @@ namespace Paradise.Core.Vehicles
                 boxSize = new Vector3(bSize.X * 0.96f, Mathf.Max(0.3f, bmax.Y - bottom), bSize.Z * 0.98f);
             }
 
-            var veh = new TDU2Vehicle { Rigidbody = rb };
+            var veh = new Vehicle { Rigidbody = rb };
             veh.Car = car!; veh.Config = Physics!; veh.TorqueMax = a.TorqueMax!; veh.TorqueMin = a.TorqueMin!;
             veh.GripScale = GripScale; veh.Aids = Aids; veh.AutomaticGearbox = AutomaticGearbox;
             veh.OffRoadCar = car!.IsOffroad || car.OffroadReal;
             veh.GroundFallback = p => { var y = GroundHeight?.Invoke(ToGame(p)); return y.HasValue ? (true, y.Value - _world.Origin.Y) : (false, 0f); };
 
-            var wheels = new List<TDU2Vehicle.Wheel>();
+            var wheels = new List<Vehicle.Wheel>();
             if (isBike)
             {
                 // Bikes: Vorderrad an FORK/WHR_F, Hinterrad an ARM/WHR_R.
@@ -550,7 +552,7 @@ namespace Paradise.Core.Vehicles
                     string name = tag == "F" ? "WHR_F" : "WHR_R";
                     bool front = wd.Item2;
                     var whr = _model.Find(name);
-                    var w = new TDU2Vehicle.Wheel { Name = front ? "FL" : "RL", Front = front };
+                    var w = new Vehicle.Wheel { Name = front ? "FL" : "RL", Front = front };
                     if (whr != null) w.Anchor = AnchorOf(whr);
                     else
                     {
@@ -578,7 +580,7 @@ namespace Paradise.Core.Vehicles
                 {
                     bool front = n[0] == 'F';
                     var fork = _model.Find("FORK_" + n);
-                    var w = new TDU2Vehicle.Wheel { Name = n, Front = front };
+                    var w = new Vehicle.Wheel { Name = n, Front = front };
                     if (fork != null) w.Anchor = AnchorOf(fork);
                     else
                     {
@@ -630,32 +632,32 @@ namespace Paradise.Core.Vehicles
             // Sound
             if (LoadSound)
             {
-                _audio = new TDU2VehicleAudio { Vehicle = veh, MasterVolume = Volume, SquealFactor = SquealVolume, GearShiftFactor = GearShiftVolume };
+                _audio = new VehicleAudio { Vehicle = veh, MasterVolume = Volume, SquealFactor = SquealVolume, GearShiftFactor = GearShiftVolume };
                 _audio.Setup(a);
                 if (_pendingVel.LengthSquared() < 1f) _audio.Play("EngineStart");
             }
 
             // Lichter (Scheinwerfer, Bremse, Rückfahr, Blinker)
-            _lights = new TDU2VehicleLights { Headlights = _headlights >= 0 ? _headlights : TDU2VehicleLights.OriginalControl ? 1 : 0, LensBrightness = LightBrightness };
+            _lights = new VehicleLights { Headlights = _headlights >= 0 ? _headlights : VehicleLights.OriginalControl ? 1 : 0, LensBrightness = LightBrightness };
             _lights.Setup(veh, _model);
 
             // Cockpit-Nadeln (ND_SPD/ND_RPM) und Fahr-HUD (gauges.bnk)
-            _gauges = new TDU2VehicleGauges();
+            _gauges = new VehicleGauges();
             _gauges.Setup(veh, _model, a.Gauges);
-            _hud ??= new TDU2VehicleHud();
+            _hud ??= new VehicleHud();
             _hud.Bind(_bnkDir!, veh, a, Camera);
             // Minimap (Unity TDU2Minimap.Bind) und Feldwege aus dem Straßennetz als Untergrund
-            _minimap ??= new TDU2Minimap();
+            _minimap ??= new Minimap();
             _minimap.Database = Database;
             _minimap.Bind(_bnkDir, IslandBank?.Invoke());
             var mm = _minimap;
             veh.RoadSurfaceAt = p => mm.NearestRoadType(ToGame(p), 4f) == 1 ? 2 : 0;
 
             // Bodenschatten, Reifenspuren, Staub, glühende Bremsscheiben (TDU2VehicleEffects)
-            _fx = new TDU2VehicleEffects(_r);
+            _fx = new VehicleEffects(_r);
             _fx.Setup(veh, _model, a);
             // Verschmutzung (dirt_scratch, DBCarDirtData)
-            _dirt = new TDU2CarDirt();
+            _dirt = new CarDirt();
             _dirt.Setup(veh, _model);
 
             // Kamera
@@ -669,7 +671,7 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>Maße/Räder ins Log (Abgleich Physik vs. Modell: Luft zwischen Rad und Straße, Lenkrichtung).</summary>
-        void LogDiagnosis(TDU2Vehicle veh, Vector3 bmin, Vector3 bmax, Vector3 boxCenter, Vector3 boxSize, float wheelBottom)
+        void LogDiagnosis(Vehicle veh, Vector3 bmin, Vector3 bmax, Vector3 boxCenter, Vector3 boxSize, float wheelBottom)
         {
             if (_model == null) return;
             var sb = new System.Text.StringBuilder();
@@ -752,7 +754,7 @@ namespace Paradise.Core.Vehicles
 
         public void Render(Matrix4x4 gameToRender)
         {
-            TDU2VehicleEffects.RenderSkids(_r, UnityToRender(gameToRender));
+            VehicleEffects.RenderSkids(_r, UnityToRender(gameToRender));
             Paradise.Core.Render.RenderFx.ProbeOn = false;
             Paradise.Core.Render.RenderFx.ProbeStatic = false;   // fährt mit dem Auto: Seite für Seite laufend neu
             if (_model == null || Current == null) return;

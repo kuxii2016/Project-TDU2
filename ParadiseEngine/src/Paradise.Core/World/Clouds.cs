@@ -18,7 +18,7 @@ namespace Paradise.Core.World;
 /// </list>
 /// Offen: welcher Teil clouds_cloud3dSpeed.y nutzt (0xd02931: Argument > 1) – hier dreht alles mit .x.
 /// </summary>
-public sealed class TDU2Clouds : IDisposable
+public sealed class Clouds : IDisposable
 {
     sealed class CloudMat { public IGpuMaterial Mat = null!; public MaterialDesc Desc = null!; public float Weight = -1f; }
 
@@ -31,14 +31,14 @@ public sealed class TDU2Clouds : IDisposable
     float _angle;
     double _nextMatUpdate;
 
-    TDU2Clouds(IRenderer r) => _r = r;
+    Clouds(IRenderer r) => _r = r;
 
     /// <summary>fx/clouds.bnk laden. null, wenn die Insel keine hat.</summary>
-    public static TDU2Clouds? Load(string fxDir, IRenderer r, GlobalTextureCache textures)
+    public static Clouds? Load(string fxDir, IRenderer r, GlobalTextureCache textures)
     {
         string path = Path.Combine(fxDir, "clouds.bnk");
         if (!GameFiles.Exists(path)) { Log.Warn("Wolken: clouds.bnk fehlt: " + path); return null; }
-        var c = new TDU2Clouds(r);
+        var c = new Clouds(r);
         try
         {
             c._model = BankModel.Load(path, BankKind.Generic, loadObjects: true, loadPlacements: false, loadGrass: false);

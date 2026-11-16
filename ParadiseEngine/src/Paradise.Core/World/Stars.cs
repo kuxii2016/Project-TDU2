@@ -22,7 +22,7 @@ namespace Paradise.Core.World;
 /// </list>
 /// Gezeichnet wird das Mesh mit td_dome ps @0x1af0 (Himmel + Sterne), nur wenn Skydome_starsPercent &gt; 0.
 /// </summary>
-public sealed class TDU2Stars : IDisposable
+public sealed class Stars : IDisposable
 {
     readonly IRenderer _r;
     IGpuMesh? _mesh;
@@ -30,11 +30,11 @@ public sealed class TDU2Stars : IDisposable
     IGpuMesh? _moonMesh;
     IGpuMaterial? _moonMat;
 
-    TDU2Stars(IRenderer r) => _r = r;
+    Stars(IRenderer r) => _r = r;
 
-    public static TDU2Stars? Create(string? bnkDir, IRenderer r, GlobalTextureCache textures)
+    public static Stars? Create(string? bnkDir, IRenderer r, GlobalTextureCache textures)
     {
-        var s = new TDU2Stars(r);
+        var s = new Stars(r);
         try
         {
             IGpuTexture? tex = null, moon = null;

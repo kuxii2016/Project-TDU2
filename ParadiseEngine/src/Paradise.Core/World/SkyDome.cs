@@ -22,7 +22,7 @@ namespace Paradise.Core.World;
 /// Die Sonnenrichtung für die Streuung dreht der Vertex-Shader zusätzlich (bis 31° Richtung Horizont, abhängig von der
 /// Sonnenhöhe); das steht hier 1:1 als <see cref="ScatterSun"/>.
 /// </summary>
-public static class TDU2SkyDome
+public static class SkyDome
 {
     // Ctor 0xcfef58: Tabelle 0x150cff8 rückwärts gelesen
     static readonly Vector4 BetaR = new(5.17077660333598e-06f, 6.954958280402934e-06f, 1.1761115274566691e-05f, 2.4387847588513978e-05f);

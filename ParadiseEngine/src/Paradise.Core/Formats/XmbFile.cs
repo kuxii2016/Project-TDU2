@@ -228,7 +228,7 @@ public sealed class XmbFile
 }
 
 /// <summary>
-/// .cpr = mit XTEA verschlüsselte Datei (db_data.cpr, Physics.cpr, GamePC.cpr ...). Portiert aus dem Unity-Projekt.
+/// .cpr = mit XTEA verschlüsselte Datei (db_data.cpr, Physics.cpr, GamePC.cpr ...).
 /// Variante aus TDU2: 8 Byte Seed vorne, danach Blöcke; Klartext[i] = Dec(Cipher[i+1]) XOR Cipher[i].
 /// Schlüssel "Other" (alle .cpr außer Savegames).
 /// </summary>

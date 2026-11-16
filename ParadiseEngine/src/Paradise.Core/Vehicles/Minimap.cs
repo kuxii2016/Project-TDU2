@@ -18,7 +18,7 @@ namespace Paradise.Core.Vehicles
     ///            Punkt 0: f32 x,y,z + Pad (16 B); je Bézierstück: Kontrollpunkt 1 (12 B), Kontrollpunkt 2 (12 B), Anker (16 B)
     ///   Koordinaten im Spielraum.
     /// </summary>
-    public sealed class TDU2Minimap
+    public sealed class Minimap
     {
         public bool ShowMinimap = true;
         /// <summary>Sichtradius in Metern im Stand / bei hoher Geschwindigkeit</summary>
@@ -68,7 +68,7 @@ namespace Paradise.Core.Vehicles
         const float Cell = 128f;
         Texture2D? _tex;
         /// <summary>GPS (Unity: von der Minimap angelegt) – Ziel, Route, Anzeige in hud.bnk.</summary>
-        public readonly TDU2Gps Gps = new();
+        public readonly Gps Gps = new();
         Color32[]? _px;
         byte[]? _bytes;
         int _texSize;
@@ -592,7 +592,7 @@ namespace Paradise.Core.Vehicles
                 _bytes[o + 1] = c.g;
                 _bytes[o + 2] = c.b;
                 //Orginal: ist Dunkler Background
-                _bytes[o + 3] = 128;// c.a; 
+                _bytes[o + 3] = 64;// c.a; 
             }
             if (_tex!.Gpu == null) { _tex.SetPixels32(_px); _tex.Apply(); }
             else FlashHost.Renderer?.UpdateTexture(_tex.Gpu, _bytes);
@@ -667,7 +667,7 @@ namespace Paradise.Core.Vehicles
                         (byte)((col.r * sa + dst.r * da * (1f - sa)) / oa),
                         (byte)((col.g * sa + dst.g * da * (1f - sa)) / oa),
                         (byte)((col.b * sa + dst.b * da * (1f - sa)) / oa),
-                        (byte)(oa * 255f));
+                        (byte)((col.a * sa + dst.a * da * (1f - sa)) / oa));
                 }
         }
 

@@ -520,7 +520,7 @@ namespace Paradise.Core.Savegame
             var one = new List<Spot> { spot };
             foreach (var h in db.Houses)
                 if (h.SpotName != null && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase) && string.Equals(Code(h.SpotName), spot.Code, StringComparison.OrdinalIgnoreCase)
-                    && TDU2GamePC.FindSpot(one, h.SpotName) == spot)
+                    && GamePC.FindSpot(one, h.SpotName) == spot)
                     return h.SpotName;
             return null;
         }

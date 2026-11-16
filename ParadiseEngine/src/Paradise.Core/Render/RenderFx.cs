@@ -27,6 +27,11 @@ public static class RenderFx
     public static string CloudName = "", CloudNamePrev = "";
     public static float CloudBlend = 1f;
     public static Vector2 CloudSpeed;
+    /// <summary>WFX_WetGrd (World/WetGround): PUDDLES und aktuelles RIPPLE_xx (Frame-Bindings 5/6), Ripple-Verschiebung
+    /// (scroll_u, scroll_v) und rain_ground_ripple_scroll_speed (vom Wetter).</summary>
+    public static IGpuTexture? RainPuddles, RainRipple;
+    public static Vector2 RainScroll;
+    public static float RainScrollSpeed;
     public static float OceanY;
     public static Vector3 OceanClear = new(0.12f, 0.23f, 0.18f);
 

@@ -384,7 +384,7 @@ public static class MaterialFactory
             }
             if (marks != null) { d.Marks = marks; d.MarksMode = true; }
             if (marks2 != null) { d.Marks2 = marks2; d.Marks2Mode = true; }
-            d.WetSurface = def.IsRoad || def.IsGround;
+            d.WetSurface = def.IsRoad;   // Regen/Pfützen nur TD_Road (WFX_WetGrd: nur MAT-GUID c8ad93c95455291b)
             if (def.ShaderSet == 0xc913741cbe17490dUL || def.ShaderSet == 0x18315cacac6cff57UL)
                 d.NightEmit = def.ShaderSet == 0xc913741cbe17490dUL ? 2.5f : 1.5f;
             // Nachtfenster der Gebäude (TD_Building mit GLOSS + WINDOWMAP, luminance_power.x > 0)

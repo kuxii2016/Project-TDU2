@@ -28,6 +28,8 @@ public sealed class TerrainModule : GameModule
     /// <summary>Physikwelt mit den Kollisionsnetzen der geladenen Sektoren (für Fahrzeuge).</summary>
     public PhysicsWorld? Physics => _physics;
     public MapStreamer? Streamer => _streamer;
+    /// <summary>Wetter/Tageszeit der Insel (null = LightingConfig.UseWeather aus oder noch nicht geladen) – für das Entwicklermenü.</summary>
+    public WorldWeather? Weather => _weather;
     /// <summary>Freiflug-Kamera (Render-Raum).</summary>
     public FlyCamera? Camera => _cam;
     /// <summary>Eingabe des Fensters (Maus-Deltas, gefangene Maus im Interieur).</summary>
@@ -75,7 +77,7 @@ public sealed class TerrainModule : GameModule
         if (_world.Root == null) { Log.Warn("TerrainModule: kein Spielordner gefunden."); return; }
         _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
         _globals = _light.ToFrameGlobals();
-        var s = new MapStreamer(_renderer) { Island = "hawai" };
+        var s = new MapStreamer(_renderer) { Island = "ibiza" };
         _light.ApplyTo(s);
         // Kollision der Welt (Unity: GenerateColliders) – vor Initialize, damit schon die ersten Sektoren eingetragen werden
         _physics = new PhysicsWorld();
@@ -140,6 +142,10 @@ public sealed class TerrainModule : GameModule
         {
             double now = TrafficLights.Clock();
             tp = System.Diagnostics.Stopwatch.GetTimestamp();
+            // Blitz (World/Lightning): Ort vor der Kamera in waagrechter Blickrichtung, Fußpunkt auf dem Boden
+            _weather.CameraForward = _cam.Override?.forward ?? _cam.Forward;
+            var strm = _streamer;
+            _weather.GroundHeight ??= (lx, lz) => strm.TryGetMapGroundHeight(lx, lz, out float lh) ? lh : null;
             _weather.Update(now, time.TotalTime, time.DeltaTime, _streamer.ViewerGame, _streamer.RootOffset, _streamer.FindPlacementInstances);
             PerfLog.Add("Terrain: Wetter/Lampen", System.Diagnostics.Stopwatch.GetElapsedTime(tp).TotalMilliseconds);
             var g = _weather.Globals;
@@ -188,6 +194,7 @@ public sealed class TerrainModule : GameModule
         }
         _streamer.Render(_cam.Position, view * proj, g);
         if (!MapView) _weather?.DrawRain(_renderer, new Vector3(view.M11, view.M21, view.M31));
+        if (!MapView) _weather?.DrawLightning(_renderer, _streamer.RootOffset, _cam.Override?.forward ?? _cam.Forward);
     }
 
     public override void Unload()

@@ -365,7 +365,6 @@ namespace Paradise.Core.Flash
         }
 
         // ---------------------------------------------------------------- Platzhaltertexte
-        [Tooltip("Entwickler-Platzhalter der Textfelder (\"99\", \"xx\", \"_CAR NAME\", \"playerName\" …) ausblenden, solange das Spiel die Variable nicht gesetzt hat.")]
         public bool HidePlaceholders = true;
         readonly Dictionary<int, bool> _placeholder = new Dictionary<int, bool>();
 

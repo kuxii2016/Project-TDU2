@@ -9,9 +9,9 @@ namespace Paradise.Game.Config;
 public static class GpsConfig
 {
     public static bool Voice = true;
-    public static float VoiceVolume = 1f;
+    public static float VoiceVolume = .85f;
     /// <summary>Sprache der Ansagen ("ge", "us", "fr" …); leer = Spielsprache.</summary>
-    public static string VoiceLanguage = "ge";
+    public static string VoiceLanguage; //= "ge";
     public static int VoiceTargetSet = 0;
     // Ziel erreicht: VFGPSVoice016 – im Original (0xCA3C0C -> 0xAEE6F0) unter 50 m Abstand zum Ziel
     public static int VoiceArrived = 16;

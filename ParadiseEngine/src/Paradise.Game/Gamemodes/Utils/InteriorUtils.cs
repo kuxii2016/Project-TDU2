@@ -539,7 +539,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             _carTaskInfo = (car, slot);
             // eigene Autos mit der gekauften Ausstattung (Unity PollCars: TDU2CarChoices), Händlerautos im Werkszustand
             int col = 0, rim = 0, intr = 0;
-            if (_kind != Kind.Dealer && TDU2CarChoices.TryGet(car.FileName, out var ch)) { col = ch.Color; rim = ch.Rim; intr = ch.Interior; }
+            if (_kind != Kind.Dealer && CarChoices.TryGet(car.FileName, out var ch)) { col = ch.Color; rim = ch.Rim; intr = ch.Interior; }
             _carTaskChoice = new CarChoice(col, rim, intr);
             _carTask = Task.Run(() => CarAssets.Load(bnk, db, car, col, false, rim, intr));
         }
@@ -613,7 +613,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         }
         var dc = new DisplayCar { Car = car, Model = model, Assets = a, Pose = pose, Col = col, BoxMin = boxMin, BoxMax = boxMax, Slot = slot };
         // Unity TDU2VehicleEffects.AddStaticShadow: Schattenfläche 1,5 cm über dem Boden, Karosseriegröße x 1,25 / 1,12
-        var (sm, smat, sblob) = TDU2VehicleEffects.CreateStaticShadow(r, a);
+        var (sm, smat, sblob) = VehicleEffects.CreateStaticShadow(r, a);
         dc.ShadowMesh = sm; dc.ShadowMat = smat; dc.ShadowBlob = sblob;
         var sc = Vector3.Transform(new Vector3(center.X, 0f, center.Z), pose);
         var srot = Matrix4x4.CreateFromQuaternion(U.LookRotation(Vector3.Normalize(fwd), Paradise.Core.Math.Vec.Up));
@@ -659,7 +659,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         var phys = Phys;
         foreach (var c in _cars)
         {
-            TDU2Accessories.Forget(c.Model);
+            CarAccessories.Forget(c.Model);
             c.Model.Destroy();
             c.Assets.DestroyTextures();
             c.ShadowMesh?.Dispose(); c.ShadowMat?.Dispose(); c.ShadowBlob?.Dispose();
@@ -1035,7 +1035,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         GAME_MODE_SHOP.PollDealerPreview();                   // Händler: Ausstellungsauto mit der gewählten Ausstattung (auch nach dem Schließen)
         UpdateSpotExterior();                  // nachgeladene Exterior-Platzhalter (Unity UpdateInside)
         if (WorldHiddenWanted != (_t.Streamer?.HideWorld ?? false)) { HideWorld(); RenderFx.ProbeVersion++; }
-        if (!paused) TDU2Accessories.UpdateAll(dt);   // Türen/Fenster der Ausstellungs-/Garagenautos (Unity: jedes Bild im Interieur)
+        if (!paused) CarAccessories.UpdateAll(dt);   // Türen/Fenster der Ausstellungs-/Garagenautos (Unity: jedes Bild im Interieur)
         if (!paused && _carIn != CarIn.Inside && !carList) _fp.Update(dt, _t.Input, Phys);
         if (_t.Input.IsKeyDown(0x7A) && !_f11Was) Paradise.Core.Render.RenderFx.DebugPlanar = !Paradise.Core.Render.RenderFx.DebugPlanar;   // F11: Diagnose Spiegelbild (kann wieder raus)
         _f11Was = _t.Input.IsKeyDown(0x7A);
@@ -1120,7 +1120,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             }
         }
         // Händler/Garage: Fahrzeugmenü der Hilfeleiste (Steuerkreuz unten links): Num4/Num6 Tür links/rechts, Num8/Num2 Fenster hoch/runter
-        if (_aimTarget is DisplayCar ac && (_kind == Kind.Dealer || _kind == Kind.Garage)) CarPad(TDU2Accessories.For(ac.Model));
+        if (_aimTarget is DisplayCar ac && (_kind == Kind.Dealer || _kind == Kind.Garage)) CarPad(CarAccessories.For(ac.Model));
         // Rücktaste im Laufmodus: Fahrzeugdaten/Vergleich ausblenden, bis ein anderes Ziel anvisiert wird
         if (TDU2Controls.KeyPressed(0x08) && _uiAim is DisplayCar && _ui != null)
         {
@@ -1422,7 +1422,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             int diff = r != null ? r.I("_difficulty") : 0;
             int price = r != null ? r.I("_price") : 0;
             // Kilometerzähler wie MngHud; Händlerwagen sind neu, eigene Autos aus dem gespeicherten Zähler
-            double odo = _kind != Kind.Dealer ? TDU2VehicleHud.GetOdometer(c.Id) : 0;
+            double odo = _kind != Kind.Dealer ? VehicleHud.GetOdometer(c.Id) : 0;
             double km = odo / 1000.0, mi = odo / 1609.344;
             long kmW = (long)Math.Floor(km), miW = (long)Math.Floor(mi);
             int aAcc = acc > 0 ? (int)MathF.Round(Mathf.InverseLerp(12f, 2.5f, acc) * 100f) : 0;
@@ -1562,7 +1562,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     }
 
     /// <summary>Fahrzeugmenü der Hilfeleiste: Num4/Num6 Tür links/rechts, Num8 Fenster hoch, Num2 Fenster runter.</summary>
-    internal static bool CarPad(TDU2Accessories? acc)
+    internal static bool CarPad(CarAccessories? acc)
     {
         if (acc == null) return false;
         if (TDU2Controls.KeyPressed(0x64)) { acc.ToggleDoor(true); return true; }

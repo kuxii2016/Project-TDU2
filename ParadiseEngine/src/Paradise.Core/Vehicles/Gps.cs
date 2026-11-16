@@ -14,13 +14,13 @@ namespace Paradise.Core.Vehicles
     /// (Pfad, Restentfernung /HUD/minimap/gps_distance mit /:obj_Distance + /:gps_Unit, Richtungs-Kranz
     /// /HUD/minimap/distance/obj_dist_01..61 – Bild 1 = hell, 101 = aus –, Meldung /HUD/minimap/gps_status "open" mit
     /// /:IsGPSremoved). Am Ziel wird es entfernt. Ansagen aus Sound/Voices/&lt;Sprache&gt;/GPS.bnk (VFGPSVoiceNNN_.wav,
-    /// Zuordnung in <see cref="TDU2GpsSettings"/>). Wird von <see cref="TDU2Minimap"/> angelegt und aktualisiert.
+    /// Zuordnung in <see cref="TDU2GpsSettings"/>). Wird von <see cref="Minimap"/> angelegt und aktualisiert.
     /// Alle Positionen in Spielkoordinaten (Insel).
     /// </summary>
-    public sealed class TDU2Gps
+    public sealed class Gps
     {
-        public static TDU2Gps? Instance { get; private set; }
-        public TDU2Gps() { Instance = this; }
+        public static Gps? Instance { get; private set; }
+        public Gps() { Instance = this; }
 
         public bool HasTarget { get; private set; }
         /// <summary>Ziel in Spielkoordinaten (Insel).</summary>
@@ -622,7 +622,7 @@ namespace Paradise.Core.Vehicles
         public static bool Voice = true;
         public static float VoiceVolume = 1f;
         /// <summary>Sprache der Ansagen ("ge", "us", "fr" …); leer = Spielsprache.</summary>
-        public static string VoiceLanguage = "ge";
+        public static string VoiceLanguage;
         public static int VoiceTargetSet = 0;
         public static int VoiceArrived = 0;
         public static int VoiceTurnLeftSoon = 0;

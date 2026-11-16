@@ -42,7 +42,7 @@ namespace Paradise.Core.Cinematics
         CarPhysics _car;
         CarModel _carModel;
         CarAssets _carAssets;
-        TDU2WheelSpin _wheelSpin;
+        WheelSpin _wheelSpin;
         bool _carGrounded;
         float _groundOffset;
         int _carId = -1;
@@ -97,7 +97,11 @@ namespace Paradise.Core.Cinematics
             string islandDir = IslandDir;
             if (string.IsNullOrEmpty(islandDir)) return false;
             string bankPath = Path.Combine(islandDir, "scenarics", "press_start.bnk");
-            if (!GameFiles.Exists(bankPath)) { Log.Warn("Titel-Kino: " + bankPath + " fehlt"); return false; }
+            if (!GameFiles.Exists(bankPath))
+            {
+                Log.Warn("Titel-Kino: " + bankPath + " fehlt");
+                return false;
+            }
             try
             {
                 var bank = BnkArchive.Open(bankPath);
@@ -219,6 +223,9 @@ namespace Paradise.Core.Cinematics
             _carTask = null; _hubs.Clear(); _carGrounded = false;
             WorldWeather.Override = null;
             _weather = ""; _modifier = "";
+            // Unity TDU2SceneReflection.Release: Szenen-Sonde weg (die Fahrzeugsonde setzt ProbeOn jedes Bild selbst)
+            RenderFx.ProbeOn = false;
+            RenderFx.ProbeFar = 600f;
         }
 
         /// <summary>
@@ -279,7 +286,7 @@ namespace Paradise.Core.Cinematics
                     {
                         _carAssets = task.Result;
                         _carModel = CarModel.Build(_carAssets, _r);
-                        _wheelSpin = TDU2WheelSpin.Attach(_carModel, _carAssets);
+                        _wheelSpin = WheelSpin.Attach(_carModel, _carAssets);
                         _hubs.Clear(); _carGrounded = false;
                     }
                     catch (Exception ex)
@@ -299,7 +306,6 @@ namespace Paradise.Core.Cinematics
                 }
             }
             if (_carModel == null || _carObj == null || _scenes.Count == 0 || _scenes[0] == null) return;
-            // wie OpenTDU2 TitleScene::computeCarWorld: Ursprung der ersten Szene, Darsteller zur Kinozeit
             var sc = _scenes[0];
             float st = _started ? _time : 0f;
             _carPos = sc.ToGame(_carObj.SamplePosition(st));
@@ -310,7 +316,15 @@ namespace Paradise.Core.Cinematics
         /// <summary>Auto der Szene zeichnen (Spielraum -> Render über gameToRender).</summary>
         public void Render(Matrix4x4 gameToRender)
         {
-            if (_carModel == null || !_loaded) return;
+            if (!_loaded) return;
+            // Unity TDU2SceneReflection (Acquire beim Laden): Echtzeit-Sonde an der Kamera für Szenen ohne Spieler-Auto,
+            // sonst haben Lack und Glas keine Spiegelung. Seiten einzeln je Bild, far 2000 (Meer bis zum Horizont).
+            // Läuft nach VehicleManager.Render (ScreenModule nach VehicleModule) und ersetzt dessen „aus“.
+            RenderFx.ProbeOn = true;
+            RenderFx.ProbeStatic = false;
+            RenderFx.ProbeFar = 2000f;
+            RenderFx.ProbePos = Vector3.Transform(CameraGame, gameToRender);
+            if (_carModel == null) return;
             var pos = _carPos;
             // erst ohne Bodenversatz, dann die Naben auf den Boden (FitOnGround)
             _carModel.UpdateTransforms(Matrix4x4.CreateFromQuaternion(_carRot) * Matrix4x4.CreateTranslation(pos) * gameToRender);
@@ -320,7 +334,7 @@ namespace Paradise.Core.Cinematics
         }
 
         /// <summary>
-        /// Das Kino gibt nur die Lage über der Straße vor: wie OpenTDU2 CinematicCar::fitOnGround jede Radnabe auf Straße/Gelände
+        /// Das Kino gibt nur die Lage über der Straße jede Radnabe auf Straße/Gelände
         /// + Reifenradius setzen (Mittelwert, jedes Bild; weich nachgeführt, bei Schnitten springen).
         /// </summary>
         bool FitOnGround(Matrix4x4 gameToRender)

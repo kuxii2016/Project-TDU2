@@ -16,7 +16,7 @@ namespace Paradise.Core.Vehicles
     /// Eine vorübergehende Ausstattung (Testfahrt beim Händler) geht vor und wird nicht gespeichert.
     /// Nur im Hauptthread benutzen (die Ladeaufgaben bekommen die Werte als Kopie).
     /// </summary>
-    public static class TDU2CarChoices
+    public static class CarChoices
     {
         static readonly Dictionary<string, CarChoice> _temp = new(StringComparer.OrdinalIgnoreCase);
         static readonly Dictionary<string, CarChoice> _session = new(StringComparer.OrdinalIgnoreCase);

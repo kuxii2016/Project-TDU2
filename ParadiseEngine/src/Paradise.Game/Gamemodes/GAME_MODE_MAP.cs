@@ -16,10 +16,10 @@ using FlashTexture = Paradise.Core.Flash.Texture2D;
 using FlashTextures = Paradise.Core.Flash.FlashTextures;
 using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
 using FVec = Paradise.Core.Flash.Vector2;
+using Gps = Paradise.Core.Vehicles.Gps;
+using Minimap = Paradise.Core.Vehicles.Minimap;
 using Spot = Paradise.Core.Formats.Spot;
 using SpotsFile = Paradise.Core.Formats.SpotsFile;
-using TDU2Gps = Paradise.Core.Vehicles.TDU2Gps;
-using TDU2Minimap = Paradise.Core.Vehicles.TDU2Minimap;
 using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
 
 namespace Paradise.Game.Gamemodes;
@@ -339,7 +339,7 @@ public class GAME_MODE_MAP : GameModeHandler
         if (spots != null)
             foreach (var s in spots.Spots)
             {
-                string? label = TDU2Minimap.SpotLabel(s.Code);
+                string? label = Minimap.SpotLabel(s.Code);
                 if (label == null) continue;
                 _spots.Add(new MapSpot { spot = s, label = label });
             }
@@ -422,7 +422,7 @@ public class GAME_MODE_MAP : GameModeHandler
             var d = ui.AttachSprite("/pack", _pointChar, name, _pointDepth0 + slot);
             if (d == null) continue;
             string label = _spots[idx].label;
-            var gpsI = TDU2Gps.Instance;
+            var gpsI = Gps.Instance;
             bool tgt = gpsI != null && gpsI.HasTarget && gpsI.IsTargetNear(_spots[idx].spot.Position, 40f);
             string key = label + "|" + idx + (tgt ? "|T" : "");
             if (!_slotLabel.TryGetValue(slot, out var cur) || cur != key)
@@ -773,7 +773,7 @@ public class GAME_MODE_MAP : GameModeHandler
                 _selected = _hover;
                 var sm = _ctx.Terrain?.Streamer;
                 _menuWorld = sm != null ? sm.GameToRender(_spots[_hover].spot.Position) : null;
-                _menuTargetPresent = TDU2Gps.Instance != null && TDU2Gps.Instance.IsTargetNear(_spots[_hover].spot.Position, 40f);
+                _menuTargetPresent = Gps.Instance != null && Gps.Instance.IsTargetNear(_spots[_hover].spot.Position, 40f);
                 ui.SetValue("/:IsTargetPresent", _menuTargetPresent);
                 ui.SetValue("/:IsSpotFavorite", false);
                 ui.SetValue("/:IsTeleportOK", true);
@@ -808,7 +808,7 @@ public class GAME_MODE_MAP : GameModeHandler
     /// </summary>
     void UpdateGpsMarker()
     {
-        var gps = TDU2Gps.Instance; var s = _ctx.Terrain?.Streamer; var ui = _ui!;
+        var gps = Gps.Instance; var s = _ctx.Terrain?.Streamer; var ui = _ui!;
         bool show = gps != null && gps.HasTarget && s != null;
         Vector2? gui = show ? ToGui(s!.GameToRender(gps!.TargetGame)) : null;
         var lp = gui.HasValue ? ui.GuiToLocal("/", F(gui.Value)) : null;
@@ -840,7 +840,7 @@ public class GAME_MODE_MAP : GameModeHandler
     /// <summary>GPS-Ziel unter dem Mauszeiger (Bildschirmabstand wie die Spot-Auswahl)?</summary>
     bool GpsTargetUnderMouse(Vector2 mouse)
     {
-        var gps = TDU2Gps.Instance; var s = _ctx.Terrain?.Streamer;
+        var gps = Gps.Instance; var s = _ctx.Terrain?.Streamer;
         if (gps == null || !gps.HasTarget || s == null) return false;
         var g = ToGui(s.GameToRender(gps.TargetGame));
         if (!g.HasValue) return false;
@@ -851,7 +851,7 @@ public class GAME_MODE_MAP : GameModeHandler
     /// <summary>GPS-Ziel an diesem Punkt (Spielkoordinaten) setzen; liegt dort schon das Ziel: entfernen.</summary>
     void ToggleGpsTarget(Vector3? game, bool? present = null, bool sound = true)
     {
-        var gps = TDU2Gps.Instance;
+        var gps = Gps.Instance;
         if (gps == null || !game.HasValue) { if (sound) FrontendSounds.Play("wrong"); return; }
         bool under = _selected < 0 && GpsTargetUnderMouse(MousePixel());
         bool remove = present ?? (gps.HasTarget && (gps.IsTargetNear(game.Value, 40f) || under));

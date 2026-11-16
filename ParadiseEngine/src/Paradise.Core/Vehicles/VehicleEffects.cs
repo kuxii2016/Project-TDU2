@@ -7,12 +7,12 @@ namespace Paradise.Core.Vehicles
     /// <summary>
     /// Bodenschatten (wie im Spiel: Schattentextur "shadow.2db" aus common_car.bnk unter dem Auto, auf den Boden projiziert),
     /// Reifenspuren (Brems-/Driftspuren bei Längs- oder Querschlupf; Ringpuffer, verblassen nicht), Staub auf Erde/Gras und
-    /// glühende Bremsscheiben (<see cref="TDU2BrakeGlow"/>). Portiert aus TDU2VehicleEffects (Unity). Alles im Unity-Raum
+    /// glühende Bremsscheiben (<see cref="BrakeGlow"/>). Portiert aus TDU2VehicleEffects (Unity). Alles im Unity-Raum
     /// (Fahrzeug-lokal zum Physik-Ursprung), gezeichnet mit VehicleManager.UnityToRender.
     /// </summary>
-    public sealed class TDU2VehicleEffects : IDisposable
+    public sealed class VehicleEffects : IDisposable
     {
-        public TDU2Vehicle Vehicle = null!;
+        public Vehicle Vehicle = null!;
         public bool GroundShadow = true;
         public float ShadowStrength = 0.75f;
         // Reifenspuren
@@ -30,7 +30,7 @@ namespace Paradise.Core.Vehicles
         DustCloud? _dust;
         bool[] _lastOff = Array.Empty<bool>();
         /// <summary>Glühende Bremsscheiben (null = Auto ohne Scheibenmaterial).</summary>
-        public TDU2BrakeGlow? Glow { get; private set; }
+        public BrakeGlow? Glow { get; private set; }
         /// <summary>Darstellungsabsenkung des Geländes (VehicleManager.TerrainVisualLower): Spuren/Schatten auf dem Gelände genauso tief.</summary>
         public static float TerrainDrop;
         static float Drop(Physics.StaticCollider? c) => VehicleManager.IsTerrain(c) ? TerrainDrop : 0f;
@@ -52,9 +52,9 @@ namespace Paradise.Core.Vehicles
         Matrix4x4 _shadowModel;   // Unity-Raum
         float _appliedStrength = -1f;
 
-        public TDU2VehicleEffects(IRenderer r) { _r = r; }
+        public VehicleEffects(IRenderer r) { _r = r; }
 
-        public void Setup(TDU2Vehicle v, CarModel? model, CarAssets? assets)
+        public void Setup(Vehicle v, CarModel? model, CarAssets? assets)
         {
             Vehicle = v;
             var size = model != null ? model.BodySize : new Vector3(1.9f, 1.2f, 4.5f);
@@ -70,7 +70,7 @@ namespace Paradise.Core.Vehicles
             int n = v != null ? v.Wheels.Length : 0;
             _lastPos = new Vector3[n]; _lastValid = new bool[n]; _lastIndex = new int[n]; _lastOff = new bool[n];
             if (Dust) _dust = new DustCloud(_r, 400, DustColor, _blob ?? (_blob = BlobTexture(_r)));
-            Glow = TDU2BrakeGlow.Create(model, _r);
+            Glow = BrakeGlow.Create(model, _r);
             if (Skidmarks && (_skid == null || _skidOwner != _r))
             {
                 // Original-Masken aus Euro/Bnk/fx/skidmarks.bnk (TD_TireSkid: gTarmacSampler / gGroundSampler, Maske = Rot-Kanal)
@@ -127,7 +127,7 @@ namespace Paradise.Core.Vehicles
             _dust?.Shift(d);
         }
 
-        /// <summary>Unity LateUpdate (Lage aus <see cref="TDU2Vehicle.VisualPose"/>); Kamera rechts/oben im Unity-Raum für den Staub.</summary>
+        /// <summary>Unity LateUpdate (Lage aus <see cref="Vehicle.VisualPose"/>); Kamera rechts/oben im Unity-Raum für den Staub.</summary>
         public void LateUpdate(float dt, Vector3 camRight, Vector3 camUp)
         {
             if (Vehicle == null) return;
@@ -296,7 +296,7 @@ namespace Paradise.Core.Vehicles
 
         // Diagnose ([DIAG Skid] im Log, alle 2 s je Rad): Lage des Spurpunkts zur gezeichneten Radposition (Unity-Raum, Fahrzeugachsen)
         float _skidDiagAt;
-        void SkidDiag(int i, TDU2Vehicle.Wheel w, Vector3 p)
+        void SkidDiag(int i, Vehicle.Wheel w, Vector3 p)
         {
             float now = Environment.TickCount64 / 1000f;
             if (i == 0) { if (now < _skidDiagAt) return; _skidDiagAt = now + 2f; }
@@ -305,8 +305,6 @@ namespace Paradise.Core.Vehicles
             var hub = vp.TransformPoint(w.Anchor);
             var d = p - hub;
             float side = Vector3.Dot(d, vp.right), along = Vector3.Dot(d, vp.forward), up = Vector3.Dot(d, Vec.Up);
-            Diagnostics.Log.Info($"[DIAG Skid] Rad {i}: Spurpunkt-Rad seitlich {side:+0.00;-0.00} m, längs {along:+0.00;-0.00} m, Höhe {up:+0.00;-0.00} m, " +
-                                 $"{Vehicle.SpeedKmh:0} km/h, Rad Unity ({hub.X:0.0},{hub.Y:0.0},{hub.Z:0.0}), Untergrund {(w.Surface != 0 ? "Erde" : "Asphalt")}, Gelände-Absenkung {Drop(w.GroundCollider):0.00}");
         }
 
         /// <summary>Spur-Maske aus Euro/Bnk/fx/skidmarks.bnk (tarmac.2db 128x32 / ground.2db 256x32, DXT1, Maske im Rot-Kanal).</summary>

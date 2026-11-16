@@ -170,8 +170,9 @@ public sealed class MapStreamer : IDisposable
     private OceanNoise? _oceanNoise;        // NoiseNMap des Meeres (TD_Ocean)
     private IGpuMaterial? _oceanIsland;     // Meer der Inselebene (ibiza-o / Border: Insel-Colormap) für die große Wasserfläche
     private Vector3 _waterPos;
-    private TDU2Clouds? _clouds;
-    private TDU2Stars? _stars;
+    private Clouds? _clouds;
+    private Stars? _stars;
+    private WetGround? _wetGround;
     private GrassTypes? _grassTypes;
     private IGpuTexture? _grassAtlas, _bushAtlas;
     private int _grassCells = 16, _bushCells = 4;
@@ -221,7 +222,7 @@ public sealed class MapStreamer : IDisposable
         start = default;
         try
         {
-            var gp = TDU2GamePC.Load(_index?.BnkDir);
+            var gp = GamePC.Load(_index?.BnkDir);
             if (gp == null || _index == null) return false;
             bool sameIsland = string.IsNullOrEmpty(gp.StartIsland) || (_index.IslandName ?? Island ?? "").StartsWith(gp.StartIsland, StringComparison.OrdinalIgnoreCase);
             if (gp.HasStartPosition && sameIsland) { start = gp.StartPosition + Vector3.UnitY * 30f; return true; }
@@ -316,8 +317,9 @@ public sealed class MapStreamer : IDisposable
                 Log.Debug("Build Water...");
                 BuildWater(center);
             }
-            if (ShowClouds) _clouds = TDU2Clouds.Load(_index.FxDir, _renderer, _textures);
-            if (ShowStars) _stars = TDU2Stars.Create(_index.BnkDir, _renderer, _textures);
+            if (ShowClouds) _clouds = Clouds.Load(_index.FxDir, _renderer, _textures);
+            if (ShowStars) _stars = Stars.Create(_index.BnkDir, _renderer, _textures);
+            _wetGround = WetGround.Create(_index.BnkDir, _textures);   // Regen auf der Straße (WFX_WetGrd)
             if (LoadGrass)
             {
                 Log.Debug("Initialize Grass...");
@@ -457,6 +459,7 @@ public sealed class MapStreamer : IDisposable
         // Meer (TD_Ocean): NoiseNMap weiterlaufen lassen, Spiegelbild an der Wasserebene (SEAREF_N)
         _oceanNoise?.Update(dt);
         _clouds?.Update(dt, _time);
+        _wetGround?.Update(dt);
         RenderFx.OceanOn = ShowWater && _oceanIsland != null && !WorldWeather.Inside;
         RenderFx.OceanY = GameToRender(new Vector3(0f, WaterLevel, 0f)).Y;
         if (_time >= _nextTexRetry) { _nextTexRetry = _time + 1.0; MaterialFactory.RetryPendingTextures((k, u, v) => _textures?.Get(k, u, v)); }
@@ -2252,6 +2255,8 @@ public sealed class MapStreamer : IDisposable
         _clouds = null;
         _stars?.Dispose();
         _stars = null;
+        _wetGround?.Dispose();
+        _wetGround = null;
         DestroyMapTerrain();
         _powerWires.Dispose();
         foreach (var job in _colliderJobs)

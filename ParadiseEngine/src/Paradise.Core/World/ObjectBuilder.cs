@@ -54,7 +54,7 @@ public sealed class RenderLod
 /// <summary>Ein platziertes Objekt (Unity: GameObject mit MeshRenderer/LODGroup). Koordinaten = Spielkoordinaten.</summary>
 public sealed class RenderObject
 {
-    /// <summary>Faktor auf alle LOD-Umschaltdistanzen (Unity QualitySettings.lodBias) – <see cref="TDU2RenderDistance"/>.</summary>
+    /// <summary>Faktor auf alle LOD-Umschaltdistanzen (Unity QualitySettings.lodBias) – <see cref="RenderDistance"/>.</summary>
     public static float LodBias = 1f;
 
     public string Name = "";

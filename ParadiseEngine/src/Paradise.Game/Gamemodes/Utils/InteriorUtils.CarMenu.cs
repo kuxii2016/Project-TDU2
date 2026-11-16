@@ -154,8 +154,8 @@ public abstract partial class InteriorUtils
     internal static CarIn _carIn;
     internal static DisplayCar? _inCar;
     internal static Task? _inSoundTask;
-    internal static TDU2VehicleAudio? _inAudio;
-    internal static TDU2Accessories? _inAcc;
+    internal static VehicleAudio? _inAudio;
+    internal static CarAccessories? _inAcc;
     internal static float _inYaw, _inPitch, _inRpm, _inStartT;
     internal static bool _inEngine, _inHornClick, _inBackClick;
 
@@ -173,7 +173,7 @@ public abstract partial class InteriorUtils
             var a = dc.Assets; string bnk = Vm.BnkDir; var car = dc.Car;
             _inSoundTask = Task.Run(() => CarAssets.LoadSound(a, bnk, car));
         }
-        _inAcc = TDU2Accessories.For(dc.Model);
+        _inAcc = CarAccessories.For(dc.Model);
         PlaceDealerCam();
         _carIn = CarIn.Inside;
         _ui.SetVisible("/enter_car", true);   // Ladeanzeige / Innenansicht des Films (im Laufmodus ausgeblendet)
@@ -231,7 +231,7 @@ public abstract partial class InteriorUtils
         if (_inSoundTask != null && _inSoundTask.IsCompleted) _inSoundTask = null;
         if (_inAudio == null && _inSoundTask == null && dc.Assets?.Sound != null)
         {
-            _inAudio = new TDU2VehicleAudio { External = true, InteriorView = true, EngineOn = false };
+            _inAudio = new VehicleAudio { External = true, InteriorView = true, EngineOn = false };
             _inAudio.Setup(dc.Assets);
         }
         if (_inAcc != null) _inAcc.Audio = _inAudio;

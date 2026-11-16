@@ -19,7 +19,7 @@ public static class Log
     private static readonly ConcurrentQueue<string> _ring = new();
     private const int RingSize = 200;
 
-    public static LogLevel MinLevel { get; set; } = LogLevel.Info;
+    public static LogLevel MinLevel { get; set; } = LogLevel.Debug;
 
     public static void Init(string? tag = null)
     {
@@ -61,6 +61,7 @@ public static class Log
         {
             Console.WriteLine(line);
             _file?.WriteLine(line);
+            System.Diagnostics.Debug.WriteLine(line);
         }
     }
 }

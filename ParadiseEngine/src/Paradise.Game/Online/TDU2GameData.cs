@@ -253,4 +253,13 @@ public static class TDU2GameData
             ApplyStatusIcons(f, d.Sprite);
         }
     }
+
+
+    ///Native Player names general.bnk -> av_name_08 bis av_name_01
+    ///werte club_hierarchy <- Disable
+    ///GlobalLevel <- Playerlevel
+    ///distance <- Entfernung zum Spieler (km)
+    ///av_name <- Playername
+    ///av_name_08 <> av_name_01 states: frame 65 == friends, frame 63 == Clubmember same Club, frame 23 == Club2, frame 16 == Club1, frame 8 == player/default
+    ///Problem, UI ausrichtung muss manuell gemacht werden
 }

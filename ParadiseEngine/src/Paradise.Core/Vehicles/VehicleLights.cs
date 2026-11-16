@@ -7,26 +7,17 @@ namespace Paradise.Core.Vehicles
 {
     /// <summary>
     /// Fahrzeuglichter: Lichtgläser (TEXLIGHT + Funktionsmaske lgt_g im Shader TDU2/Car: Licht, Bremse, Rückfahr, Blinker)
-    /// und Verkehrsauto-Lampen. Portiert aus TDU2VehicleLights (Unity), Teil "Lichtgläser"/"Verkehrsauto-Lampen".
+    /// und Verkehrsauto-Lampen. Teil "Lichtgläser"/"Verkehrsauto-Lampen".
     /// Unity-Lichter (Scheinwerfer-Spots an FA_L, Brems-/Rückfahr-Punktlichter an FA_B/FA_R) als Engine-Lampen
     /// (<see cref="CollectLamps"/>), Flares (TDU2/Flare) an den FA_-Ankern (<see cref="RenderFlares"/>).
-    /// Materialien werden nur bei geänderten Werten neu hochgeladen (in Unity: SetFloat je Bild).
+    /// Materialien werden nur bei geänderten Werten neu hochgeladen
     /// </summary>
-    public sealed class TDU2VehicleLights
+    public sealed class VehicleLights
     {
         public enum Kind { Head, Brake, Reverse, Tail, Indicator }
 
-        public TDU2Vehicle? Vehicle;
-
-        /// <summary>0 = aus, 1 = Abblendlicht, 2 = Fernlicht. Mit <see cref="OriginalControl"/>: Lichtmodus des Originals
-        /// (ctrl+0x1d4): 0 alles aus, 1 normal (Wetter schaltet), 2 Scheinwerfer erzwungen.</summary>
+        public Vehicle? Vehicle;
         public int Headlights;
-
-        /// <summary>
-        /// Lichtsteuerung wie das Original (Game/Config VehicleConfig.OriginalLightControl; exe FUN_00c588d0 / FUN_00c57ef0,
-        /// Docs OpenTDU2 docs/re/car_lights_spec.md §2): GLOSSFCT der Lichtgläser je Bild aus Bremse, Rückfahrgang, Wetter
-        /// (car_headlight_flare_intensity / car_poslight_intensity) und Blinker (1,0 s Takt, 0,6 s an); Gewichte im Shader 1.
-        /// </summary>
         public static bool OriginalControl;
         public bool IndicatorLeft;
         public bool IndicatorRight;
@@ -44,13 +35,12 @@ namespace Paradise.Core.Vehicles
         /// <summary>Reichweite der zusätzlichen hinteren Punktlichter.</summary>
         public float RearLightRange = 1.5f;
         /// <summary>Helligkeit der zusätzlichen hinteren Punktlichter.</summary>
-        public float RearLightIntensity = 0.5f;
+        public float RearLightIntensity = 1f;
 
-        // Unity-Lichter: Lage im Fahrzeugraum (Unity)
         readonly List<Vector3> _headPos = new List<Vector3>();
         readonly Vector3[] _brakePos = new Vector3[2], _reversePos = new Vector3[2];
         float _brakeOn; bool _reverseOn; int _hlOn;
-        public float Brightness = 0.8f;   // Engine ohne Bloom: Flares kräftiger (Unity 0,3)
+        public float Brightness = 1.5f;   // Engine ohne Bloom: Flares kräftiger (Unity 0,3)
         public float LensBrightness = 1f;
 
         readonly List<(CarMaterial mat, int pos)> _lenses = new List<(CarMaterial, int)>();
@@ -61,9 +51,7 @@ namespace Paradise.Core.Vehicles
         CarModel? _model;
 
         float _blinkT;
-
-        // Flares (Unity: TDU2/Flare-Quads an den FA_-Ankern, zur Kamera gedreht)
-        public float FlareSize = 0.22f;   // Engine ohne Bloom: etwas größer (Unity 0,16)
+        public float FlareSize = 0.22f;
         sealed class Flare { public Kind Kind; public int Side; public Vector3 Local; public Vector4 Color; }
         readonly List<Flare> _flares = new List<Flare>();
         float _head, _tail, _brake; bool _reverse, _left, _right;
@@ -72,7 +60,7 @@ namespace Paradise.Core.Vehicles
 
         public bool BlinkOn => OriginalControl ? (_blinkT % 1f) < 0.6f : (_blinkT * BlinkHz) % 1f < 0.5f;
 
-        public void Setup(TDU2Vehicle vehicle, CarModel? model)
+        public void Setup(Vehicle vehicle, CarModel? model)
         {
             Vehicle = vehicle;
             _model = model;
@@ -110,7 +98,7 @@ namespace Paradise.Core.Vehicles
                 else if (m.Desc.UseMask > 0.5f && LensBrightness != 1f) { m.Desc.LightIntensity *= LensBrightness; _changed.Add(m); }
             }
 
-            // Unity-Lichter an den FA_-Ankern (Scheinwerfer: FA_L ohne "1_C", höchstens zwei; hinten je Seite)
+            // FA_-Ankern (Scheinwerfer: FA_L ohne "1_C", höchstens zwei; hinten je Seite)
             _headPos.Clear();
             Vector3? Anchor(char kind, int side)
             {
@@ -165,7 +153,7 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>
-        /// Unity-Lichter als Engine-Lampen (Render-Raum): Scheinwerfer (Spot 70/140 m, 75°/50°, Intensität 2/2,8),
+        /// Scheinwerfer (Spot 70/140 m, 75°/50°, Intensität 2/2,8),
         /// Brems-/Rückfahr-Punktlichter (1,5 m). unityToRender = Fahrzeug-Unity-Raum -> Render-Raum.
         /// </summary>
         public void CollectLamps(List<LampLight> output, VehiclePose tr, Matrix4x4 unityToRender)
@@ -174,7 +162,7 @@ namespace Paradise.Core.Vehicles
             var headColor = new Vector3(1f, 0.95f, 0.85f);
             if (_hlOn > 0)
             {
-                // Unity: LookRotation(AngleAxis(hl == 2 ? 1 : 5, right) * fwd, up)
+                // LookRotation(AngleAxis(hl == 2 ? 1 : 5, right) * fwd, up)
                 var beam = U.Rot(U.AngleAxis(_hlOn == 2 ? 1f : 5f, tr.right), tr.forward);
                 var beamR = Vector3.Normalize(Vector3.TransformNormal(beam, unityToRender));
                 float range = _hlOn == 2 ? 140f : 70f, angle = _hlOn == 2 ? 50f : 75f;
@@ -206,7 +194,6 @@ namespace Paradise.Core.Vehicles
             Direction = Vec.Down,
         };
 
-        /// <summary>Unity Update + LateUpdate.</summary>
         public void Update(float dt)
         {
             _blinkT += dt;
@@ -314,12 +301,11 @@ namespace Paradise.Core.Vehicles
         void UpdateOriginalState(float dt)
         {
             _origMode = System.Math.Clamp(Headlights, 0, 2);
-            float flare = TDU2CarLighting.HeadlightFlare < 0.05f ? 0f : TDU2CarLighting.HeadlightFlare;
-            float pl = TDU2CarLighting.PosLight < 0.05f ? 0f : TDU2CarLighting.PosLight;
+            float flare = CarLighting.HeadlightFlare < 0.05f ? 0f : CarLighting.HeadlightFlare;
+            float pl = CarLighting.PosLight < 0.05f ? 0f : CarLighting.PosLight;
             _forcedT = _origMode == 2 ? _forcedT + dt : 0f;
             _origHead = _origMode == 2 ? flare + 1f : _origMode == 1 ? flare : 0f;
             _origPos = _origMode == 1 ? pl : _origMode == 2 ? (_forcedT > 0.2f ? flare : 0f) : 0f;
-            // Unity-Teile (Spot-Lichter, Flares, Instrumente) folgen dem Zustand: Scheinwerfer an, sobald der Kanal leuchtet
             _hlOn = _origHead > 0.001f ? (_origMode == 2 ? 2 : 1) : 0;
             _head = System.MathF.Min(_origHead, 1.4f);
             _tail = _origPos;
@@ -334,7 +320,7 @@ namespace Paradise.Core.Vehicles
             _ => new Vector4(1f, 0.45f, 0.02f, 1f),
         };
 
-        /// <summary>Unity FlareTexture(): weicher Schein + Kern + waagrechter Streifen (64x64).</summary>
+        /// <summary> weicher Schein + Kern + waagrechter Streifen (64x64).</summary>
         static IGpuTexture FlareTexture(IRenderer r)
         {
             const int S = 64;
@@ -354,8 +340,8 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>
-        /// Unity Update(), Teil "Flares": Quad je FA_-Anker, 5 cm zur Kamera versetzt, LookRotation(quad - cam, cam.up),
-        /// Größe FlareSize (x1,3 Scheinwerfer, x0,9 Rücklicht), Intensität k x Brightness. Alles im Unity-Raum.
+        /// Teil "Flares": Quad je FA_-Anker, 5 cm zur Kamera versetzt, LookRotation(quad - cam, cam.up),
+        /// Größe FlareSize (x1,3 Scheinwerfer, x0,9 Rücklicht), Intensität k x Brightness.
         /// </summary>
         public void RenderFlares(IRenderer r, VehiclePose tr, Vector3 camPos, Vector3 camUp, Matrix4x4 unityToRender)
         {
@@ -410,7 +396,7 @@ namespace Paradise.Core.Vehicles
             if (n > 0) r.DrawDynamic(_fv.AsSpan(0, n * 4), _ft.AsSpan(0, n * 6), _flareMat, unityToRender);
         }
 
-        /// <summary>Flare-Material/Textur freigeben (Unity: _owned zerstören).</summary>
+        /// <summary>Flare-Material/Textur freigeben</summary>
         public void Dispose() { _flareMat?.Dispose(); _flareTex?.Dispose(); _flareMat = null; _flareTex = null; }
 
         void Set(CarMaterial m, ref float field, float value)

@@ -16,10 +16,10 @@ namespace Paradise.Core.Vehicles
     ///  - Außenkamera: compteur_ext, Stoßstange/Motorhaube: compteur_int, Cockpit: speed_cokpit
     /// Portiert aus TDU2VehicleHud (Unity). Kilometerzähler nur für die Sitzung (Unity: PlayerPrefs; folgt mit dem Spielstand).
     /// </summary>
-    public sealed class TDU2VehicleHud : IDisposable
+    public sealed class VehicleHud : IDisposable
     {
-        public TDU2Vehicle? Vehicle;
-        public TDU2VehicleCamera? VehicleCamera;
+        public Vehicle? Vehicle;
+        public VehicleCamera? VehicleCamera;
         public bool ShowHud = true;
         public string? Error { get; private set; }
 
@@ -43,7 +43,7 @@ namespace Paradise.Core.Vehicles
         bool _hasLastPos;
         int _width = 1, _height = 1;
 
-        public void Bind(string bnkDir, TDU2Vehicle? vehicle, CarAssets? assets, TDU2VehicleCamera? cam)
+        public void Bind(string bnkDir, Vehicle? vehicle, CarAssets? assets, VehicleCamera? cam)
         {
             SaveOdometer();
             Vehicle = vehicle; VehicleCamera = cam; Error = null;
@@ -128,7 +128,6 @@ namespace Paradise.Core.Vehicles
             return Mathf.Lerp(o0, o1, Mathf.Clamp01((value - v0) / Mathf.Max(1e-3f, v1 - v0)));
         }
 
-        /// <summary>Unity LateUpdate. width/height = Fenstergröße (Screen.width/height).</summary>
         public void LateUpdate(int width, int height)
         {
             _width = width; _height = height;
@@ -163,7 +162,7 @@ namespace Paradise.Core.Vehicles
             _player.SetVisible("/HUD/speed_cokpit_sh", cockpit);
         }
 
-        void UpdateOdometer(TDU2Vehicle v)
+        void UpdateOdometer(Vehicle v)
         {
             var p = v.transform.position;
             if (_hasLastPos)

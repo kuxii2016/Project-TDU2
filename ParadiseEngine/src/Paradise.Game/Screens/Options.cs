@@ -71,7 +71,7 @@ public sealed class Options
         int aaDef = _graphics.AntiAliasing >= 8 ? 3 : _graphics.AntiAliasing >= 4 ? 2 : _graphics.AntiAliasing >= 2 ? 1 : 0;
         Choice("opts:vide:praa", "anti_alias", () => new[] { Off, "2x", "4x", "8x" }, aaDef, i => GraphicsSettings.Msaa = new[] { 1, 2, 4, 8 }[i]);
         int lodDef = _graphics.LodBias < 0.8f ? 0 : _graphics.LodBias > 1.5f ? 2 : 1;
-        Choice("opts:vide:prlo", "lod", () => LMH, lodDef, i => TDU2RenderDistance.SetBaseLodBias(new[] { 0.6f, 1f, 2f }[i]));
+        Choice("opts:vide:prlo", "lod", () => LMH, lodDef, i => RenderDistance.SetBaseLodBias(new[] { 0.6f, 1f, 2f }[i]));
         Choice("opts:vide:caop", "car_opponent", () => LMH, 2, null);
         Choice("opts:vide:txfl", "texture", () => LMH, System.Math.Clamp(_graphics.TextureQuality, 0, 2), i => GraphicsSettings.TextureMipLimit = 2 - i);
         Choice("opts:vide:fxqu", "fx_qual", () => LMH, System.Math.Clamp(_graphics.EffectsQuality, 0, 2), GraphicsConfig.ApplyEffects);

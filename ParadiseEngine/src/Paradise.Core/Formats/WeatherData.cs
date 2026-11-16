@@ -9,10 +9,9 @@ namespace Paradise.Core.Formats;
 public enum WeatherKind { Sunny = 0, Cloudy = 1, Rainy = 2, BeforeRain = 3, AfterRain = 4, Tempest = 5 }
 
 /// <summary>
-/// islands/&lt;insel&gt;/fx/game_weathers.xmb (big-endian XMBF): der Spieltag als 24 Schlüsselbilder (00, 01.30 ... 23.20),
+/// islands/insel/fx/game_weathers.xmb (big-endian XMBF): der Spieltag als 24 Schlüsselbilder (00, 01.30 ... 23.20),
 /// je 7 Blöcke: Block 0 nur zeitabhängig (sundirection, Tunnel), Block 1-6 die Wetterarten mit je ~151 Parametern
 /// (sun_diffuse/ambient, fog_*, rain_*, thunder_*, outside_street_lightmap, spot_*_lightmap_day_night ...).
-/// Portiert aus dem Unity-Projekt (TDU2WeatherData).
 /// </summary>
 public sealed class WeatherData
 {
@@ -65,8 +64,8 @@ public sealed class WeatherData
     static int ToInt(Dictionary<string, object?> d, string k) => d.TryGetValue(k, out var v) && v != null ? Convert.ToInt32(v, CultureInfo.InvariantCulture) : 0;
     static float F(Dictionary<string, object?> d, string k) => d.TryGetValue(k, out var v) && v != null ? Convert.ToSingle(v, CultureInfo.InvariantCulture) : 0f;
 
-    // ------------------------------------------------------------------ Kino-Modifikatoren (fx/cinematic_modifiers.xmb) – Unity TDU2WeatherData
-    /// <summary>Ein Modifikator ("wmod:&lt;Name&gt;" der .cin): überschreibt einzelne Parameter eines Kino-Wetters je Schnitt,
+    // ------------------------------------------------------------------ Kino-Modifikatoren (fx/cinematic_modifiers.xmb)
+    /// <summary>Ein Modifikator ("wmod:Name" der .cin): überschreibt einzelne Parameter eines Kino-Wetters je Schnitt,
     /// meist die Sonnenrichtung, dazu Licht, Schatten, Nebel, Bloom. weather_name = Wetter, für das er gilt.</summary>
     public sealed class Modifier
     {
@@ -108,7 +107,7 @@ public sealed class WeatherData
     }
 
     /// <summary>
-    /// Kino-Wetter "weat:&lt;weather&gt;" mit Modifikator "wmod:&lt;modifier&gt;": Schlüssel des Wetters, darauf die Parameter des
+    /// Kino-Wetter "weat:weather" mit Modifikator "wmod:modifier": Schlüssel des Wetters, darauf die Parameter des
     /// Modifikators (zuerst der mit passendem weather_name, sonst irgendeiner dieses Namens). Ein Schlüssel, der selbst so heißt
     /// wie der Modifikator, hat Vorrang. Ergebnis je Paar zwischengespeichert (gleiche Referenz je Schnitt).
     /// </summary>

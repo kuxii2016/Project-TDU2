@@ -28,7 +28,7 @@ public class GAME_MODE_TESTCAR : GAME_MODE_FREERIDE
         if (dc?.Car == null || InteriorUtils._spot == null) return;
         var car = dc.Car; var spot = InteriorUtils._spot; var prev = InteriorUtils._lastCar; var choice = GAME_MODE_SHOP.Choice();
         InteriorUtils.EndDealerMenu();
-        TDU2CarChoices.SetTemporary(car.FileName, choice);
+        CarChoices.SetTemporary(car.FileName, choice);
         TestDriveActive = true;
         _testCar = car; _testSpot = spot; _testPrev = prev;
         _testEnd = InteriorUtils._time + MathF.Max(10f, TestDriveSeconds);
@@ -76,7 +76,7 @@ public class GAME_MODE_TESTCAR : GAME_MODE_FREERIDE
     {
         if (!TestDriveActive) return;
         TestDriveActive = false;
-        if (_testCar != null) TDU2CarChoices.ClearTemporary(_testCar.FileName);
+        if (_testCar != null) CarChoices.ClearTemporary(_testCar.FileName);
         var h = InteriorUtils.Vm?.Minimap?.Hud;
         if (h != null && _testHud)
         {

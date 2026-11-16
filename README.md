@@ -13,6 +13,15 @@ The goal is to regain full control over rendering, performance, resource managem
   <img src="./Screenshots/image2.png" width="49%" alt="Project TDU2 - Custom Engine"/>
 </p>
 
+<p align="center">
+  <img src="./Screenshots/atferrain.PNG" width="49%" alt="Project TDU2 - Custom Engine"/>
+  <img src="./Screenshots/rain.PNG" width="49%" alt="Project TDU2 - Custom Engine"/>
+</p>
+
+<p align="center">
+  <img src="./Screenshots/thunder.PNG" width="49%" alt="Project TDU2 - Custom Engine"/>
+</p>
+
 ---
 
 ## Why a Custom Engine?

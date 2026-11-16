@@ -4,7 +4,7 @@ namespace Paradise.Game.Config;
 public sealed class LoginConfig
 {
     /// <summary>Autosave-Abstand in Sekunden (Unity TDU2GameData.AutosaveSeconds).</summary>
-    public float AutosaveSeconds { get; set; } = 30f;
+    public float AutosaveSeconds { get; set; } = 240f;
     /// <summary>Neue Profile wie im Spiel nach GamePC.cpr starten (Auto, Garage, Geld, Standard-Haus). Aus = Startauto des Servers.</summary>
     public bool GamePcStart { get; set; } = true;
     /// <summary>Server-Port, wenn --server keinen angibt (Unity TDU2GameData.TcpPort).</summary>

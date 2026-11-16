@@ -17,7 +17,7 @@ namespace Paradise.Core.World;
 ///   DefaultGarageConfig 379 …          Autos in der Garage (_id_car)
 ///   DefaultMoney 27000                 Startgeld
 /// </summary>
-public sealed class TDU2GamePC
+public sealed class GamePC
 {
     public sealed class Entry
     {
@@ -37,13 +37,13 @@ public sealed class TDU2GamePC
     public readonly List<int> GarageCars = new();
     public long DefaultMoney;
 
-    private static TDU2GamePC? _cached;
+    private static GamePC? _cached;
     private static string? _cachedKey;
 
     /// <summary>
     /// GamePC.cpr suchen (Ordner der exe = StreamingAssets, neben bzw. über dem Bnk-Ordner) und lesen; null = nicht gefunden.
     /// </summary>
-    public static TDU2GamePC? Load(string? bnkDir)
+    public static GamePC? Load(string? bnkDir)
     {
         string key = bnkDir ?? "";
         if (_cached != null && _cachedKey == key) return _cached;
@@ -93,7 +93,7 @@ public sealed class TDU2GamePC
         return null;
     }
 
-    public static TDU2GamePC Parse(byte[] raw)
+    public static GamePC Parse(byte[] raw)
     {
         byte[] b = LooksLikeText(raw) ? raw : CprCrypto.Decrypt(raw);
         int len = b.Length;
@@ -102,7 +102,7 @@ public sealed class TDU2GamePC
         var sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) sb.Append((char)b[i]);
         string text = sb.ToString();
-        var g = new TDU2GamePC();
+        var g = new GamePC();
         string section = "";
         foreach (var rawLine in text.Split('\n'))
         {

@@ -88,6 +88,7 @@ namespace Paradise.Game.Gamemodes
         // ------------------------------------------------------------------ Umgebungsgeräusche (ambiences.xmb + Sektor-Klangzonen .psa)
         static TDU2Ambience? _ambience;
         static string? _ambienceIsland;
+        static int _thunderSeen = Paradise.Core.World.Lightning.Strikes;
 
         /// <summary>
         /// Jedes Bild (aus ScreenModule.Update): Umgebung der Insel an der Kameraposition. Hörbar in der Welt (Freifahrt,
@@ -112,6 +113,9 @@ namespace Paradise.Game.Gamemodes
             var p = streamer.ViewerGame;
             int zone = active ? streamer.AmbienceZoneAt(p.X, p.Z) : -1;
             _ambience.Update(zone, Paradise.Core.World.WorldWeather.Night > 0.5f, Paradise.Core.World.WorldWeather.Rain, active, dt);
+            // Donner: WFX_Lightning meldet den Einschlag, die Umgebung spielt ihn (Original 0x657340 auf dem Umgebungs-Manager)
+            int strikes = Paradise.Core.World.Lightning.Strikes;
+            if (strikes != _thunderSeen) { _thunderSeen = strikes; _ambience.PlayLightning(); }
         }
 
         public static void DisposeAmbience() { _ambience?.Dispose(); _ambience = null; _ambienceIsland = null; }

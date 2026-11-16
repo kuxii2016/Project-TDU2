@@ -8,10 +8,10 @@ namespace Paradise.Core.Vehicles
     /// bekommt eine Stimme (Unity: AudioSource); Tonhöhe und Lautstärke folgen den Kurven über Drehzahl, Tempo, Motormoment
     /// und Radschlupf. Portiert aus TDU2VehicleAudio (Unity), Ausgabe über Paradise.Core.Audio (2D).
     /// </summary>
-    public sealed class TDU2VehicleAudio : IDisposable
+    public sealed class VehicleAudio : IDisposable
     {
-        public TDU2Vehicle? Vehicle;
-        public float MasterVolume = 0.05f;
+        public Vehicle? Vehicle;
+        public float MasterVolume = 0.09f;
         public bool InteriorView;
         /// <summary>Motor/Abgas in der Innenansicht (Cockpit) leiser</summary>
         public float InteriorEngineFactor = 0.5f;
@@ -107,7 +107,6 @@ namespace Paradise.Core.Vehicles
             return f;
         }
 
-        /// <summary>Unity Update (je Bild).</summary>
         public void Update(float dt)
         {
             if (Vehicle == null && !External) return;

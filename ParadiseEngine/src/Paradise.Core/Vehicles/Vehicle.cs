@@ -18,7 +18,7 @@ namespace Paradise.Core.Vehicles
     /// Reifen: Magic-Formula-ähnliche Kurven mit kombiniertem Schlupf (Reibellipse), Radspin implizit integriert.
     /// Koordinaten: Unity-Fahrzeugraum (+Z vorne, +X rechts, +Y oben).
     /// </summary>
-    public sealed class TDU2Vehicle
+    public sealed class Vehicle
     {
         public sealed class Wheel
         {
@@ -128,7 +128,7 @@ namespace Paradise.Core.Vehicles
                 float before = cgY - groundY;
                 if (before > maxH) cgY = groundY + maxH;
                 _rolloverG = track / (2f * Mathf.Max(0.05f, cgY - groundY));
-                if (PhysLog) Paradise.Core.Diagnostics.Log.Info($"[DIAG Feder] Schwerpunkt: DB {(c != null ? c.GravityCenterHeight : 0f):0.#} cm -> {before:0.00} m über Boden (Kippgrenze {track / (2f * Mathf.Max(0.01f, before)):0.00} g), verwendet {cgY - groundY:0.00} m (Kippgrenze {track / (2f * Mathf.Max(0.01f, cgY - groundY)):0.00} g), Spur {track:0.00} m");
+                if (PhysLog) Paradise.Core.Diagnostics.Log.Debug($"[DIAG Feder] Schwerpunkt: DB {(c != null ? c.GravityCenterHeight : 0f):0.#} cm -> {before:0.00} m über Boden (Kippgrenze {track / (2f * Mathf.Max(0.01f, before)):0.00} g), verwendet {cgY - groundY:0.00} m (Kippgrenze {track / (2f * Mathf.Max(0.01f, cgY - groundY)):0.00} g), Spur {track:0.00} m");
             }
             _rb.centerOfMass = new Vector3(0f, cgY, cgZ);
             #endregion
@@ -170,7 +170,7 @@ namespace Paradise.Core.Vehicles
                 if (isBike && !w.Front) w.MuLat *= BikeRearGrip;
                 w.Driven = c.Drive == 1 || (c.Drive == 3 && w.Front) || (c.Drive != 1 && c.Drive != 3 && !w.Front);
                 // Prüf-Log Fahrwerk (Vergleich mit Unity): DB-Werte und abgeleitete Feder/Dämpfer
-                if (PhysLog) Paradise.Core.Diagnostics.Log.Info($"[DIAG Feder] {w.Name}: DB Feder {rate:0.###} Dämpfer {damp:0.###} Weg {(w.Front ? c.SuspensionLengthFront : c.SuspensionLengthRear):0.#} mm -> SpringK {w.SpringK:0} N/m, DamperC {w.DamperC:0} Ns/m (krit. {crit:0}, Rohwert {damp * 1000f:0}), StaticLoad {w.StaticLoad:0} N, TravelUp {w.TravelUp:0.000}, Droop {w.Droop:0.000}, Radius {w.Radius:0.000}, Anker ({w.Anchor.X:0.000};{w.Anchor.Y:0.000};{w.Anchor.Z:0.000}), Masse {m:0} kg");
+                if (PhysLog) Paradise.Core.Diagnostics.Log.Debug($"[DIAG Feder] {w.Name}: DB Feder {rate:0.###} Dämpfer {damp:0.###} Weg {(w.Front ? c.SuspensionLengthFront : c.SuspensionLengthRear):0.#} mm -> SpringK {w.SpringK:0} N/m, DamperC {w.DamperC:0} Ns/m (krit. {crit:0}, Rohwert {damp * 1000f:0}), StaticLoad {w.StaticLoad:0} N, TravelUp {w.TravelUp:0.000}, Droop {w.Droop:0.000}, Radius {w.Radius:0.000}, Anker ({w.Anchor.X:0.000};{w.Anchor.Y:0.000};{w.Anchor.Z:0.000}), Masse {m:0} kg");
                 #endregion
             }
             _frontDriveShare = c.Drive == 1 ? Mathf.Clamp(1f - Mathf.Clamp(c.DiffValueCentral, 0f, 100f) / 100f * 0.6f, 0.3f, 0.5f) : c.Drive == 3 ? 1f : 0f;
@@ -220,7 +220,7 @@ namespace Paradise.Core.Vehicles
                 // DIAG Body: Reaktion des Aufbaus nach einer Federkraft-Spitze (gleiche Zeile im Unity-Projekt)
                 _bodyLog--;
                 var avl = tr.InverseTransformDirection(_rb.angularVelocity);
-                Paradise.Core.Diagnostics.Log.Info($"[DIAG Body] {40 - _bodyLog,2}: vy {vel.Y:+0.00;-0.00} m/s, Nick {avl.X:+0.00;-0.00} Gier {avl.Y:+0.00;-0.00} Roll {avl.Z:+0.00;-0.00} rad/s, Höhe {tr.position.Y - _bodyY0:+0.000;-0.000} m, Einfederung {string.Join(" ", System.Array.ConvertAll(Wheels, w => w.Grounded ? w.Compression.ToString("0.000") : "frei"))}, Fz {string.Join(" ", System.Array.ConvertAll(Wheels, w => w.Fz.ToString("0")))}");
+                Paradise.Core.Diagnostics.Log.Debug($"[DIAG Body] {40 - _bodyLog,2}: vy {vel.Y:+0.00;-0.00} m/s, Nick {avl.X:+0.00;-0.00} Gier {avl.Y:+0.00;-0.00} Roll {avl.Z:+0.00;-0.00} rad/s, Höhe {tr.position.Y - _bodyY0:+0.000;-0.000} m, Einfederung {string.Join(" ", System.Array.ConvertAll(Wheels, w => w.Grounded ? w.Compression.ToString("0.000") : "frei"))}, Fz {string.Join(" ", System.Array.ConvertAll(Wheels, w => w.Fz.ToString("0")))}");
             }
             float g = 9.81f;
             UpdateSteering(dt);
@@ -431,25 +431,69 @@ namespace Paradise.Core.Vehicles
                 return;
             }
             AnyWheelGrounded = true;
-            // Radmitte relativ zur Konstruktionslage (+ = eingefedert)
+
+            // Radmitte relativ zur Konstruktionslage (+ = eingefedert).
+            // Immer die tatsächliche Kontaktposition verwenden.
+            // Keine künstliche Begrenzung der Kompression: Sie verfälscht
+            // den Federweg und verzögert den Kraftaufbau nach einem Sprung.
             w.Compression = w.TravelUp - (dist - w.Radius);
-            // Reifen/Radmasse: das Rad kann nicht in einem Schritt 10 cm auf eine Kante springen – Einfedern höchstens mit
-            // WheelMaxRise m/s, den Rest nimmt der Reifen auf (vorher: Strahl springt -> Dämpfer + Anschlagpuffer bis 150 kN, Auto
-            // hüpft). 0 = wie Unity.
-            if (WheelMaxRise > 0f) w.Compression = Mathf.Min(w.Compression, w.PrevCompression + WheelMaxRise * dt);
+
             float cv = (w.Compression - w.PrevCompression) / dt;
-            float f = w.StaticLoad + w.SpringK * w.Compression + DamperForce(w.DamperC, cv);
-            if (w.Compression > w.TravelUp * 0.9f)
+
+            // Grundfeder und Dämpfer
+            float springForce = w.SpringK * w.Compression;
+            float damperForce = DamperForce(w.DamperC, cv);
+
+            float f = w.StaticLoad + springForce + damperForce;
+
+            // Progressiver Anschlagpuffer: späterer Einsatz und geringere
+            // Zusatzkraft, damit harte Landungen nicht zum Katapult werden.
+            float bumpStart = w.TravelUp * 0.95f;
+
+            if (w.Compression > bumpStart)
             {
-                // Anschlagpuffer (Gummi): beim Einfedern voll, beim Ausfedern nur 30 % (Hysterese) – sonst gibt er die Energie ganz
-                // zurück und das Auto schaukelt von einem Anschlag zum anderen (links/rechts, Log 04:28: 88 kN bei 13 cm Einfederung)
-                float bump = w.SpringK * 8f * (w.Compression - w.TravelUp * 0.9f);
+                float penetration = w.Compression - bumpStart;
+
+                float bump = w.SpringK * 3f * penetration;
+
+                // Beim Ausfedern wird nur ein kleiner Teil der
+                // Anschlagpufferkraft zurückgegeben.
                 f += cv >= 0f ? bump : bump * BumpRebound;
             }
-            // Normalkraft entlang der Kontaktnormalen skaliert
-            w.Fz = Mathf.Max(0f, f) * Mathf.Clamp01(Vector3.Dot(w.ContactNormal, up) * 1.2f);
-            if (PhysLog && w.Fz > 3f * w.StaticLoad) SpikeLog(w, cv, dist);
-            if (PhysLog && w.Fz > 50000f && _bodyLog == 0) { _bodyLog = 40; _bodyY0 = transform.position.Y; }
+
+            // Normalkraft entlang der Kontaktnormalen skalieren
+            w.Fz = Mathf.Max(0f, f)
+                 * Mathf.Clamp01(Vector3.Dot(w.ContactNormal, up) * 1.2f);
+
+            if (PhysLog && w.Fz > 3f * w.StaticLoad)
+                SpikeLog(w, cv, dist);
+
+            if (PhysLog && w.Fz > 50000f && _bodyLog == 0)
+            {
+                _bodyLog = 40;
+                _bodyY0 = transform.position.Y;
+            }
+
+            ///Backup before refactoring and Fixing the suspension code. The original code is commented out below for reference.
+            //// Radmitte relativ zur Konstruktionslage (+ = eingefedert)
+            //w.Compression = w.TravelUp - (dist - w.Radius);
+            //// Reifen/Radmasse: das Rad kann nicht in einem Schritt 10 cm auf eine Kante springen – Einfedern höchstens mit
+            //// WheelMaxRise m/s, den Rest nimmt der Reifen auf (vorher: Strahl springt -> Dämpfer + Anschlagpuffer bis 150 kN, Auto
+            //// hüpft). 0 = wie Unity.
+            //if (WheelMaxRise > 0f) w.Compression = Mathf.Min(w.Compression, w.PrevCompression + WheelMaxRise * dt);
+            //float cv = (w.Compression - w.PrevCompression) / dt;
+            //float f = w.StaticLoad + w.SpringK * w.Compression + DamperForce(w.DamperC, cv);
+            //if (w.Compression > w.TravelUp * 0.9f)
+            //{
+            //    // Anschlagpuffer (Gummi): beim Einfedern voll, beim Ausfedern nur 30 % (Hysterese) – sonst gibt er die Energie ganz
+            //    // zurück und das Auto schaukelt von einem Anschlag zum anderen (links/rechts, Log 04:28: 88 kN bei 13 cm Einfederung)
+            //    float bump = w.SpringK * 8f * (w.Compression - w.TravelUp * 0.9f);
+            //    f += cv >= 0f ? bump : bump * BumpRebound;
+            //}
+            //// Normalkraft entlang der Kontaktnormalen skaliert
+            //w.Fz = Mathf.Max(0f, f) * Mathf.Clamp01(Vector3.Dot(w.ContactNormal, up) * 1.2f);
+            //if (PhysLog && w.Fz > 3f * w.StaticLoad) SpikeLog(w, cv, dist);
+            //if (PhysLog && w.Fz > 50000f && _bodyLog == 0) { _bodyLog = 40; _bodyY0 = transform.position.Y; }
         }
 
         // Prüf-Log Federkraft-Spitzen ([DIAG Feder]): Anteile Feder/Dämpfer/Anschlag, je Rad höchstens alle 0,25 s
@@ -461,7 +505,7 @@ namespace Paradise.Core.Vehicles
             if (_spikeT.TryGetValue(w, out var t) && _simT - t < 0.25) return;
             _spikeT[w] = _simT;
             float bump = w.Compression > w.TravelUp * 0.9f ? w.SpringK * 8f * (w.Compression - w.TravelUp * 0.9f) : 0f;
-            Paradise.Core.Diagnostics.Log.Info($"[DIAG Feder] Spitze {w.Name} {SpeedKmh:0} km/h: Fz {w.Fz:0} N ({w.Fz / Mathf.Max(1f, w.StaticLoad):0.0}x statisch) = statisch {w.StaticLoad:0} + Feder {w.SpringK * w.Compression:0} + Dämpfer {DamperForce(w.DamperC, cv):0} + Anschlag {bump:0} | Einfederung {w.PrevCompression:0.000} -> {w.Compression:0.000} ({cv:+0.00;-0.00} m/s), Strahl {dist:0.000} m, Normale y {w.ContactNormal.Y:0.00}, Boden {(w.GroundCollider != null ? w.GroundCollider.Name : "Ersatzhöhe")}");
+            Paradise.Core.Diagnostics.Log.Debug($"[DIAG Feder] Spitze {w.Name} {SpeedKmh:0} km/h: Fz {w.Fz:0} N ({w.Fz / Mathf.Max(1f, w.StaticLoad):0.0}x statisch) = statisch {w.StaticLoad:0} + Feder {w.SpringK * w.Compression:0} + Dämpfer {DamperForce(w.DamperC, cv):0} + Anschlag {bump:0} | Einfederung {w.PrevCompression:0.000} -> {w.Compression:0.000} ({cv:+0.00;-0.00} m/s), Strahl {dist:0.000} m, Normale y {w.ContactNormal.Y:0.00}, Boden {(w.GroundCollider != null ? w.GroundCollider.Name : "Ersatzhöhe")}");
         }
 
         Vector3 WheelForward(Wheel w, Vector3 n)
@@ -1073,7 +1117,7 @@ namespace Paradise.Core.Vehicles
             {
                 var st = w.Stirrup; var ds = w.Disc;
                 string Node(CarNode? n) => n == null ? "-" : $"{n.Name} rot({n.LocalRotation.X:0.00};{n.LocalRotation.Y:0.00};{n.LocalRotation.Z:0.00};{n.LocalRotation.W:0.00}) scale({n.LocalScale.X:0.00};{n.LocalScale.Y:0.00};{n.LocalScale.Z:0.00}) raw {(n.RawLocal != null ? "ja" : "nein")}";
-                Paradise.Core.Diagnostics.Log.Info($"RAD {w.Name} Anker x{w.Anchor.X:+0.00;-0.00} Lenkvorzeichen {w.SteerSign:+0;-0}  Stirrup {Node(st)}  Disc {Node(ds)}");
+                Paradise.Core.Diagnostics.Log.Debug($"RAD {w.Name} Anker x{w.Anchor.X:+0.00;-0.00} Lenkvorzeichen {w.SteerSign:+0;-0}  Stirrup {Node(st)}  Disc {Node(ds)}");
             }
         }
 
@@ -1092,15 +1136,15 @@ namespace Paradise.Core.Vehicles
         /// bisher 90–130 kN, das Auto hüpfte), werden auf ein Viertel gedämpft. Abweichung vom Unity-Code (dort linear),
         /// auf Wunsch. DamperHighRatio = 1 -> wie Unity.
         /// </summary>
-        public static float DamperKnee = 0.3f, DamperHighRatio = 0.25f;
+        public static float DamperKnee = 0.3f, DamperHighRatio = .15f;//= 0.25f;
         /// <summary>Höchste Einfeder-Geschwindigkeit des Rads (m/s); 0 = unbegrenzt wie Unity.</summary>
-        public static float WheelMaxRise = 2.5f;
+        public static float WheelMaxRise = 0;//= 2.5f;
         /// <summary>Mindest-Kippgrenze in g (Schwerpunkt wird notfalls abgesenkt); 0 = Datenbankwert wie Unity.</summary>
         public static float MinRolloverG = 1.5f;
         /// <summary>Reifenlast für die Reifenkräfte höchstens so viel mal statische Radlast (0 = unbegrenzt wie Unity).</summary>
         public static float TireLoadMax = 2.2f;
         /// <summary>Anteil der Anschlagpuffer-Kraft beim Ausfedern (1 = wie Unity, elastisch).</summary>
-        public static float BumpRebound = 0.3f;
+        public static float BumpRebound = .1f;//= 0.3f;
         /// <summary>Höchste Haftung als Anteil der Kippgrenze (0 = unbegrenzt wie Unity).</summary>
         public static float GripVsRollover = 0.85f;
         float _rolloverG;
@@ -1129,7 +1173,7 @@ namespace Paradise.Core.Vehicles
             var sb = new System.Text.StringBuilder();
             sb.Append($"PHYS Gier {yawRate:+0.00;-0.00} rad/s  Quer {latAcc:+0.0;-0.0} m/s2  Roll {roll:+0.0;-0.0}°  Lenk {_steerCurrent:+0.0;-0.0}");
             foreach (var w in Wheels) sb.Append($"  {w.Name}{(w.Left ? "(L)" : "(R)")} x{w.Anchor.X:+0.00;-0.00} c{w.Compression:0.000} Fy{w.Fy:+0;-0} lenk{w.SteerAngle:+0.0;-0.0}");
-            Paradise.Core.Diagnostics.Log.Info(sb.ToString());
+            Paradise.Core.Diagnostics.Log.Debug(sb.ToString());
         }
 
         static Matrix4x4 ChainMat(CarNode n)

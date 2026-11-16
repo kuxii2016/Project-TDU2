@@ -731,7 +731,7 @@ namespace Paradise.Core.Vehicles
     public sealed class CameraDatabase
     {
         public readonly Dictionary<int, Dictionary<int, CarCamera>> ByCar = new Dictionary<int, Dictionary<int, CarCamera>>();
-        public int[] SwitchOrder = { 21, 20, 23, 24, 22 };
+        public int[] SwitchOrder = { 21, 20, 23, 22 };//24, 22 };
 
         public static CameraDatabase Load(string bnkDir)
         {
@@ -745,7 +745,8 @@ namespace Paradise.Core.Vehicles
             {
                 var order = new List<int>();
                 for (int i = 0; i < nSwitch; i++) { var c = cig.Get($"p_array_camera_switch[{i}]"); if (c != null) order.Add(c.AsInt()); }
-                if (order.Count > 0) db.SwitchOrder = order.ToArray();
+                if (order.Count > 0)
+                    db.SwitchOrder = order.ToArray();
             }
             foreach (var car in cig.Children)
             {

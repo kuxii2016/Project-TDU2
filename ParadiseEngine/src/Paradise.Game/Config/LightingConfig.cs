@@ -27,7 +27,7 @@ public sealed class LightingConfig
     // ---------------- Tag/Nacht + Wetter (TDU2Weather, game_weathers.xmb). Aus = feste Werte oben.
     public bool UseWeather { get; set; } = true;
     /// <summary>Echtzeit-Minuten für einen Spieltag.</summary>
-    public float DayMinutes { get; set; } = 120f;
+    public float DayMinutes { get; set; } = 15f; //TDU hat nur 900sec..
     /// <summary>&gt;= 0: feste Uhrzeit (z.B. 22 für Nacht).</summary>
     public float ForceHour { get; set; } = -1f;
     public float HourOffset { get; set; } = 0f;
@@ -37,12 +37,12 @@ public sealed class LightingConfig
     /// <summary>&gt;= 0: feste Wetterart (0 Sonne, 1 Wolken, 2 Regen, 3 vor Regen, 4 nach Regen, 5 Gewitter).</summary>
     public int ForceKind { get; set; } = -1;
     public bool ApplyFog { get; set; } = true;
-    public float FogStrength { get; set; } = 0.05f;
-    public float StreetLightStrength { get; set; } = 0.8f;
+    public float FogStrength { get; set; } = 0.1f;
+    public float StreetLightStrength { get; set; } = 1f;
     /// <summary>Straßenlampen-Lichter an den nächsten Masten (max. 32).</summary>
     public int LampLights { get; set; } = 32;
     public float LampRadius { get; set; } = 140f;
-    public float LampIntensity { get; set; } = 1f;
+    public float LampIntensity { get; set; } = .4f; //Wirkt natürlicher
     public int RainDrops { get; set; } = 1400;
 
     // ---------------- Schatten (Unity: Directional Light Soft Shadows, 4 Kaskaden)
@@ -73,7 +73,7 @@ public sealed class LightingConfig
     public float GlowIntensity { get; set; } = 0.55f;
     /// <summary>Gebäude mit Nacht-Lightmap (TD_Building NIGHTLIGHTMAP, Spot-Exteriors): Helligkeit am Tag, passend zu den übrigen
     /// Lightmap-Objekten (die laufen mit Detail-Verstärkung 2). 1 = Original-Formel ohne Verstärkung, 2 = wie die übrigen.</summary>
-    public float NightLightmapDayBoost { get; set; } = 2f;   // = Unity _DetailBoost der Lightmap-Materialien
+    public float NightLightmapDayBoost { get; set; } = 1f;   // = Unity _DetailBoost der Lightmap-Materialien
     public float HaloIntensity { get; set; } = 1f;
     public float WindStrength { get; set; } = 1f;
     public float DetailTiling { get; set; } = 0.098f;

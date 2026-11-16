@@ -11,9 +11,7 @@ public static class UserPaths
     public const string Product = "Test Drive Unlimited 2";
 
     /// <summary>…\Documents\KuxiiSoft\Test Drive Unlimited 2</summary>
-    public static string Root { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        Vendor, Product);
+    public static string Root { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Vendor, Product);
 
     public static string Config => Ensure(Path.Combine(Root, "Config"));
     public static string Saves => Ensure(Path.Combine(Root, "Saves"));

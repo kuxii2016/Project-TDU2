@@ -7,10 +7,6 @@ namespace Paradise.Core.Platform;
 /// Minimales Win32-Fenster per P/Invoke – kein GLFW/SDL, damit die exe ohne
 /// Zusatz-DLL auskommt. Liefert ein HWND für die Vulkan-Surface und eine
 /// nicht blockierende Nachrichtenschleife.
-///
-/// HINWEIS: Dieser Code ist gegen die Win32-API geschrieben, konnte hier aber
-/// nicht kompiliert/getestet werden. Beim ersten Lauf bitte auf P/Invoke-
-/// Signaturfehler achten.
 /// </summary>
 public sealed class Win32Window : IGameWindow
 {

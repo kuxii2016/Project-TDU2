@@ -16,31 +16,28 @@ namespace Paradise.Core.World;
 /// </summary>
 public sealed class WorldWeather : IDisposable
 {
-    // ---------------- Zeit (aus der Serverzeit -> im Mehrspieler synchron)
-    public float DayMinutes = 120f;           // Echtzeit-Minuten für einen Spieltag
+    public float DayMinutes = 15f;           // Echtzeit-Minuten für einen Spieltag
     public float HourOffset = 0f;
     public float HawaiiHourOffset = -11f;
     public float ForceHour = -1f;             // >= 0: feste Uhrzeit
     // ---------------- Wetter
-    public float WeatherMinutes = 14f;
+    public float WeatherMinutes = 4f;
     public float TransitionSeconds = 120f;
     public int ForceKind = -1;                // >= 0: feste Wetterart
     // ---------------- Umsetzung
     public float DiffuseScale = 0.65f, AmbientScale = 0.75f;
     public bool ApplyFog = true;
     public float FogStrength = 0.05f;
-    public int LampLights = 32;               // Unity 64 (Pixel-Lights); Shader-Grenze hier 32
+    public int LampLights = 32;               // Shader-Grenze hier 32
     public float LampRadius = 140f;
     public float LampIntensity = 1f;
     public float StreetLightStrength = 0.5f;
     public int RainDrops = 1400;
 
-    // ---------------- Zustand
+
     public static float Hour { get; private set; } = 12f;
     public static WeatherKind Kind { get; private set; } = WeatherKind.Sunny;
     public static float Night { get; private set; }
-
-    /// <summary>Unity TDU2Weather.NewsPending: Wetter hat gewechselt – das Radio bringt als nächstes Zwischenstück die Wettermeldung.</summary>
     public static bool NewsPending;
     static WeatherKind _lastKind = (WeatherKind)(-1);
 
@@ -119,9 +116,12 @@ public sealed class WorldWeather : IDisposable
     private string? _error;
     private string _island = "ibiza";
     private readonly Dictionary<long, WeatherKind> _kindCache = new();
-    private float _wet, _nightK, _nightWin, _wetShown, _flash;
-    private double _nextThunder;
-    private readonly Random _rnd = new();
+    private float _wet, _nightK, _nightWin, _wetShown;
+    /// <summary>Gewitter wie im Original (WFX_Lightning, World/Lightning): Blitz, Flackern, Überschreibungen der Wetterwerte.</summary>
+    private readonly Lightning _lightning = new();
+    /// <summary>Blickrichtung/Bodenhöhe für den Blitz (Spielkoordinaten), vor <see cref="Update"/> setzen.</summary>
+    public Vector3 CameraForward = Vector3.UnitZ;
+    public Func<float, float, float?>? GroundHeight;
     private FrameGlobals _g = FrameGlobals.Default;
 
     // Straßenlampen (streetlamps.xml)
@@ -244,19 +244,6 @@ public sealed class WorldWeather : IDisposable
         _ => r < 0.7f ? WeatherKind.Sunny : WeatherKind.Cloudy,   // AfterRain
     };
 
-    float UpdateThunder(float on, double time, float dt)
-    {
-        if (on < 0.5f) { _flash = 0f; return 0f; }
-        if (time >= _nextThunder)
-        {
-            _nextThunder = time + 4f + _rnd.NextDouble() * 10f;
-            _flash = 0.6f + (float)_rnd.NextDouble() * 0.4f;
-        }
-        _flash = MathF.Max(0f, _flash - dt * 4f);
-        // Flackern
-        return _flash > 0f ? _flash * (0.6f + 0.4f * (0.5f + 0.5f * MathF.Sin((float)time * 157f))) : 0f;
-    }
-
     /// <summary>
     /// Jedes Bild (Unity: Update). now = Serverzeit in Sekunden (synchron für alle), time = Spielzeit für Effekte.
     /// findLamps: Lampen-Instanzen um die Kamera (Unity: VegetationRenderer.FindInstances).
@@ -287,26 +274,31 @@ public sealed class WorldWeather : IDisposable
         if (Kind != _lastKind) { if ((int)_lastKind >= 0) NewsPending = true; _lastKind = Kind; }
         int ba = (int)prev + 1, bb = (int)cur + 1;
         var data = _data;
-        Vector4 S(string n, Vector4 d = default) => ov != null ? data.Value(ov, 1, n, d) : data.Sample(n, hour, ba, bb, t, d);
+        Vector4 Raw(string n, Vector4 d = default) => ov != null ? data.Value(ov, 1, n, d) : data.Sample(n, hour, ba, bb, t, d);
+        var dirRaw = ov != null ? data.Value(ov, 0, "sundirection", new Vector4(0, -0.856f, -0.423f, 0))
+                                : data.Sample("sundirection", hour, 0, 0, 0f, new Vector4(0, -0.856f, -0.423f, 0));
+        bool inside = Inside;
+
+        // ---------------- Gewitter (WFX_Lightning): Zustände, Blitz, danach überschreibt es Wetterwerte dieses Bildes (0xa5d310)
+        _lightning.Update(dt, !inside && Raw("thunder_off_on").X > 0.5f, (n, dv) => Raw(n, dv), dirRaw,
+                          cameraGame, CameraForward, GroundHeight ?? ((_, _) => null));
+        Vector4 S(string n, Vector4 d = default) => _lightning.Value(n, Raw(n, d));
 
         var g = FrameGlobals.Default;
 
         // ---------------- Sonne / Licht
-        var dir4 = ov != null ? data.Value(ov, 0, "sundirection", new Vector4(0, -0.856f, -0.423f, 0))
-                              : data.Sample("sundirection", hour, 0, 0, 0f, new Vector4(0, -0.856f, -0.423f, 0));
+        var dir4 = _lightning.Value("sundirection", dirRaw);
         var dir = new Vector3(dir4.X, dir4.Y, dir4.Z);
         var diff = S("sun_diffuse", new Vector4(2.01f, 1.74f, 1.36f, 0));
         var amb = S("sun_ambient", new Vector4(0.58f, 0.67f, 0.82f, 0));
         float shadowOp = S("sun_shadow_opacity", Vector4.One).X;
-        float flash = UpdateThunder(S("thunder_off_on").X, time, dt);
         if (dir.LengthSquared() > 1e-6f) g.SunDirection = Vector3.Normalize(-dir);   // Shader: Richtung zur Sonne
         g.ShadowStrength = System.Math.Clamp(shadowOp, 0f, 1f);
         // TDU2WorldLighting.Apply (Exposure 1): Ambient = a, Licht = d − a
         var d = new Vector3(diff.X, diff.Y, diff.Z) * DiffuseScale;
-        var a = new Vector3(amb.X, amb.Y, amb.Z) * AmbientScale * (1f + flash * 2.5f);
+        var a = new Vector3(amb.X, amb.Y, amb.Z) * AmbientScale;
         g.Ambient = a;
         g.SunColor = Vector3.Max(Vector3.Zero, d - a);
-        bool inside = Inside;
         if (inside)
         {
             // Unity: Sonne wie vor dem Wetter (TDU2WorldLighting.Apply mit SunDiffuse 1.30/1.24/1.12, Ambient 0.46/0.49/0.56 ->
@@ -350,11 +342,11 @@ public sealed class WorldWeather : IDisposable
         OceanNoise.Scaler = O("ocean_NMapScaler", new Vector4(0.13f, 0, 0, 0)).X;
 
         // ---------------- Autolicht wie im Original (TDU2CarLighting, GS_CarDisplay 0x744990). Interieur: Licht der Szene, noch offen.
-        g.CarLight = inside ? default : TDU2CarLighting.Compute((n, dv) => S(n, dv));
+        g.CarLight = inside ? default : CarLighting.Compute((n, dv) => S(n, dv));
 
         // ---------------- Himmel wie im Original (td_dome, World/TDU2SkyDome): Streuung aus Skydome_*, Sonne = sundirection,
         // Licht des Doms = sun_diffuse / sun_ambient (Gamma-Raum, ohne die Engine-Skalierung oben)
-        g.Sky = TDU2SkyDome.Compute((n, dv) => S(n, dv), dir, new Vector3(diff.X, diff.Y, diff.Z), new Vector3(amb.X, amb.Y, amb.Z));
+        g.Sky = SkyDome.Compute((n, dv) => S(n, dv), dir, new Vector3(diff.X, diff.Y, diff.Z), new Vector3(amb.X, amb.Y, amb.Z));
 
         // ---------------- Wolkenkuppel (TD_CloudMesh, World/TDU2Clouds): Objekt je Wetterart, Farben/Deckkraft/Drehung aus clouds_*
         g.CloudColor = S("clouds_cloud3dcolor", new Vector4(1f, 1f, 1f, 0f));
@@ -397,11 +389,11 @@ public sealed class WorldWeather : IDisposable
         g.StreetLight = street * 1.5f * StreetLightStrength;
         _nightWin = MathF.Max(S("building_nightwindow_frequency").X, Night);
         g.NightWindows = _nightWin;
-        // Himmel: Skybox-Exposure x lerp(1, 0.06, Nacht) x Wolken x Blitz
+        // Himmel: Skybox-Exposure x lerp(1, 0.06, Nacht) x Wolken (Blitz: über die Wetterwerte, World/Lightning)
         // Wolkenfaktor zwischen alter und neuer Wetterart überblenden (vorher Sprung bei der Hälfte des Übergangs)
         static float CloudOf(WeatherKind k) => k == WeatherKind.Rainy || k == WeatherKind.Tempest ? 0.55f : k == WeatherKind.Cloudy || k == WeatherKind.BeforeRain ? 0.8f : 1f;
         float cloud = CloudOf(prev) + (CloudOf(cur) - CloudOf(prev)) * t;
-        g.SkyExposure = (1f + (0.06f - 1f) * Night) * cloud * (1f + _flash * 3f);
+        g.SkyExposure = (1f + (0.06f - 1f) * Night) * cloud;
 
         // ---------------- Regen, Nässe
         Rain = System.Math.Clamp(S("rain_alpha").X / 120f, 0f, 1f);
@@ -413,6 +405,11 @@ public sealed class WorldWeather : IDisposable
         GroundWet = _wet;
         _wetShown = inside ? 0f : MathF.Max(_wet, Rain);
         g.Wet = _wetShown;
+        // TD_Road-Regen wie das Original: Werte jedes Bild direkt aus dem Wetter (FUN_00aa6ce0 -> WFX_WetGrd), aus bei GI <= 0
+        float gi = inside ? 0f : S("rain_ground_global_intensity").X;
+        g.RainSpecs = new Vector4(gi, S("rain_ground_wet").X, 1f, S("rain_ground_puddle_height").X);
+        g.RainRipple = new Vector4(0f, 0f, S("rain_ground_ripple_intensity").X, S("rain_ground_ripple_scale", new Vector4(0.6f, 0, 0, 0)).X);
+        Render.RenderFx.RainScrollSpeed = S("rain_ground_ripple_scroll_speed").X;
         if (RainDrops > 0 && Rain > 0.01f && Rainfall == null) Rainfall = new RainField(RainDrops);
         Rainfall?.Update(inside ? 0f : Rain, dt, 1f + (0.35f - 1f) * Night, cameraGame + rootOffset);
 
@@ -519,10 +516,18 @@ public sealed class WorldWeather : IDisposable
         mesh.Dispose();   // Freigabe verzögert (nach den laufenden Frames)
     }
 
+    /// <summary>Blitz zeichnen (TD_Lightning, nur beim Wachsen/Stehen). viewForward = Blickrichtung der Kamera (Welt).</summary>
+    public void DrawLightning(IRenderer r, Vector3 rootOffset, Vector3 viewForward)
+    {
+        if (Inside) return;
+        _lightning.Draw(r, rootOffset, viewForward);
+    }
+
     public void Dispose()
     {
         _rainMat?.Dispose(); _rainMat = null;
         _rainTex?.Dispose(); _rainTex = null;
+        _lightning.Dispose();
     }
 
     // ------------------------------------------------------------------ Regen

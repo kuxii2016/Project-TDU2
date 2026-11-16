@@ -254,6 +254,8 @@ public sealed unsafe partial class VulkanRenderer
             _envSetsCreated = true;
         }
         WriteEnvDescriptors();
+        System.Array.Clear(_rainPudW);   // Regen-Bindings der (neuen) Spiegel-Sets beim nächsten Bild schreiben
+        System.Array.Clear(_rainRipW);
         Log.Info($"Spiegelungen: Boden {_plW}x{_plH}, Sonde {ProbeSize} (6 Seiten), MSAA {(int)_msaa}x");
     }
 

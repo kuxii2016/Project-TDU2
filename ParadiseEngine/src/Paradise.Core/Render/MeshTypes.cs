@@ -117,6 +117,8 @@ public enum MaterialKind
     SkyStars,
     /// <summary>td_moon (ps @0xfe0): Mond-Billboard, Farbe = Textur + (0,3922; 0,4118; 0,5098), Alpha = Textur.a · moonPercent (ObjectVertex).</summary>
     SkyMoon,
+    /// <summary>TD_Lightning (World/Lightning): Blitzstreifen, Farbe aus u/v, Alpha = Vertexalpha, additiv SrcAlpha/One (ObjectVertex).</summary>
+    Lightning,
 }
 
 /// <summary>Material-Beschreibung (in Unity: Material + Shader-Properties). Defaults = Shader-Defaults.</summary>
@@ -349,6 +351,10 @@ public struct FrameGlobals
     /// AlphaBlend = clouds_cloud3dAlphaBlend, x Skydome_haze, y __DirLight_Emissive_0.x = sunflare_core_emissive.x.</summary>
     public Vector4 CloudColor, CloudDown, CloudAlpha;
     public Vector2 CloudMisc;
+    /// <summary>TD_Road Regen (WFX_WetGrd, rain_shadow_spec A.2/A.4): RainSpecs = (rain_ground_global_intensity, rain_ground_wet, 1,
+    /// rain_ground_puddle_height); RainRipple = (scroll_u, scroll_v, rain_ground_ripple_intensity, rain_ground_ripple_scale).
+    /// RainSpecs.x = 0 -> trocken (Material ohne UT9).</summary>
+    public Vector4 RainSpecs, RainRipple;
 
     /// <summary>Tageslicht-Standard bis TDU2WorldLighting/TDU2Weather portiert sind.</summary>
     public static FrameGlobals Default => new()

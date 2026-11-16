@@ -15,7 +15,7 @@ namespace Paradise.Core.Vehicles
     /// Unity: localPosition = Pivot + q * (Pos0 - Pivot), localRotation = q * Rot0.
     /// Noch nicht portiert: Teilen von GLASS_I (Innenseite der Scheiben im Türbereich ausblenden).
     /// </summary>
-    public sealed class TDU2Accessories
+    public sealed class CarAccessories
     {
         public const int BitDoorL = 1, BitDoorR = 2, BitWinL = 4, BitWinR = 8, BitRoof = 16;
         /// <summary>Öffnungswinkel der Türen (Grad).</summary>
@@ -23,7 +23,7 @@ namespace Paradise.Core.Vehicles
 
         public readonly CarModel Model;
         /// <summary>Klang (Tür/Fenster); null = stumm.</summary>
-        public TDU2VehicleAudio? Audio;
+        public VehicleAudio? Audio;
 
         sealed class Door
         {
@@ -45,13 +45,13 @@ namespace Paradise.Core.Vehicles
         public bool HasDoors => _doors.Count > 0;
         public bool HasRoof => _roof.Count > 0;
         /// <summary>Lichter des Autos (Blinker im Zubehörmenü) – Unity TDU2Accessories.Lights.</summary>
-        public TDU2VehicleLights? Lights;
+        public VehicleLights? Lights;
         public bool HasTurnSignals => Lights != null;
         public bool WindowsOpen { get { foreach (var w in _windows) if (w.Target > 0.5f) return true; return false; } }
         public bool DoorsOpen { get { foreach (var d in _doors) if (d.Target > 0.5f) return true; return false; } }
         public bool RoofOpen { get; private set; }
 
-        TDU2Accessories(CarModel model)
+        CarAccessories(CarModel model)
         {
             Model = model;
             if (model?.Visual == null) return;
@@ -167,18 +167,18 @@ namespace Paradise.Core.Vehicles
             _windows.Add(w);
         }
 
-        static readonly Dictionary<CarModel, TDU2Accessories> _byModel = new();
+        static readonly Dictionary<CarModel, CarAccessories> _byModel = new();
 
         /// <summary>Zubehör eines Modells (einmal je Modell angelegt).</summary>
-        public static TDU2Accessories? For(CarModel? model)
+        public static CarAccessories? For(CarModel? model)
         {
             if (model == null) return null;
-            if (!_byModel.TryGetValue(model, out var a)) _byModel[model] = a = new TDU2Accessories(model);
+            if (!_byModel.TryGetValue(model, out var a)) _byModel[model] = a = new CarAccessories(model);
             return a;
         }
 
         /// <summary>Zubehör eines Modells mit seinen Lichtern (Unity For(model, lights)).</summary>
-        public static TDU2Accessories? For(CarModel? model, TDU2VehicleLights? lights)
+        public static CarAccessories? For(CarModel? model, VehicleLights? lights)
         {
             var a = For(model);
             if (a != null && lights != null) a.Lights = lights;
@@ -194,7 +194,7 @@ namespace Paradise.Core.Vehicles
             Lights.Hazard = false;
         }
 
-        public static TDU2Accessories? Existing(CarModel? model) => model != null && _byModel.TryGetValue(model, out var a) ? a : null;
+        public static CarAccessories? Existing(CarModel? model) => model != null && _byModel.TryGetValue(model, out var a) ? a : null;
         public static void Forget(CarModel? model) { if (model != null) _byModel.Remove(model); }
 
         /// <summary>Alle angelegten Zubehörteile animieren (Händler-/Garagenautos).</summary>

@@ -72,7 +72,7 @@ public static class SessionAutosave
         {
             var c = vm.FindCar(n);
             if (c == null || !seen.Add(c.Id)) continue;
-            double m = TDU2VehicleHud.GetOdometer(c.Id);
+            double m = VehicleHud.GetOdometer(c.Id);
             if (m > 0) list.Add(new OdoEntry { carId = c.Id, meters = m });
         }
         save.odometers = list;

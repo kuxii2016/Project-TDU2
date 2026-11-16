@@ -549,7 +549,7 @@ public class GAME_MODE_SHOP : InteriorUtils
         }
         _dBought = true;
         var choice = Choice();
-        TDU2CarChoices.Set(dc.Car.FileName, choice);
+        CarChoices.Set(dc.Car.FileName, choice);
         RememberOwned(dc.Car);
         if (Paradise.Core.Online.TDU2Session.LoggedIn) _ = Paradise.Core.Online.TDU2Session.SaveAsync();
         Log.Info($"Autohändler: {dc.Car.FileName} gekauft ({choice}) für {Money(total)}");
@@ -747,7 +747,7 @@ public class GAME_MODE_SHOP : InteriorUtils
         nd.Choice = choice;
         _cars.RemoveAt(_cars.Count - 1);
         _cars[idx] = nd;
-        TDU2Accessories.Forget(old.Model);
+        CarAccessories.Forget(old.Model);
         old.Model.Destroy();
         old.Assets.DestroyTextures();
         old.ShadowMesh?.Dispose(); old.ShadowMat?.Dispose(); old.ShadowBlob?.Dispose();

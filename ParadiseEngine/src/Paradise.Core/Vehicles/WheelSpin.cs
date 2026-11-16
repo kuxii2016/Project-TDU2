@@ -5,10 +5,10 @@ namespace Paradise.Core.Vehicles
 {
     /// <summary>
     /// Räder eines Anzeige-Autos (ohne Physik, z.B. Titel-Kino, Ausfahrt aus der Garage) drehen sich mit der gefahrenen Strecke:
-    /// Winkel += Weg / Reifenradius, wie TDU2Vehicle (DISC_xx um die lokale X-Achse). Portiert aus Unity TDU2WheelSpin
+    /// Winkel += Weg / Reifenradius, wie Vehicle (DISC_xx um die lokale X-Achse).
     /// (dort ein MonoBehaviour; hier ruft der Besitzer <see cref="Update"/> mit der Lage im Spielraum auf).
     /// </summary>
-    public sealed class TDU2WheelSpin
+    public sealed class WheelSpin
     {
         sealed class Wheel { public CarNode? Disc, Spin2; public Quaternion DiscBase, Spin2Base; public float Radius, Angle; }
 
@@ -16,9 +16,9 @@ namespace Paradise.Core.Vehicles
         Vector3 _last;
         bool _haveLast;
 
-        TDU2WheelSpin(Wheel[] w) { _wheels = w; }
+        WheelSpin(Wheel[] w) { _wheels = w; }
 
-        public static TDU2WheelSpin? Attach(CarModel? model, CarAssets? assets)
+        public static WheelSpin? Attach(CarModel? model, CarAssets? assets)
         {
             if (model == null) return null;
             var list = new List<Wheel>();
@@ -39,7 +39,7 @@ namespace Paradise.Core.Vehicles
                     Radius = Mathf.Max(0.15f, r),
                 });
             }
-            return list.Count == 0 ? null : new TDU2WheelSpin(list.ToArray());
+            return list.Count == 0 ? null : new WheelSpin(list.ToArray());
         }
 
         /// <summary>Neu ansetzen (z.B. nach einem Schnitt).</summary>

@@ -43,8 +43,8 @@ public sealed class VehicleModule : GameModule
 
     public override void Load()
     {
-        TDU2VehicleCamera.PadLook = () => TDU2InputDevices.Look;   // Unity TDU2VehicleCamera: rechter Stick = Blickrichtung
-        Paradise.Game.Screens.TDU2AccessoryMenu.HudSource = () => _vm?.Minimap?.Hud;   // Unity TDU2UIManager.Hud
+        VehicleCamera.PadLook = () => TDU2InputDevices.Look;   // Unity TDU2VehicleCamera: rechter Stick = Blickrichtung
+        Paradise.Game.Screens.AccessoryMenu.HudSource = () => _vm?.Minimap?.Hud;   // Unity TDU2UIManager.Hud
         if (_terrain.Physics == null) { Log.Warn("VehicleModule: keine Physikwelt (Welt nicht geladen)."); return; }
         _vm = new VehicleManager(_renderer, _terrain.Physics);
         Paradise.Game.Config.GpsConfig.Apply();

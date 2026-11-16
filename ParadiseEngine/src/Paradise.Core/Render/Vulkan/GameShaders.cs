@@ -6,7 +6,7 @@
 /// (set 0), Shader.SetGlobal*/Licht als Frame-Buffer (set 1).
 /// Lichtmodell wie Unity-Surface-Shader: Albedo x (Lichtfarbe x Diffus + Ambient) + Emission.
 /// </summary>
-internal static class TDU2Shaders
+internal static class GameShaders
 {
     private const string Common = @"#version 450
 layout(push_constant) uniform PC { mat4 viewProj; mat4 model; } pc;
@@ -48,10 +48,14 @@ layout(set = 1, binding = 0) uniform Frame {
     // TD_CloudMesh: Instance_Color, ColorDown, AlphaBlend (Gamma-Raum), x Haze, y DirLight_Emissive.x
     vec4 cloudColor, cloudDown, cloudAlpha, cloudMisc;
     vec4 skyStars;     // td_dome: x StarsIntensity, y StarsFade.x, z StarsFade.y; td_moon: w moonPercent
+    vec4 rainSpecs;    // TD_Road RainSpecs: GI, wet, 1, puddle_height (x = 0 -> trocken)
+    vec4 rainRipple;   // TD_Road RainRippleSpecs: scroll_u, scroll_v, ripple_intensity, ripple_scale
 } fr;
 layout(set = 1, binding = 1) uniform sampler2DArrayShadow shadowMap;
 layout(set = 1, binding = 2) uniform sampler2D planarRefl;   // Unity _TDU2PlanarRefl
 layout(set = 1, binding = 3) uniform samplerCube envCube;    // Unity unity_SpecCube0 (Echtzeit-Sonde am Auto)
+layout(set = 1, binding = 5) uniform sampler2D rainPuddleTex;  // WFX_WetGrd PUDDLES (weatherfx puddles.2db)
+layout(set = 1, binding = 6) uniform sampler2D rainRippleTex;  // WFX_WetGrd aktuelles RIPPLE_01..16 (alle 0,025 s)
 
 // Echtzeitschatten der Sonne (Unity: Directional Light, Soft Shadows, 4 Kaskaden) -> atten
 float TDU2Shadow(vec3 wp, vec3 n) {
@@ -318,6 +322,7 @@ float TDU2Noise(vec2 p) {
     float a = TDU2Hash(i), b = TDU2Hash(i + vec2(1, 0)), c = TDU2Hash(i + vec2(0, 1)), d = TDU2Hash(i + vec2(1, 1));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
+vec3 TDU2LinToSrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 float TDU2Puddle(vec2 wp) { float n = TDU2Noise(wp * 0.10) * 0.65 + TDU2Noise(wp * 0.37) * 0.35; return smoothstep(0.55, 0.72, n); }
 
 // Unity TDU2Object: _ReflMix > 0 und Fläche auf der Spiegelebene -> Oberfläche = lerp(Farbe, Spiegelbild, Fresnel) (Bildschirm-UV)
@@ -371,9 +376,32 @@ void main() {
     vec3 vc = mix(vec3(1.0), clamp(vColor.rgb * m.p0.z, 0.0, 1.0), m.p0.y);
     float sh = mix(1.0, texture(shadowTex, uvD1).r, m.p0.x);
     vec3 albedo = c.rgb * vc * sh * m.p3.y;
-    float wetW = clamp(fr.sunColor.w * m.p5.x, 0.0, 1.0);
-    float puddle = wetW > 0.001 ? TDU2Puddle(vWorld.xz) * wetW : 0.0;
-    albedo *= 1.0 - 0.15 * wetW - 0.35 * puddle;
+    // Regen auf der Straße wie das Original TD_Road (UT9-Variante, rain_shadow_spec A.4), nur Straßen (m.p5.x):
+    // Pfützen = 0,5·(PUDDLES(1,7213541·Pfützen-UV.yx) + PUDDLES(Pfützen-UV)) − N.y + puddle_height ≥ 0, Pfützen-UV = Pos.xz·0,0703125
+    // (beide Abfragen fest am Ort – TD_Road.sob ps 39: mul r2.zw, c0.w(1,721), v5.xywz = vertauschtes oT7.zw, NICHT die
+    // laufende Ripple-UV wie in rain_shadow_spec A.4; sonst wandern die nassen Stellen); nass = (Pfütze ? 1 : wet)·(N.y ≥ 0,2);
+    // Farbe ·(1 − 0,5·nass); Spiegelung = Würfelkarte(R)·(1 − V·n)·GI·nass; in Pfützen Normal = Ripple
+    // ((RIPPLE.xy − 0,5)·2·saturate((25 − Abstand)/15)·ripple_intensity – vs 02: mul r0_sat, geklemmt; ungeklemmt würden ferne
+    // Pfützen riesige Normalen bekommen und leuchten). Ripple-UV = Pos.xz·ripple_scale − scroll.
+    // Tangentenrahmen hier Welt-X/Z (Straßentangenten liegen nicht vor); Gloss-Bump außerhalb der Pfützen fehlt (flach).
+    float rainWet = 0.0;
+    vec3 rainN = vec3(0.0, 1.0, 0.0);
+    if (m.p5.x > 0.5 && fr.rainSpecs.x > 0.0)
+    {
+        vec3 gp = vWorld - vec3(fr.misc.z, 0.0, fr.misc.w);   // Spielkoordinaten
+        vec3 N = normalize(vNormal);
+        float flatM = N.y >= 0.2 ? 1.0 : 0.0;
+        vec2 ruv = gp.xz * fr.rainRipple.w - fr.rainRipple.xy;
+        float rf = clamp((25.0 - length(fr.camPos.xyz - vWorld)) * (1.0 / 15.0), 0.0, 1.0) * fr.rainRipple.z;
+        vec2 rip = (TDU2LinToSrgb(texture(rainRippleTex, ruv).rgb).xy - 0.5) * 2.0 * rf;
+        vec2 puv = gp.xz * 0.0703125;
+        float p = 0.5 * (TDU2LinToSrgb(texture(rainPuddleTex, 1.7213541 * puv.yx).rgb).x + TDU2LinToSrgb(texture(rainPuddleTex, puv).rgb).x);
+        bool pud = (p - N.y + fr.rainSpecs.w) >= 0.0;
+        rainWet = (pud ? 1.0 : fr.rainSpecs.y) * flatM;
+        vec2 b2 = pud ? rip : vec2(0.0);
+        rainN = normalize(vec3(b2.x, 0.0, b2.y) + N / max(N.y, 1e-3));
+        albedo *= 1.0 - 0.5 * rainWet;
+    }
 
     vec3 emission = albedo * m.p4.y;                       // _Unlit (Lightmap mit eingebackenem Licht)
     albedo *= (1.0 - m.p4.y);
@@ -417,6 +445,17 @@ void main() {
     float ndl = dot(normalize(vNormal), normalize(fr.sunDir.xyz));
     float diff = clamp(ndl * (1.0 - m.p3.z) + m.p3.z, 0.0, 1.0);
     vec3 lit = albedo * (fr.sunColor.rgb * diff * TDU2Shadow(vWorld, vNormal) + fr.ambient.rgb + TDU2Lamps(vWorld, vNormal)) + emission;
+    if (rainWet > 0.0)
+    {
+        vec3 V = normalize(fr.camPos.xyz - vWorld);
+        float fres = (1.0 - dot(V, rainN)) * fr.rainSpecs.x;
+        vec3 R = reflect(-V, rainN);
+        vec3 env = fr.probe.x > 0.5 ? texture(envCube, R).rgb : TDU2Sky(R);   // Original: Umgebungswürfel des Spielerautos
+        // TD_Road rechnet im Gamma-Raum: out = Farbe + Würfel·fres·nass (beides Gamma) -> hier ebenso zusammensetzen,
+        // sonst wirkt die Spiegelung (linear addiert) viel zu stark, besonders bei flachem Blick in der Ferne
+        vec3 litG = TDU2LinToSrgb(max(lit, vec3(0.0))) + TDU2LinToSrgb(max(env, vec3(0.0))) * (fres * rainWet);
+        lit = pow(litG, vec3(2.2));
+    }
     outColor = vec4(TDU2Fog(TDU2Planar(lit, vWorld), vWorld), 1.0);
 }";
 
@@ -1463,6 +1502,24 @@ void main() {
         c *= clamp((fr.env.z - d) / max(fr.env.z - fr.env.y, 1.0), 0.0, 1.0);
     }
     outColor = vec4(c, 1.0);
+}";
+
+    // ------------------------------------------------------------------ Blitz (Original TD_Lightning, selbst disassembliert)
+    // vs: Drehung um Y mit atan2(CamDir_ObjSpace.x, .z) – macht World/Lightning schon in der Modellmatrix, daher FxVert.
+    // ps (keine Textur): A = (1 − u²)²·v, B = (1 − clamp(5u, −1, 1)²)·v, Farbe = B·0,1 + A·0,9 (Gamma-Raum), Alpha = Vertexalpha;
+    // Blend SRCALPHA/ONE.
+    public const string LightningFrag = Common + @"
+layout(location = 0) in vec4 vColor;
+layout(location = 1) in vec2 vUv0;
+layout(location = 0) out vec4 outColor;
+void main() {
+    float u = vUv0.x, v = vUv0.y;
+    float c = clamp(5.0 * u, -1.0, 1.0);
+    float a = 1.0 - u * u;
+    a = a * a * v;
+    float b = (1.0 - c * c) * v - a;
+    vec3 col = vec3(b * 0.1 + a);
+    outColor = vec4(pow(max(col, vec3(0.0)), vec3(2.2)), vColor.a);
 }";
 
     public const string ShadowEmptyFrag = Common + @"

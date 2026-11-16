@@ -10,7 +10,7 @@ namespace Paradise.Core.Vehicles
     /// Darstellung: common_car.bnk/dirt_scratch.2db (R) über die Lack-Materialien (TDU2/Car: _DirtLevel).
     /// Stand je Fahrzeug (Datei) für die Sitzung gemerkt. Portiert aus TDU2CarDirt (Unity).
     /// </summary>
-    public sealed class TDU2CarDirt
+    public sealed class CarDirt
     {
         public float Level;
         public float Scratches;
@@ -28,13 +28,13 @@ namespace Paradise.Core.Vehicles
 
         static readonly Dictionary<string, float> Saved = new Dictionary<string, float>();
 
-        TDU2Vehicle? _veh;
+        Vehicle? _veh;
         CarModel? _model;
         string? _key;
         float _shown = -1f, _shownScr = -1f;
         bool _wetShown;
 
-        public void Setup(TDU2Vehicle veh, CarModel? model)
+        public void Setup(Vehicle veh, CarModel? model)
         {
             _veh = veh; _model = model;
             _key = KeyOf(veh?.Car);

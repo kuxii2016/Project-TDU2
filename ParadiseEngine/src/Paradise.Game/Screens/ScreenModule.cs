@@ -46,7 +46,7 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         GameMode.Changed += OnModeChanged;
         // general.bnk: Popups/Einladungen – immer geladen (TDU2GameData)
         _general = Open(ScreenDefs.General);
-        GeneralOverlay.Attach(_general);   // saving_logo / online_evt / deco_pop (Unity TDU2GameData)
+        GeneralOverlay.Attach(_general, _terrain, _vehicles);   // saving_logo / online_evt / deco_pop (Unity TDU2GameData)
         // Ladebildschirm (Interieur, Inselwechsel, Teleport): Speicher-Symbol darüber, Welt fertig = Streamer um die Kamera + kein Auto im Laden
         TDU2LoadingScreen.General = _general;
         TDU2LoadingScreen.WorldReadyCheck = radius =>

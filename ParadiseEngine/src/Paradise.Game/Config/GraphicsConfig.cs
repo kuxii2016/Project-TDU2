@@ -10,7 +10,7 @@ namespace Paradise.Game.Config;
 public sealed class GraphicsConfig
 {
     /// <summary>Objekt-Sichtweite (Unity TDU2RenderDistance): VeryHigh ×4, High ×2, Normal, Low ÷2, VeryLow ÷4.</summary>
-    public RenderDistance RenderDistance { get; set; } = RenderDistance.Normal;
+    public RenderDistanceLevel RenderDistance { get; set; } = RenderDistanceLevel.Normal;
     /// <summary>Grundwert des LOD-Bias (Unity QualitySettings.lodBias der Grafikoption "LOD"), 1 = Werte aus den Dateien.</summary>
     public float LodBias { get; set; } = 1f;
     /// <summary>Kantenglättung (Optionsmenü "Anti-Aliasing", Unity-Standard 4x): 0/1 aus, 2, 4, 8.</summary>
@@ -58,10 +58,10 @@ public sealed class GraphicsConfig
         GraphicsSettings.TextureMipLimit = 2 - System.Math.Clamp(TextureQuality, 0, 2);
         ApplyEffects(EffectsQuality);
         PhotoshopFx.Enabled = Photoshop;
-        TDU2CarLighting.Enabled = OriginalCarLight;
+        CarLighting.Enabled = OriginalCarLight;
         Paradise.Core.Vehicles.CarMaterials.OriginalFlakes = OriginalCarFlakes;
         Paradise.Core.Vehicles.CarMaterials.OriginalGlass = OriginalCarGlass;
-        TDU2RenderDistance.SetBaseLodBias(LodBias);
-        TDU2RenderDistance.Level = RenderDistance;
+        Paradise.Core.World.RenderDistance.SetBaseLodBias(LodBias);
+        Paradise.Core.World.RenderDistance.Level = RenderDistance;
     }
 }

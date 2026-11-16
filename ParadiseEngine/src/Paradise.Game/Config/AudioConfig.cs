@@ -9,7 +9,7 @@ namespace Paradise.Game.Config;
 public sealed class AudioConfig
 {
     /// <summary>Gesamtlautstärke aller Sounds (AudioEngine.MasterVolume).</summary>
-    public float Master { get; set; } = 0.5f;
+    public float Master { get; set; } = 0.85f;
     /// <summary>Menümusik (frontend/…/music: LOGIN, MAP, LOBBY …).</summary>
     public float Music { get; set; } = 0.35f;
     /// <summary>Oberflächen-Sounds der Flash-Menüs (fe_snd.bnk).</summary>
@@ -21,7 +21,7 @@ public sealed class AudioConfig
     /// <summary>Schaltgeräusche (Faktor auf den Fahrzeugsound).</summary>
     public float GearShift { get; set; } = 0.25f;
     /// <summary>Umgebungsgeräusche der Insel (ambiences.xmb: Stadt, Meer, Wald …, Regen) – Core/Audio/TDU2Ambience.</summary>
-    public float Ambience { get; set; } = 0.6f;
+    public float Ambience { get; set; } = 0.45f;
 
     // ---------------- Autoradio (Unity TDU2Radio: Inspektor-Werte; Sender/Lautstärke gelten nur für die Sitzung)
     /// <summary>Sender beim Start: off, hariba, kalua (eigene MP3 in SharedAssets/Radio), roadtrack.</summary>

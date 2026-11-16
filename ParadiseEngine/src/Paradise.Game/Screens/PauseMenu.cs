@@ -229,6 +229,12 @@ public sealed class PauseMenu
             ui.SetValue("/:Input", true);
             ui.SetValue("/:_buttons", true);
         }
+        //This is why the Windows was still Open.
+        if (kase == "confirm_exit_game")
+        {
+            _ctx.Quit();
+            ProcessEnd.Now();
+        }
     }
 
     // ------------------------------------------------------------------ Uhr (/pause_menu/clock/time)

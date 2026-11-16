@@ -9,7 +9,7 @@ namespace Paradise.Game.Config;
 public sealed class VehicleConfig
 {
     /// <summary>Startauto (Dateiname aus der Datenbank, z.B. delta_integrale_evo_2).</summary>
-    public string StartCar { get; set; } = "Delta_Integrale_Evo_2";
+    public string StartCar { get; set; } = "delta_integrale_evo_2";
     /// <summary>Motorsounds laden.</summary>
     public bool LoadSound { get; set; } = true;
     /// <summary>Grip-Skalierung der Reifen (0,3–1,2). Unity-Standard 0,62 – damit rutscht das Auto in Kurven heraus; 0,9 war der Wert vor s80.</summary>
@@ -25,7 +25,7 @@ public sealed class VehicleConfig
     /// <summary>Lautstärke des Fahrzeugs (zusätzlich zu AudioConfig.Master).</summary>
     public float Volume { get; set; } = new AudioConfig().Vehicle;
     /// <summary>Helligkeit der Lichtgläser (Scheinwerfer, Rück-, Brems-, Rückfahrlicht, Blinker); 1 = wie im Unity-Projekt.</summary>
-    public float LightBrightness { get; set; } = 3f;
+    public float LightBrightness { get; set; } = 4f;
     /// <summary>
     /// Lichtsteuerung wie das Original (Core/Vehicles/TDU2VehicleLights.OriginalControl): Licht-Taste schaltet den Modus
     /// 0 aus / 1 automatisch nach Wetter (Start) / 2 Scheinwerfer erzwungen; Blinker 1,0 s Takt mit 0,6 s an; Lichtgläser ohne
@@ -53,13 +53,13 @@ public sealed class VehicleConfig
 
     public void ApplyTo(VehicleManager vm)
     {
-        TDU2Vehicle.MinRolloverG = System.Math.Clamp(MinRolloverG, 0f, 3f);
-        TDU2Vehicle.TireLoadMax = System.Math.Clamp(TireLoadMax, 0f, 10f);
-        TDU2Vehicle.BumpRebound = System.Math.Clamp(BumpRebound, 0f, 1f);
-        TDU2Vehicle.GripVsRollover = System.Math.Clamp(GripVsRollover, 0f, 2f);
-        TDU2Vehicle.WheelMaxRise = System.Math.Clamp(WheelMaxRise, 0f, 20f);
-        TDU2Vehicle.DamperKnee = System.Math.Clamp(DamperKnee, 0.05f, 5f);
-        TDU2Vehicle.DamperHighRatio = System.Math.Clamp(DamperHighRatio, 0.05f, 1f);
+        Vehicle.MinRolloverG = System.Math.Clamp(MinRolloverG, 0f, 3f);
+        Vehicle.TireLoadMax = System.Math.Clamp(TireLoadMax, 0f, 10f);
+        Vehicle.BumpRebound = System.Math.Clamp(BumpRebound, 0f, 1f);
+        Vehicle.GripVsRollover = System.Math.Clamp(GripVsRollover, 0f, 2f);
+        Vehicle.WheelMaxRise = System.Math.Clamp(WheelMaxRise, 0f, 20f);
+        Vehicle.DamperKnee = System.Math.Clamp(DamperKnee, 0.05f, 5f);
+        Vehicle.DamperHighRatio = System.Math.Clamp(DamperHighRatio, 0.05f, 1f);
         vm.StartCar = StartCar;
         vm.LoadSound = LoadSound;
         vm.GripScale = System.Math.Clamp(GripScale, 0.3f, 1.2f);
@@ -72,6 +72,6 @@ public sealed class VehicleConfig
         vm.SquealVolume = audio.TireSqueal;
         vm.GearShiftVolume = audio.GearShift;
         vm.LightBrightness = LightBrightness;
-        TDU2VehicleLights.OriginalControl = OriginalLightControl;
+        VehicleLights.OriginalControl = OriginalLightControl;
     }
 }

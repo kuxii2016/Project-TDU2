@@ -10,13 +10,17 @@ namespace Paradise.Core.Vehicles
     ///   Darstellung: TDU2/Car "_Heat" (0..1) auf eigenen Materialkopien je Rad (Scheiben unter DISC_FL/FR/RL/RR, Name mit "disk"/"disc").
     /// Mitspieler: die Wärme kommt aus dem UDP-Zustand (<see cref="SetHeat"/>). Portiert aus TDU2BrakeGlow (Unity).
     /// </summary>
-    public sealed class TDU2BrakeGlow
+    public sealed class BrakeGlow
     {
         static readonly string[] WheelNames = { "FL", "FR", "RL", "RR" };
         /// <summary>Wärmemenge (J), die eine Scheibe von kalt auf 1 bringt.</summary>
-        public static float HeatCapacity = 1.6e6f;
+        //public static float HeatCapacity = 1.6e6f;
         /// <summary>Ab dieser Wärme beginnt das Glühen.</summary>
-        public static float GlowStart = 0.35f;
+        //public static float GlowStart = 0.35f;
+
+        //Faster Heat simulation, but less realistic. The original values are too high for the current physics simulation.
+        public static float HeatCapacity = 650000f;
+        public static float GlowStart = 0.18f;
 
         readonly CarMaterial[]?[] _mats = new CarMaterial[4][];
         readonly float[] _shown = { -1f, -1f, -1f, -1f };
@@ -25,13 +29,13 @@ namespace Paradise.Core.Vehicles
         public readonly float[] Heat = new float[4];
         public bool HasDiscs { get; private set; }
 
-        TDU2BrakeGlow() { }
+        BrakeGlow() { }
 
         /// <summary>Scheibenmaterialien des Modells suchen und je Rad kopieren; null, wenn das Auto keine hat.</summary>
-        public static TDU2BrakeGlow? Create(CarModel? model, Render.IRenderer r)
+        public static BrakeGlow? Create(CarModel? model, Render.IRenderer r)
         {
             if (model == null) return null;
-            var g = new TDU2BrakeGlow { _model = model };
+            var g = new BrakeGlow { _model = model };
             for (int i = 0; i < 4; i++)
             {
                 var disc = model.Find("DISC_" + WheelNames[i]);
@@ -63,7 +67,7 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>Eigenes Auto: Wärme aus Bremsmoment und Raddrehzahl, Abkühlung über den Fahrtwind.</summary>
-        public void Simulate(TDU2Vehicle? v, float dt)
+        public void Simulate(Vehicle? v, float dt)
         {
             if (v == null || dt <= 0f) return;
             float speed = v.SpeedKmh / 3.6f;

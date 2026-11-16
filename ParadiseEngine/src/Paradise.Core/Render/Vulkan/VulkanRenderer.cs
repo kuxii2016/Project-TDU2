@@ -56,6 +56,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         // TD_CloudMesh (FrameGlobals.Cloud*): Instance_Color, ColorDown, AlphaBlend, x Haze, y DirLight_Emissive.x
         public Vector4 CloudColor, CloudDown, CloudAlpha, CloudMisc;
         public Vector4 SkyStars;     // x StarsIntensity, y StarsFade.x, z StarsFade.y, w Skydome_moonPercent
+        public Vector4 RainSpecs;    // TD_Road: (GI, wet, 1, puddle_height)
+        public Vector4 RainRipple;   // TD_Road: (scroll_u, scroll_v, ripple_intensity, ripple_scale)
     }
     private const int MaxLamps = 32;
 
@@ -151,8 +153,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _shadowOnly = new();
     private int _cShadow;
 
-    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon }
-    private const int PipeCount = 31;
+    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning }
+    private const int PipeCount = 32;
 
     // ------------------------------------------------------------------ Zustand
     private readonly bool _validation;
@@ -336,7 +338,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _instUsed = 0; _rCount = 0; _rMesh = null; _rMat = null;
         _cDraw = _cTris = _cBinds = _cTransp = _cOverlay = _cShadow = 0;
         _inFrame = true;
+        UpdateRainDescriptors(_currentFrame);
         _activeFrameSet = _frameSets[_currentFrame];
+        _background.Clear();
         WriteFrameUbo();
         PerfLog.Add("BeginFrame: Befehlspuffer/UBO", System.Diagnostics.Stopwatch.GetElapsedTime(tq).TotalMilliseconds);
     }
@@ -410,6 +414,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             CloudAlpha = g.CloudAlpha,
             CloudMisc = new Vector4(g.CloudMisc, 0f, 0f),
             SkyStars = new Vector4(g.Sky.StarsIntensity, g.Sky.StarsFadeStart, g.Sky.StarsFadeScale, g.Sky.MoonPercent),
+            RainSpecs = g.RainSpecs,
+            RainRipple = new Vector4(RenderFx.RainScroll.X, RenderFx.RainScroll.Y, g.RainRipple.Z, g.RainRipple.W),
         };
         int lc = g.Lamps != null ? System.Math.Min(System.Math.Min(g.LampCount, g.Lamps.Length), MaxLamps) : 0;
         u.OceanMisc = new Vector4(g.OceanNMap, g.OceanBlur, lc);
@@ -556,7 +562,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         bool objectMesh = vm.IsObjectFormat;
         bool objectMat = mat.Kind is MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water
-            or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon;
+            or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
+            or MaterialKind.Lightning;
         if (mat.Kind == MaterialKind.Overlay) return;
         if (objectMesh != objectMat)
         {
@@ -604,7 +611,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _transparent.Add((vm, mat, model, float.MaxValue));
             return;
         }
-        if (mat.Kind is MaterialKind.Transparent or MaterialKind.SpriteGlow or MaterialKind.CarGlass)
+        if (mat.Kind is MaterialKind.Transparent or MaterialKind.SpriteGlow or MaterialKind.CarGlass or MaterialKind.Lightning)
         {
             var p = new Vector3(model.M41, model.M42, model.M43);
             _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition)));
@@ -941,6 +948,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.Cloud => PipeId.Cloud,
         MaterialKind.SkyStars => PipeId.SkyStars,
         MaterialKind.SkyMoon => PipeId.SkyMoon,
+        MaterialKind.Lightning => PipeId.Lightning,
         MaterialKind.Particle => PipeId.Particle,
         MaterialKind.Flare => PipeId.Flare,
         MaterialKind.MapTerrain => PipeId.MapTerrain,
@@ -1927,6 +1935,32 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private VulkanTexture Pixel(byte r, byte g, byte b, byte a, string name) =>
         (VulkanTexture)CreateTexture(new TextureUpload { Width = 1, Height = 1, Format = GpuTextureFormat.Rgba8, Blocks = new[] { r, g, b, a }, Name = name, Linear = true });   // Unity-Standardtexturen: Werte unverändert (grey = 0.5)
 
+    // ------------------------------------------------------------------ Regen-Texturen (WFX_WetGrd: PUDDLES, RIPPLE_01..16)
+    private readonly VulkanTexture?[] _rainPudW = new VulkanTexture?[MaxFramesInFlight], _rainRipW = new VulkanTexture?[MaxFramesInFlight];
+
+    private void WriteRainSet(DescriptorSet set, VulkanTexture pud, VulkanTexture rip)
+    {
+        var samp = GetSampler(TextureWrap.Repeat, TextureWrap.Repeat);
+        var pi = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = pud.View, Sampler = samp };
+        var ri = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = rip.View, Sampler = samp };
+        var w = stackalloc WriteDescriptorSet[2];
+        w[0] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 5, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &pi };
+        w[1] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 6, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &ri };
+        _vk.UpdateDescriptorSets(_device, 2, w, 0, null);
+    }
+
+    /// <summary>Bindings 5/6 des Frame-Sets (und der Spiegel-Sets) dieses Bildes, nur bei Wechsel (nach dem Warten auf das Bild).</summary>
+    private void UpdateRainDescriptors(int frame)
+    {
+        var pud = RenderFx.RainPuddles is VulkanTexture p && !p.Disposed ? p : _black;
+        var rip = RenderFx.RainRipple is VulkanTexture q && !q.Disposed ? q : _gray;
+        if (ReferenceEquals(_rainPudW[frame], pud) && ReferenceEquals(_rainRipW[frame], rip)) return;
+        WriteRainSet(_frameSets[frame], pud, rip);
+        if (_envSetsCreated)
+            for (int s = 0; s < EnvSlots; s++) WriteRainSet(_envSets[frame * EnvSlots + s], pud, rip);
+        _rainPudW[frame] = pud; _rainRipW[frame] = rip;
+    }
+
     private void CreateDefaultTextures()
     {
         // Unity-Standardtexturen: white, gray, black
@@ -1969,7 +2003,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         MaterialKind.Terrain => _terrainSetLayout,
         MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
-            or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon => _objectSetLayout,
+            or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
+            or MaterialKind.Lightning => _objectSetLayout,
         _ => _simpleSetLayout,
     };
 
@@ -1979,7 +2014,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             MaterialKind.Terrain => _terrainSetLayout,
             MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
-                or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon => _objectSetLayout,
+                or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
+                or MaterialKind.Lightning => _objectSetLayout,
             _ => _simpleSetLayout,
         };
         var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _descriptorPool, DescriptorSetCount = 1, PSetLayouts = &layout };
@@ -2000,7 +2036,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MaterialKind.Water => new[] { T(d.Main, _gray), T(d.Ground, _gray), _gray, _gray, _black, _black },   // 1: Colormap (TD_Ocean samplerColorMap)
             MaterialKind.Flash => new[] { T(d.Main, _white), T(d.Detail, _white), _gray, _gray, _black, _black },   // _MainTex, _MaskTex
             // TDU2/Car: _MainTex white, _EmissionTex black, _LightMask white, _StickerTex black, _DirtTex black
-            MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon => new[] { T(d.Main, _white), _white, _white, _black, _black, _black },
+            MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon or MaterialKind.Lightning => new[] { T(d.Main, _white), _white, _white, _black, _black, _black },
             MaterialKind.Car or MaterialKind.CarShadow => new[] { T(d.Main, _white), T(d.EmissionTex, _black), T(d.LightMask, _white), T(d.StickerTex, _black), T(d.DirtTex, _black), T(d.FlakeTex, _gray) },   // 5: FLAKE (grau = Flocke 0)
             MaterialKind.CarGlass => new[] { T(d.Main, _white), T(d.EmissionTex, _black), T(d.LightMask, _white), T(d.StickerTex, _black), T(d.DirtTex, _black), T(d.Detail2Tex, _black) },   // 5: DETAIL2 (Original-Glas; schwarz Alpha 0 = ohne)
             _ => new[] { T(d.Main, _white) },
@@ -2294,13 +2330,15 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _terrainSetLayout = CreateSetLayout(4);
         _objectSetLayout = CreateSetLayout(6);
         // set 1: Frame-Globals
-        var fb = stackalloc DescriptorSetLayoutBinding[5];
+        var fb = stackalloc DescriptorSetLayoutBinding[7];
         fb[0] = new DescriptorSetLayoutBinding { Binding = 0, DescriptorType = DescriptorType.UniformBuffer, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };
         fb[1] = new DescriptorSetLayoutBinding { Binding = 1, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Schattenkarte
         fb[2] = new DescriptorSetLayoutBinding { Binding = 2, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Bodenspiegelung
         fb[3] = new DescriptorSetLayoutBinding { Binding = 3, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Reflexionssonde
         fb[4] = new DescriptorSetLayoutBinding { Binding = 4, DescriptorType = DescriptorType.StorageBuffer, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit };   // Instanz-Modellmatrizen
-        var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = 5, PBindings = fb };
+        fb[5] = new DescriptorSetLayoutBinding { Binding = 5, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Regen: PUDDLES (WFX_WetGrd)
+        fb[6] = new DescriptorSetLayoutBinding { Binding = 6, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Regen: aktuelles RIPPLE_xx
+        var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = 7, PBindings = fb };
         if (_vk.CreateDescriptorSetLayout(_device, in info, null, out _frameSetLayout) != Result.Success)
             throw new Exception("DescriptorSetLayout (Frame) fehlgeschlagen.");
     }
@@ -2493,38 +2531,39 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void CreatePipelines()
     {
         using var c = new ShaderCompiler();
-        CreatePipeline(c, PipeId.Simple, TDU2Shaders.SimpleVert, TDU2Shaders.SimpleFrag, _simpleSetLayout, false, blend: 0);
-        CreatePipeline(c, PipeId.Terrain, TDU2Shaders.TerrainVert, TDU2Shaders.TerrainFrag, _terrainSetLayout, false, blend: 0);
-        CreatePipeline(c, PipeId.MapTerrain, TDU2Shaders.SimpleVert, TDU2Shaders.MapTerrainFrag, _simpleSetLayout, false, blend: 0);
-        CreatePipeline(c, PipeId.MapRoad, TDU2Shaders.FxVert, TDU2Shaders.ParticleFrag, _objectSetLayout, true, blend: 1, depthTest: false);
-        CreatePipeline(c, PipeId.Object, TDU2Shaders.ObjectVert, TDU2Shaders.ObjectFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.TransparentAlpha, TDU2Shaders.TransparentVert, TDU2Shaders.TransparentFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.TransparentAdd, TDU2Shaders.TransparentVert, TDU2Shaders.TransparentFrag, _objectSetLayout, true, blend: 2);
-        CreatePipeline(c, PipeId.Foliage, TDU2Shaders.FoliageVert, TDU2Shaders.FoliageFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.Sprite, TDU2Shaders.SpriteVert, TDU2Shaders.SpriteFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.GlowAlpha, TDU2Shaders.SpriteGlowVert, TDU2Shaders.SpriteGlowFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.GlowAdd, TDU2Shaders.SpriteGlowVert, TDU2Shaders.SpriteGlowFrag, _objectSetLayout, true, blend: 2);
-        CreatePipeline(c, PipeId.Grass, TDU2Shaders.GrassVert, TDU2Shaders.GrassFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.Water, TDU2Shaders.WaterVert, TDU2Shaders.WaterFrag, _objectSetLayout, true, blend: 3);
-        CreatePipeline(c, PipeId.Sky, TDU2Shaders.SkyVert, TDU2Shaders.SkyFrag, _simpleSetLayout, false, blend: 0, depthTest: false, noVertices: true);
-        CreatePipeline(c, PipeId.ShadowObject, TDU2Shaders.ObjectVert, TDU2Shaders.ShadowObjectFrag, _objectSetLayout, true, blend: 0, shadow: true);
-        CreatePipeline(c, PipeId.ShadowFoliage, TDU2Shaders.FoliageVert, TDU2Shaders.ShadowFoliageFrag, _objectSetLayout, true, blend: 0, shadow: true);
-        CreatePipeline(c, PipeId.ShadowSprite, TDU2Shaders.SpriteVert, TDU2Shaders.ShadowSpriteFrag, _objectSetLayout, true, blend: 0, shadow: true);
-        CreatePipeline(c, PipeId.ShadowTerrain, TDU2Shaders.ShadowTerrainVert, TDU2Shaders.ShadowEmptyFrag, _terrainSetLayout, false, blend: 0, shadow: true);
-        CreatePipeline(c, PipeId.Overlay, TDU2Shaders.OverlayVert, TDU2Shaders.OverlayFrag, _simpleSetLayout, true, blend: 1, depthTest: false);
-        CreatePipeline(c, PipeId.Flash, TDU2Shaders.FlashVert, TDU2Shaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false);
+        CreatePipeline(c, PipeId.Simple, GameShaders.SimpleVert, GameShaders.SimpleFrag, _simpleSetLayout, false, blend: 0);
+        CreatePipeline(c, PipeId.Terrain, GameShaders.TerrainVert, GameShaders.TerrainFrag, _terrainSetLayout, false, blend: 0);
+        CreatePipeline(c, PipeId.MapTerrain, GameShaders.SimpleVert, GameShaders.MapTerrainFrag, _simpleSetLayout, false, blend: 0);
+        CreatePipeline(c, PipeId.MapRoad, GameShaders.FxVert, GameShaders.ParticleFrag, _objectSetLayout, true, blend: 1, depthTest: false);
+        CreatePipeline(c, PipeId.Object, GameShaders.ObjectVert, GameShaders.ObjectFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.TransparentAlpha, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.TransparentAdd, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 2);
+        CreatePipeline(c, PipeId.Foliage, GameShaders.FoliageVert, GameShaders.FoliageFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.Sprite, GameShaders.SpriteVert, GameShaders.SpriteFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.GlowAlpha, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.GlowAdd, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 2);
+        CreatePipeline(c, PipeId.Grass, GameShaders.GrassVert, GameShaders.GrassFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.Water, GameShaders.WaterVert, GameShaders.WaterFrag, _objectSetLayout, true, blend: 3);
+        CreatePipeline(c, PipeId.Sky, GameShaders.SkyVert, GameShaders.SkyFrag, _simpleSetLayout, false, blend: 0, depthTest: false, noVertices: true);
+        CreatePipeline(c, PipeId.ShadowObject, GameShaders.ObjectVert, GameShaders.ShadowObjectFrag, _objectSetLayout, true, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.ShadowFoliage, GameShaders.FoliageVert, GameShaders.ShadowFoliageFrag, _objectSetLayout, true, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.ShadowSprite, GameShaders.SpriteVert, GameShaders.ShadowSpriteFrag, _objectSetLayout, true, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.ShadowTerrain, GameShaders.ShadowTerrainVert, GameShaders.ShadowEmptyFrag, _terrainSetLayout, false, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.Overlay, GameShaders.OverlayVert, GameShaders.OverlayFrag, _simpleSetLayout, true, blend: 1, depthTest: false);
+        CreatePipeline(c, PipeId.Flash, GameShaders.FlashVert, GameShaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false);
         if (_uiPass.Handle != 0)
-            CreatePipeline(c, PipeId.FlashUi, TDU2Shaders.FlashVert, TDU2Shaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false, ui: true);
-        CreatePipeline(c, PipeId.Car, TDU2Shaders.CarVert, TDU2Shaders.CarFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.CarGlass, TDU2Shaders.CarVert, TDU2Shaders.CarGlassFrag, _objectSetLayout, true, blend: 4);
-        CreatePipeline(c, PipeId.CarShadow, TDU2Shaders.CarVert, TDU2Shaders.CarShadowFrag, _objectSetLayout, true, blend: 5);
-        CreatePipeline(c, PipeId.ShadowCar, TDU2Shaders.CarVert, TDU2Shaders.ShadowCarFrag, _objectSetLayout, true, blend: 0, shadow: true);
-        CreatePipeline(c, PipeId.Skidmark, TDU2Shaders.FxVert, TDU2Shaders.SkidmarkFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.Cloud, TDU2Shaders.CloudVert, TDU2Shaders.CloudFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.SkyStars, TDU2Shaders.SkyStarsVert, TDU2Shaders.SkyStarsFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.SkyMoon, TDU2Shaders.MoonVert, TDU2Shaders.MoonFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.Particle, TDU2Shaders.FxVert, TDU2Shaders.ParticleFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.Flare, TDU2Shaders.FxVert, TDU2Shaders.FlareFrag, _objectSetLayout, true, blend: 6);
+            CreatePipeline(c, PipeId.FlashUi, GameShaders.FlashVert, GameShaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false, ui: true);
+        CreatePipeline(c, PipeId.Car, GameShaders.CarVert, GameShaders.CarFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.CarGlass, GameShaders.CarVert, GameShaders.CarGlassFrag, _objectSetLayout, true, blend: 4);
+        CreatePipeline(c, PipeId.CarShadow, GameShaders.CarVert, GameShaders.CarShadowFrag, _objectSetLayout, true, blend: 5);
+        CreatePipeline(c, PipeId.ShadowCar, GameShaders.CarVert, GameShaders.ShadowCarFrag, _objectSetLayout, true, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.Skidmark, GameShaders.FxVert, GameShaders.SkidmarkFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.Cloud, GameShaders.CloudVert, GameShaders.CloudFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.SkyStars, GameShaders.SkyStarsVert, GameShaders.SkyStarsFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.SkyMoon, GameShaders.MoonVert, GameShaders.MoonFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.Lightning, GameShaders.FxVert, GameShaders.LightningFrag, _objectSetLayout, true, blend: 2);   // TD_Lightning: SRCALPHA/ONE
+        CreatePipeline(c, PipeId.Particle, GameShaders.FxVert, GameShaders.ParticleFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.Flare, GameShaders.FxVert, GameShaders.FlareFrag, _objectSetLayout, true, blend: 6);
     }
 
     /// <param name="blend">0 = opak (Tiefe schreiben), 1 = SrcAlpha/OneMinusSrcAlpha, 2 = SrcAlpha/One (beide ohne Tiefenschreiben, Offset)</param>
