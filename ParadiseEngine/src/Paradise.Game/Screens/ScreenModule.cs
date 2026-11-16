@@ -68,6 +68,7 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (TDU2Controls.Pressed("dev_freeride")) GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
         if (TDU2Controls.Pressed("dev_map")) GameMode.Set(GameMode.Current == Gamemode.GAME_MODE_MAP ? Gamemode.GAME_MODE_FREERIDE : Gamemode.GAME_MODE_MAP);
         _active?.Run(this, in time);
+        IslandTravel.Update(this, time.DeltaTime);   // Inselwechsel (Unity TDU2IslandTravel, Gamemodes/Utils)
         ImportProfile();
         GAME_MODE_FREERIDE.UpdateRadio(this, time.DeltaTime);   // Autoradio läuft in jedem Modus (Unity TDU2Radio)
         GAME_MODE_FREERIDE.UpdateAmbience(this, time.DeltaTime);   // Umgebungsgeräusche der Insel (ambiences.xmb, Klangzonen .psa)

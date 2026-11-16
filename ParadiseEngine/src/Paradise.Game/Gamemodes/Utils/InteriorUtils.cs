@@ -303,6 +303,8 @@ public abstract partial class InteriorUtils : GameModeHandler
         _fp = new Walker();
         _t.Input.CursorLocked = true;
         Log.Info($"Interieur betreten: {s.Code} ({b.Name}), Auto beim Verlassen: {_lastCar?.FileName ?? "-"}");
+        // Spot-Musik (Unity TDU2SpotAudio): Radio stumm, Musik des Spots aus sound/musics
+        Paradise.Core.Audio.SpotMusic.Enter(s.Code, s.Index, BnkDir, _t.Streamer?.Index?.ExteriorDir);
         // Wie im Spiel: Haus und Club betritt man im Wohnbereich bzw. im Clubraum; die Garage erreicht man von dort.
         if (b.Kind == Kind.Living && b.Living != null) LoadScene(b.Living, Kind.Living, null);
         else if (b.Kind == Kind.Living && b.Garage != null) LoadScene(b.Garage, Kind.Garage, null);
@@ -997,6 +999,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         _t.NearClip = 1f;
         _spot = null; _spotBanks = null; _sceneTask = null;
         Paradise.Core.World.WorldWeather.Inside = false;   // Unity SetInteriorAmbient(false)
+        Paradise.Core.Audio.SpotMusic.Exit();
         _v.Suspended = false;
         if (s == null) return;
         var vm = Vm;

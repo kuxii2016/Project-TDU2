@@ -101,6 +101,9 @@ public static class AudioEngine
     static volatile bool _run;
     static bool _failed;
 
+    /// <summary>Angemeldete Stimmen (Entwicklermenü F1 > Audio).</summary>
+    public static int VoiceCount { get { lock (Gate) return _voices.Count; } }
+
     /// <summary>Play a short sound once (like AudioSource.PlayOneShot).</summary>
     public static void PlayOneShot(AudioClip? clip, float volume, bool ignorePause = false)
     {

@@ -234,7 +234,10 @@ public static class TerrainMeshBuilder
         {
             var (gx, gz) = edge switch
             {
-                Edge.Bottom => (k, 0), Edge.Top => (k, n), Edge.Left => (0, k), _ => (n, k),
+                Edge.Bottom => (k, 0),
+                Edge.Top => (k, n),
+                Edge.Left => (0, k),
+                _ => (n, k),
             };
             float y = g.Get(gx, gz);
             var nrm = g.NormalAt(gx, gz);
@@ -246,7 +249,10 @@ public static class TerrainMeshBuilder
         {
             var (cx, cz) = edge switch
             {
-                Edge.Bottom => (k, 0), Edge.Top => (k, n - 1), Edge.Left => (0, k), _ => (n - 1, k),
+                Edge.Bottom => (k, 0),
+                Edge.Top => (k, n - 1),
+                Edge.Left => (0, k),
+                _ => (n - 1, k),
             };
             if (holes != null && holes[cz * n + cx]) continue;   // Loch-Kachel: dort liegt BLOCK
             int a = (k - k0) * 2, c = a + 1, b = a + 2, d = a + 3;

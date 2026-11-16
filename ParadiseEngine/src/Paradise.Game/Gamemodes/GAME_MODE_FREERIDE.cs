@@ -41,6 +41,8 @@ namespace Paradise.Game.Gamemodes
         // ------------------------------------------------------------------ Autoradio (Unity TDU2Radio, Anzeige in hud.bnk der Minimap)
         // Läuft wie in Unity in jedem Spielmodus weiter (Musik, Tasten) – jedes Bild aus ScreenModule.Update.
         static TDU2Radio? _radio;
+        /// <summary>Autoradio (null bis zum ersten Bild) – Entwicklermenü F1 > Audio.</summary>
+        public static TDU2Radio? Radio => _radio;
         static Paradise.Core.Online.SaveData? _radioSave;   // Spielstand, aus dem Sender/Lautstärke zuletzt übernommen wurden
 
         static TDU2Radio CreateRadio()
@@ -88,6 +90,8 @@ namespace Paradise.Game.Gamemodes
         // ------------------------------------------------------------------ Umgebungsgeräusche (ambiences.xmb + Sektor-Klangzonen .psa)
         static TDU2Ambience? _ambience;
         static string? _ambienceIsland;
+        /// <summary>Umgebungsgeräusche der aktuellen Insel – Entwicklermenü F1 > Audio.</summary>
+        public static TDU2Ambience? Ambience => _ambience;
         static int _thunderSeen = Paradise.Core.World.Lightning.Strikes;
 
         /// <summary>

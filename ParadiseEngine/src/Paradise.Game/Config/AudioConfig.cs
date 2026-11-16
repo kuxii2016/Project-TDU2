@@ -12,6 +12,8 @@ public sealed class AudioConfig
     public float Master { get; set; } = 0.85f;
     /// <summary>Menümusik (frontend/…/music: LOGIN, MAP, LOBBY …).</summary>
     public float Music { get; set; } = 0.35f;
+    /// <summary>Musik in Interieurs (Händler, Haus, Läden …: sound/musics, Unity TDU2SpotAudio.Volume).</summary>
+    public float SpotMusic { get; set; } = 0.6f;
     /// <summary>Oberflächen-Sounds der Flash-Menüs (fe_snd.bnk).</summary>
     public float Interface { get; set; } = 0.4f;
     /// <summary>Fahrzeug (Motor, Reifen, Hupe …) – Unity TDU2VehicleManager.Volume.</summary>
@@ -21,7 +23,7 @@ public sealed class AudioConfig
     /// <summary>Schaltgeräusche (Faktor auf den Fahrzeugsound).</summary>
     public float GearShift { get; set; } = 0.3f;
     /// <summary>Umgebungsgeräusche der Insel (ambiences.xmb: Stadt, Meer, Wald …, Regen) – Core/Audio/TDU2Ambience.</summary>
-    public float Ambience { get; set; } = 0.25f;
+    public float Ambience { get; set; } = 0.1f;
 
     // ---------------- Autoradio (Unity TDU2Radio: Inspektor-Werte; Sender/Lautstärke gelten nur für die Sitzung)
     /// <summary>Sender beim Start: off, hariba, kalua (eigene MP3 in SharedAssets/Radio), roadtrack.</summary>
@@ -42,6 +44,7 @@ public sealed class AudioConfig
     {
         AudioEngine.MasterVolume = Clamp(Master);
         FrontendMusic.Volume = Clamp(Music);
+        Paradise.Core.Audio.SpotMusic.Volume = Clamp(SpotMusic);
         FrontendSounds.Volume = Clamp(Interface);
     }
 

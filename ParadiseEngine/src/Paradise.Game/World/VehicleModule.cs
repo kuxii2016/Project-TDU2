@@ -91,9 +91,17 @@ public sealed class VehicleModule : GameModule
         }
 
         var v = _vm.Current;
-        _terrain.FlyCameraEnabled = v == null;
+        _terrain.FlyCameraEnabled = v == null || _terrain.FreeFly;
         s?.ExtraLamps.Clear();
         if (v == null) return;
+        if (_terrain.FreeFly)
+        {
+            // Freiflug-Kamera (Entwicklermenü F1, Unity TDU2FlyCameraTool): Auto ohne Eingabe mit Handbremse, Kamera bleibt frei
+            _vm.DriveInput(0f, 0f, 0f, true, time.DeltaTime, false, false);
+            _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+            if (s != null) _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
+            return;
+        }
 
         // DriveInput (Unity TDU2VehicleManager: TDU2Controls "accel"/"brake"/"left"/"right"/"handbrake")
         float accel = TDU2Controls.Held("accel") ? 1f : 0f;

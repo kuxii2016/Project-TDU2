@@ -2,6 +2,7 @@ using Paradise.Core.Formats;
 using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
+using Paradise.Game.Gamemodes;
 using System.Globalization;
 
 namespace Paradise.Game.Screens;
@@ -10,6 +11,7 @@ namespace Paradise.Game.Screens;
 /// Menüseiten des Entwicklermenüs (F1), gleicher Aufbau wie Unity TDU2DevMenu (MainMenu, CarsMenu, WorldMenu, StreamingMenu,
 /// WeatherMenu, RenderingMenu, UsageMenu, JobsMenu). Werte wirken direkt auf die Engine (MapStreamer, VehicleManager,
 /// WorldWeather, GraphicsSettings, RenderDistance). Was es in der Engine noch nicht gibt, steht als grauer Platzhalter da.
+/// Weitere Seiten (Insel, Netzwerk, Spielstand, Eingabe, Debug-Ansicht, Flash, Audio): DevMenu.Debug.cs.
 /// </summary>
 public sealed partial class DevMenu
 {
@@ -33,31 +35,33 @@ public sealed partial class DevMenu
         PhMenu("Traffic", "Traffic is not ported yet"),
 
         Head("WORLD"),
-        Menu("World Loading", WorldMenu),
+        Menu("World Loading / Island travel", WorldMenu),
         Menu("Streaming", StreamingMenu),
         Menu("Weather & Time of Day", WeatherMenu),
-        PhMenu("GPS / Bookmarks", "GPS settings: Game/Config/GpsConfig.cs"),
+        Menu("GPS / Bookmarks", GpsMenu),
 
         Head("INPUT"),
-        PhMenu("Controls / Input Devices", "Key bindings: Options > Controls (Game/Config/KeyConfig.cs)"),
+        Menu("Controls / Input Devices", ControlsMenu),
         PhBool("Input overlay (axes, pedals, buttons)", false),
 
         Head("PLAYER & ONLINE"),
         PhMenu("Avatar", "Avatars are not ported yet"),
-        PhMenu("Network", "Network debug is not ported yet"),
-        PhMenu("Savegame / Profile / Story", "Story is not ported yet"),
+        Menu("Network", NetworkMenu),
+        Menu("Savegame / Profile / Money", SavegameMenu),
 
         Head("VISUALS & PERFORMANCE"),
         Menu("Rendering", RenderingMenu),
         Menu("Performance", UsageMenu),
         Menu("Jobs & Threads", JobsMenu),
+        Menu("Audio (volumes, now playing)", AudioMenu),
 
         Head("DEBUG VIEW"),
-        PhMenu("Debug View Toggles (race / traffic / camera)", "Debug overlay: F12"),
-        PhBool("Free-fly camera (F4)", false),
+        Menu("Debug View Toggles (race / traffic / camera)", DebugViewMenu),
+        Bool("Free-fly camera", () => _terrain.FreeFly, SetFreeFly, false),
 
         Head("FLASH"),
-        PhMenu("Flash Debug", "Flash debugger is not ported yet"),
+        Menu("Flash Debug", FlashMenu),
+        Menu("Flash Profiler", FlashProfilerMenu),
 
         Head(""),
         Info("Close F1 · Up/Down Entry · Left/Right Value (Shift x10) · Enter to open · Backspace to go back · Delete (default)"),
@@ -84,7 +88,7 @@ public sealed partial class DevMenu
         l.Add(Bool("Mirror reflections (probe on the car)", () => m.MirrorReflections, v => m.MirrorReflections = v, true));
         l.Add(Head("SWITCH CAR"));
         l.Add(Menu("All cars (" + m.Available.Count + ")", CarList));
-        l.Add(PhMenu("Own cars", "Owned cars list is not ported yet"));
+        l.Add(Menu("Own cars", OwnCarsMenu));
         return l;
     }
 
@@ -126,8 +130,8 @@ public sealed partial class DevMenu
     {
         var s = Streamer;
         var l = new List<Item> { Head("STATUS") };
-        if (s == null || s.Index == null) { l.Add(Info("no island loaded (MapStreamer)")); return l; }
-        l.Add(Info("Island", () => s.Index?.IslandName + "  (" + s.Status + ")"));
+        if (s == null || s.Index == null) { l.Add(Info("no island loaded (MapStreamer)")); l.AddRange(TravelItems()); return l; }
+        l.Add(Info("Island", () => IslandTravel.DisplayName(s.Index?.IslandName) + "  (" + s.Status + ")"));
         l.Add(Info("Position (game)", () => Num(s.ViewerGame.X) + " / " + Num(s.ViewerGame.Y) + " / " + Num(s.ViewerGame.Z)));
         l.Add(Info("Sector", () => WorldLayout.SectorAt(s.ViewerGame.X, s.ViewerGame.Z).ToString()));
         l.Add(Info("Areas / sectors loaded", () => s.LoadedAreas + " / " + s.LoadedSectors));
@@ -155,8 +159,16 @@ public sealed partial class DevMenu
         l.Add(Bool("Stars / moon", () => s.ShowStars, v => s.ShowStars = v, true));
         l.Add(Bool("Power wires", () => s.ShowPowerWires, v => s.ShowPowerWires = v, true));
         l.Add(Bool("Road sign text", () => s.ShowSignText, v => s.ShowSignText = v, true));
+        l.AddRange(TravelItems());
         l.Add(Head("ACTIONS"));
-        l.Add(PhAction("Reload world (all tiles)", "Reload world: not available in the engine yet"));
+        l.Add(Action_("Reload world (all tiles)", () =>
+        {
+            if (IslandTravel.Pending) { Toast("Island travel running"); return; }
+            if (WorldWeather.Inside) { Toast("Leave the interior first"); return; }
+            IslandTravel.Go(s.Island, false, Mgr?.CurrentCar?.FileName, "EAIR");
+            Toast("Reloading " + IslandTravel.DisplayName(s.Island));
+            Close();
+        }));
         l.Add(Action_("Clean memory (GC)", CleanMemory));
         return l;
     }

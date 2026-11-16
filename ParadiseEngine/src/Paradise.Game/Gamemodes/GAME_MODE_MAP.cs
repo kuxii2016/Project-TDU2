@@ -18,6 +18,7 @@ using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
 using FVec = Paradise.Core.Flash.Vector2;
 using Gps = Paradise.Core.Vehicles.Gps;
 using Minimap = Paradise.Core.Vehicles.Minimap;
+using TDU2Bookmarks = Paradise.Core.Vehicles.TDU2Bookmarks;
 using Spot = Paradise.Core.Formats.Spot;
 using SpotsFile = Paradise.Core.Formats.SpotsFile;
 using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
@@ -103,7 +104,7 @@ public class GAME_MODE_MAP : GameModeHandler
     // Spots (Unity BuildSpots/UpdateOverlay): Kopien von /pack/point je Platz, nächste zum Kartenmittelpunkt zuerst
     public float SpotScale = 0.75f;
     public int MaxSpots = 160;
-    sealed class MapSpot { public Spot spot = null!; public string label = ""; }
+    sealed class MapSpot { public Spot spot = null!; public string label = ""; public int bookmark = -1; }
     readonly List<MapSpot> _spots = new();
     readonly Dictionary<int, string> _slotLabel = new();
     int _pointChar, _pointDepth0 = 1000, _hover = -1;
@@ -142,6 +143,9 @@ public class GAME_MODE_MAP : GameModeHandler
         var vehicles = _ctx.Vehicles; var vm = vehicles?.Manager;
         if (vehicles != null) vehicles.Frozen = true;
         AudioEngine.Paused = true;   // Unity: AudioListener.pause = true (Menü-Sounds laufen weiter)
+        // Kartenmusik wie im Spiel (MngMusic "MAP" → sound/musics/map.wav, 0,5); Spot-Musik im Interieur solange aus
+        Paradise.Core.Audio.SpotMusic.Duck(true);
+        Paradise.Core.Audio.FrontendMusic.Play("MAP");
         if (vm?.Minimap != null) { _savedMinimap = vm.Minimap.ShowMinimap; vm.Minimap.ShowMinimap = false; }
         if (vm != null) { _savedHud = vm.ShowHud; vm.ShowHud = false; vm.ApplyHudVisibility(); }
 
@@ -183,6 +187,7 @@ public class GAME_MODE_MAP : GameModeHandler
         ui.SetVisible("/target", false);
         // Kartencursor/GPS-Ziel liegen unter der Maus: nicht als "Maus über Knopf" werten (sonst Flackern/doppelte Klicks)
         ui.MouseIgnore.Add("/curseur"); ui.MouseIgnore.Add("/curseur_ghost"); ui.MouseIgnore.Add("/target");
+        ui.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
         ui.SetVariable("/:lockGotoStatus", "none");
         ui.SetVariable("/:money", TDU2Session.LoggedIn
             ? TDU2Session.Save.money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $" : "999 999 999 $");
@@ -246,6 +251,8 @@ public class GAME_MODE_MAP : GameModeHandler
         var vehicles = _ctx.Vehicles; var vm = vehicles?.Manager;
         if (vehicles != null) vehicles.Frozen = false;
         AudioEngine.Paused = false;
+        Paradise.Core.Audio.FrontendMusic.Stop();
+        Paradise.Core.Audio.SpotMusic.Duck(false);
         if (vm?.Minimap != null) vm.Minimap.ShowMinimap = _savedMinimap;
         if (vm != null) vm.ShowHud = _savedHud;
         Log.Info("Große Karte geschlossen");
@@ -319,6 +326,35 @@ public class GAME_MODE_MAP : GameModeHandler
             case "tpok":                              // Teleport möglich? (nur auf Straßen, wie im Spiel)
                 _ui!.SetValue("/:IsTeleportOK", OnRoad(out _)); break;
             case "fiou": case "fiin": case "fity": case "stof": case "ston": case "mnok": break;   // Animationsmeldungen der Filterleiste
+            case "bmrk:enbl":                         // Lesezeichen an der Cursorposition (Unity TDU2BigMap)
+            {
+                var g = MenuPoint(); var sm = _ctx.Terrain?.Streamer;
+                if (g.HasValue && TDU2Bookmarks.CanAdd)
+                {
+                    // Höhe vom Gelände (Cursor liegt auf Meereshöhe), damit das Symbol beim Kippen der Karte an der Stelle bleibt
+                    var p = g.Value;
+                    if (sm != null && sm.RaycastDown(new Vector3(p.X, p.Y + 3000f, p.Z), 0f, 6000f, out float gy)) p.Y = gy;
+                    TDU2Bookmarks.Add(IslandName(), p); BuildSpots();
+                    _ui!.CallClip("/presets/ttip", "Open");   // Meldung "Lesezeichen hinzugefügt" (schließt sich selbst)
+                }
+                _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                break;
+            }
+            case "bmrk:dsbl":                         // Lesezeichen entfernen
+            {
+                var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
+                if (ms != null && ms.bookmark >= 0) { TDU2Bookmarks.Remove(ms.bookmark); _selected = -1; HideTooltip(); BuildSpots(); }
+                _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                break;
+            }
+            case "mysp:enbl":                         // Spot als Favorit
+            case "mysp:dsbl":
+            {
+                var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : null;
+                if (ms != null && ms.bookmark < 0) TDU2Bookmarks.SetFavorite(ms.spot.Code, c == "mysp:enbl");
+                _ui!.SetValue("/:IsSpotFavorite", ms != null && TDU2Bookmarks.IsFavorite(ms.spot.Code));
+                break;
+            }
             default: break;
         }
     }
@@ -343,6 +379,11 @@ public class GAME_MODE_MAP : GameModeHandler
                 if (label == null) continue;
                 _spots.Add(new MapSpot { spot = s, label = label });
             }
+        // Lesezeichen (nur auf der großen Karte, gespeichert je Spieler und Insel)
+        string isl = IslandName();
+        foreach (var b in TDU2Bookmarks.All)
+            if (string.Equals(b.Island ?? "", isl, StringComparison.OrdinalIgnoreCase))
+                _spots.Add(new MapSpot { spot = new Spot { Code = "#BOOKMARK_" + b.Id, Position = b.Pos, Position2 = b.Pos, Index = -1 }, label = "bookmark", bookmark = b.Id });
         Log.Info("Karte: " + _spots.Count + " Spots mit Symbol");
         var tmpl = ui.Find("/pack/point");
         if (tmpl != null) { _pointChar = tmpl.CharId; tmpl.Visible = false; }
@@ -353,11 +394,13 @@ public class GAME_MODE_MAP : GameModeHandler
         ApplyLod(true);
     }
 
-    /// <summary>Spot im gewählten Reiter der Filterleiste? 0 Herausforderungen, 2 Orte für den Avatar, 3 Orte für Fahrzeuge.</summary>
+    /// <summary>Spot im gewählten Reiter der Filterleiste? 0 Herausforderungen, 2 Orte für den Avatar, 3 Orte für Fahrzeuge,
+    /// 5 eigene Orte (Lesezeichen + Favoriten).</summary>
     static bool FilterPass(MapSpot ms)
     {
+        if (ms.bookmark >= 0) return _filter == 5;
         int cat = SpotCategory(ms);
-        return _filter switch { 0 => cat == 0, 2 => cat == 2, 3 => cat == 3, _ => false };   // 1 Multi, 4 Spieler, 5 eigene Orte: folgen
+        return _filter switch { 0 => cat == 0, 2 => cat == 2, 3 => cat == 3, 5 => TDU2Bookmarks.IsFavorite(ms.spot.Code), _ => false };   // 1 Multi, 4 Spieler: folgen
     }
 
     static int SpotCategory(MapSpot ms) => ms.label switch
@@ -477,9 +520,10 @@ public class GAME_MODE_MAP : GameModeHandler
         var ui = _ui!;
         var s = ms.spot; var label = ms.label;
         string name = LocalizedSpotName(label, s.Code);
-        ui.SetValue("/:IsSpotFavorite", false);
+        if (ms.bookmark >= 0) name = (_texts != null && _texts.TryGetValue("m_Bookmark", out var bt) && !string.IsNullOrEmpty(bt) ? bt : "Lesezeichen") + " " + ms.bookmark;
+        ui.SetValue("/:IsSpotFavorite", TDU2Bookmarks.IsFavorite(s.Code));
         // wie im Spiel: Name aus der Sprachdatenbank (Händler/Shops DBCarShop._libelle_hc, Häuser DBHouse._housename_hc)
-        var dbName = SpotDbName(s);
+        var dbName = ms.bookmark < 0 ? SpotDbName(s) : null;
         if (!string.IsNullOrEmpty(dbName)) name = dbName;
         else if (label == "carDealer" || label == "bikeDealer") { var b = DealerBrands(s.Code); if (!string.IsNullOrEmpty(b)) name = b; }
         ui.SetVariable("/:SpotName", name);
@@ -775,7 +819,7 @@ public class GAME_MODE_MAP : GameModeHandler
                 _menuWorld = sm != null ? sm.GameToRender(_spots[_hover].spot.Position) : null;
                 _menuTargetPresent = Gps.Instance != null && Gps.Instance.IsTargetNear(_spots[_hover].spot.Position, 40f);
                 ui.SetValue("/:IsTargetPresent", _menuTargetPresent);
-                ui.SetValue("/:IsSpotFavorite", false);
+                ui.SetValue("/:IsSpotFavorite", TDU2Bookmarks.IsFavorite(_spots[_hover].spot.Code));
                 ui.SetValue("/:IsTeleportOK", true);
                 ui.Input("A");
             }

@@ -206,49 +206,49 @@ public sealed class ParticleEmitter
                 else { pos.X = U01() - 0.5f; dir = new Vector3(U01() - 0.5f, U01() - 0.5f, U01() - 0.5f); }
                 break;
             case 9:   // Kreis in XZ: Ring (1) / Scheibe (2)
-            {
-                if (sub == 0) sub = 1; else if (sub == 3) sub = 2;
-                float a = U01() * MathF.Tau;
-                float c = MathF.Cos(a), s = MathF.Sin(a);
-                dir = new Vector3(c, 0f, s);
-                if (sub == 1) pos = new Vector3(c * 0.5f, 0f, s * 0.5f);
-                else { float r = U01() * 0.5f; pos = new Vector3(c * r, 0f, s * r); }
-                break;
-            }
-            case 6:   // Quadrat in XZ: Ecke (0) / Kante (1) / Fläche (2; Richtungsmodus 1 wird dort zu 2)
-            {
-                if (sub == 3) sub = 2;
-                if (sub == 2) { pos = new Vector3(U01() - 0.5f, 0f, U01() - 0.5f); faceDir = true; }
-                else if (sub == 1)
                 {
-                    int e = (int)(Next() & 3);
-                    float t = U01();
-                    var a = Corner(e); var bb = Corner((e + 1) & 3);   // Kanten (0,1) (1,2) (2,3) (3,0), Tabelle 0x1584eb0
-                    pos = bb * t + a * (1f - t);
-                    dir = EdgeNormal(e);                                 // Tabelle 0x1584e70
+                    if (sub == 0) sub = 1; else if (sub == 3) sub = 2;
+                    float a = U01() * MathF.Tau;
+                    float c = MathF.Cos(a), s = MathF.Sin(a);
+                    dir = new Vector3(c, 0f, s);
+                    if (sub == 1) pos = new Vector3(c * 0.5f, 0f, s * 0.5f);
+                    else { float r = U01() * 0.5f; pos = new Vector3(c * r, 0f, s * r); }
+                    break;
                 }
-                else { pos = Corner((int)(Next() & 3)); dir = pos; }
-                break;
-            }
+            case 6:   // Quadrat in XZ: Ecke (0) / Kante (1) / Fläche (2; Richtungsmodus 1 wird dort zu 2)
+                {
+                    if (sub == 3) sub = 2;
+                    if (sub == 2) { pos = new Vector3(U01() - 0.5f, 0f, U01() - 0.5f); faceDir = true; }
+                    else if (sub == 1)
+                    {
+                        int e = (int)(Next() & 3);
+                        float t = U01();
+                        var a = Corner(e); var bb = Corner((e + 1) & 3);   // Kanten (0,1) (1,2) (2,3) (3,0), Tabelle 0x1584eb0
+                        pos = bb * t + a * (1f - t);
+                        dir = EdgeNormal(e);                                 // Tabelle 0x1584e70
+                    }
+                    else { pos = Corner((int)(Next() & 3)); dir = pos; }
+                    break;
+                }
             case 3:   // Zylinder (Mantel / Volumen), Achse Y
-            {
-                if (sub <= 1) sub = 2;
-                float a = U01() * MathF.Tau;
-                float c = MathF.Cos(a), s = MathF.Sin(a);
-                dir = new Vector3(c, 0f, s);
-                float r = sub == 2 ? 0.5f : U01() * 0.5f;
-                pos = new Vector3(c * r, U01() - 0.5f, s * r);
-                break;
-            }
+                {
+                    if (sub <= 1) sub = 2;
+                    float a = U01() * MathF.Tau;
+                    float c = MathF.Cos(a), s = MathF.Sin(a);
+                    dir = new Vector3(c, 0f, s);
+                    float r = sub == 2 ? 0.5f : U01() * 0.5f;
+                    pos = new Vector3(c * r, U01() - 0.5f, s * r);
+                    break;
+                }
             case 2:   // Kugel (Oberfläche 2 / Volumen 3)
-            {
-                if (sub <= 1) sub = 2;
-                float th = U01() * MathF.Tau;
-                float ph = (U01() - 0.5f) * MathF.PI;
-                dir = new Vector3(MathF.Cos(ph) * MathF.Cos(th), MathF.Sin(ph), MathF.Cos(ph) * MathF.Sin(th));
-                pos = dir * (sub == 2 ? 0.5f : U01() * 0.5f);
-                break;
-            }
+                {
+                    if (sub <= 1) sub = 2;
+                    float th = U01() * MathF.Tau;
+                    float ph = (U01() - 0.5f) * MathF.PI;
+                    dir = new Vector3(MathF.Cos(ph) * MathF.Cos(th), MathF.Sin(ph), MathF.Cos(ph) * MathF.Sin(th));
+                    pos = dir * (sub == 2 ? 0.5f : U01() * 0.5f);
+                    break;
+                }
             case 1:   // Würfel: Volumen
                 pos = new Vector3(U01() - 0.5f, U01() - 0.5f, U01() - 0.5f);
                 dir = pos;

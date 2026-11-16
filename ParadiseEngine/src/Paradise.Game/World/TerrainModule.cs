@@ -40,6 +40,8 @@ public sealed class TerrainModule : GameModule
     public float FieldOfView = FovDeg, NearClip = Near;
     /// <summary>Fernebene (große Karte: weit über der Insel).</summary>
     public float FarClip = Far;
+    /// <summary>Freiflug-Kamera trotz Fahrzeug (Entwicklermenü F1, Unity TDU2FlyCameraTool): Auto bleibt stehen.</summary>
+    public bool FreeFly;
     /// <summary>Große Karte (Unity TDU2BigMap: RenderSettings.fog aus, Schatten aus) – Ansicht von oben auf die Insel.</summary>
     public bool MapView;
     /// <summary>
@@ -77,33 +79,26 @@ public sealed class TerrainModule : GameModule
         if (_world.Root == null) { Log.Warn("TerrainModule: kein Spielordner gefunden."); return; }
         _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
         _globals = _light.ToFrameGlobals();
-        var s = new MapStreamer(_renderer) { Island = "ibiza" };
-        _light.ApplyTo(s);
         // Kollision der Welt (Unity: GenerateColliders) – vor Initialize, damit schon die ersten Sektoren eingetragen werden
         _physics = new PhysicsWorld();
-        s.Physics = _physics;
-        if (!s.Initialize(_world.Root)) { s.Dispose(); return; }
-        _overlay?.AddSection("Welt", s.DebugLines);
-        if (_light.UseWeather && s.Index != null)
-        {
-            _weather = new WorldWeather();
-            _light.ApplyTo(_weather);
-            _weather.Init(s.Index);
+        if (!BuildIsland("ibiza")) return;
+        var s = _streamer!;
+        // Abschnitte lesen immer den aktuellen Streamer (Inselwechsel baut ihn neu)
+        _overlay?.AddSection("Welt", () => _streamer?.DebugLines() ?? Array.Empty<string>());
+        if (_weather != null)
             _overlay?.AddSection("Tag/Wetter", () => new[]
             {
                 $"Uhr {(int)WorldWeather.Hour:00}:{(int)(WorldWeather.Hour % 1f * 60f):00}   {WorldWeather.Kind}   Nacht {WorldWeather.Night:0.00}",
                 $"Regen {WorldWeather.Rain:0.00}   Nässe {WorldWeather.GroundWet:0.00}   Lampen {_globals.LampCount}   Ampeln {TrafficLights.Count}",
             });
-        }
         _overlay?.AddSection("Auswahl (F10: Objekt in Blickmitte)", () => _pick);
         _overlay?.AddSection("Physik", () => new[]
         {
-            $"Kollider {_physics?.StaticCount ?? 0}   Dreiecke {(_physics?.TriangleCount ?? 0):N0}   letzter Bau {s.ColliderBuildMs:0.0} ms (Hintergrund), Eintragen {s.ColliderAddMs:0.0} ms",
+            $"Kollider {_physics?.StaticCount ?? 0}   Dreiecke {(_physics?.TriangleCount ?? 0):N0}   letzter Bau {_streamer?.ColliderBuildMs ?? 0:0.0} ms (Hintergrund), Eintragen {_streamer?.ColliderAddMs ?? 0:0.0} ms",
             _groundInfo,
         });
-        _streamer = s;
         // Speicher-Diagnose ([DIAG Mem] alle 30 s): Welt, Physik, GPU
-        MemoryLog.Register("Welt", s.MemoryInfo);
+        MemoryLog.Register("Welt", () => _streamer?.MemoryInfo() ?? "-");
         MemoryLog.Register("Physik", () =>
         {
             var (main, bg) = _physics?.PoolBytes() ?? (0UL, 0UL);
@@ -117,6 +112,44 @@ public sealed class TerrainModule : GameModule
         // Unity: Viewer.rotation = Quaternion.Euler(35, 0, 0) -> 35° nach unten, Blick +Z
         _cam = new FlyCamera(s.StartPosition, 0f, -35f * MathF.PI / 180f);
         Log.Info($"TerrainModule: Start bei {s.StartPosition} (Spiel {s.RenderToGame(s.StartPosition)})");
+    }
+
+    /// <summary>MapStreamer (+ Wetter) einer Insel anlegen; die Physikwelt bleibt dieselbe.</summary>
+    bool BuildIsland(string island)
+    {
+        var s = new MapStreamer(_renderer) { Island = island };
+        _light.ApplyTo(s);
+        s.Physics = _physics;
+        if (!s.Initialize(_world.Root!)) { s.Dispose(); return false; }
+        if (_light.UseWeather && s.Index != null)
+        {
+            _weather = new WorldWeather();
+            _light.ApplyTo(_weather);
+            _weather.Init(s.Index);
+        }
+        _streamer = s;
+        return true;
+    }
+
+    /// <summary>
+    /// Inselwechsel (Unity TDU2IslandTravel: Szene neu laden mit TDU2MapStreamer.IslandOverride): alte Insel freigeben
+    /// (Kacheln, Kollider, Wetter), Zielinsel (Bnk/islands/&lt;name&gt;: ibiza, hawai, casino) aufbauen. Kamera an den Startpunkt;
+    /// die Ankunftsstelle setzt Gamemodes/Utils/IslandTravel. Schlägt die Zielinsel fehl, wird die alte wieder geladen.
+    /// </summary>
+    public bool ChangeIsland(string island)
+    {
+        if (_world.Root == null || _physics == null || string.IsNullOrEmpty(island)) return false;
+        string? previous = _streamer?.Island;
+        var oldStreamer = _streamer; var oldWeather = _weather;
+        _streamer = null; _weather = null;
+        oldWeather?.Dispose();
+        oldStreamer?.Dispose();   // entlädt alle Kacheln und trägt ihre Kollider aus der Physikwelt aus
+        _pick = new List<string>();
+        bool ok = BuildIsland(island);
+        if (!ok && previous != null) BuildIsland(previous);
+        if (_streamer != null && _cam != null) { _cam.Override = null; _cam.Position = _streamer.StartPosition; }
+        Log.Info(ok ? "TerrainModule: Insel " + island + " geladen" : "TerrainModule: Insel " + island + " nicht ladbar");
+        return ok;
     }
 
     public override void Update(in GameTime time)

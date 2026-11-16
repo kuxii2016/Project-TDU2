@@ -19,7 +19,7 @@ public sealed class TDU2Ambience : IDisposable
     {
         public int Type;
         public string Name = "", Day = "", Night = "";
-        public float Volume = 1f, Pitch = 1f, Priority = 1f;
+        public float Volume = .5f, Pitch = 1f, Priority = 1f;
     }
 
     public const float CrossFade = 2.5f;
@@ -70,7 +70,7 @@ public sealed class TDU2Ambience : IDisposable
                         Name = e.S("TypeName", "") ?? "",
                         Day = e.S("Name_Resource_Day", "") ?? "",
                         Night = e.S("Name_Resource_Night", "") ?? "",
-                        Volume = e.F("Volume", 1f),
+                        Volume = e.F("Volume", .5f),
                         Pitch = e.F("Pitch", 1f),
                         Priority = e.F("PriorityFactor", 1f),
                     };

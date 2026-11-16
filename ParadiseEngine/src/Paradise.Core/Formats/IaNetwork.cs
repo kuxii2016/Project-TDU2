@@ -8,6 +8,8 @@ namespace Paradise.Core.Formats
     {
         public int Id;
         public byte Flag;
+        /// <summary>Knotenart (EDON +10, exe-Knoten +0xa, 0x5f14d0): 3 = Kreisverkehr (Ibiza: 11 Knoten, alle mit JDET-Ring).</summary>
+        public byte Kind;
         public Vector3 Pos;          // Inselkoordinaten
         public int[] Roads = System.Array.Empty<int>();          // Straßen, die hier enden oder beginnen
     }
@@ -69,6 +71,9 @@ namespace Paradise.Core.Formats
     public sealed class IaJunction
     {
         public int NodeId;                       // entspricht der NODE-Id in ROAD_MAP
+        /// <summary>Kreisverkehr (JDET +0x0c/+0x10/+0x14/+0x18, exe HudMap 0xca2f6e): Radius, Breite, Mitte (x,z); sonst 0.</summary>
+        public float RingRadius, RingWidth;
+        public Vector2 RingCenter;
         public readonly List<Vector2[]> Outlines = new List<Vector2[]>();
     }
 
@@ -132,7 +137,7 @@ namespace Paradise.Core.Formats
             int o = 64 + 4 * ns;
             for (int i = 0; i < nNodes && Tag(m, o, "EDON"); i++)
             {
-                var n = new IaNode { Id = Bin.I32(m, o + 4), Flag = m[o + 9] };
+                var n = new IaNode { Id = Bin.I32(m, o + 4), Flag = m[o + 9], Kind = m[o + 10] };
                 int cnt = m[o + 8];
                 n.Pos = new Vector3(Bin.F32(m, o + 12), Bin.F32(m, o + 16), Bin.F32(m, o + 20));
                 n.Roads = new int[cnt];
@@ -246,7 +251,13 @@ namespace Paradise.Core.Formats
                     int id = Bin.I32(d, j + 4);
                     int c0 = d[j + 8], c1 = d[j + 9], c2 = d[j + 10];
                     int q = j + 28;
-                    var jn = new IaJunction { NodeId = id };
+                    var jn = new IaJunction
+                    {
+                        NodeId = id,
+                        RingRadius = Bin.F32(d, j + 12),
+                        RingWidth = Bin.F32(d, j + 16),
+                        RingCenter = new Vector2(Bin.F32(d, j + 20), Bin.F32(d, j + 24)),
+                    };
                     foreach (int cnt in new[] { c0, c1, c2 })
                     {
                         if (cnt <= 0 || q + 8 * cnt > d.Length) { q += 8 * System.Math.Max(0, cnt); continue; }

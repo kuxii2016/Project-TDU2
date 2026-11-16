@@ -3,7 +3,6 @@ using Paradise.Core.Files;
 using Paradise.Core.Flash;
 using Paradise.Core.Online;
 using Paradise.Game.World;
-using static Paradise.Game.Gamemodes.GAME_MODE_LIVING;
 
 namespace Paradise.Game.Online;
 
@@ -102,7 +101,7 @@ public static class GeneralOverlay
             }
         }
 
-        if(_districtOpenAt > 0f && _clock >= _districtCloseAt)
+        if (_districtOpenAt > 0f && _clock >= _districtCloseAt)
         {
             _districtOpenAt = -1f;
             g.GotoLabel("/district_name", "close", true);

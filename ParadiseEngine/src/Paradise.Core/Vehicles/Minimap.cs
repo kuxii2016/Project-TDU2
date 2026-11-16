@@ -61,7 +61,7 @@ namespace Paradise.Core.Vehicles
         /// <summary>hud.bnk (Minimap, Radio-Anzeige /HUD/radio – Unity TDU2Radio.SetHudPlayer).</summary>
         public VmfPlayer? Hud => _hud;
         string? _hudBank, _bank;
-        Task<(Line[] lines, Dictionary<long, List<int>> grid, int segs, Area[] areas)>? _task;
+        Task<(Line[] lines, Dictionary<long, List<int>> grid, int segs, Area[] areas, HudMapRoads roads)>? _task;
         Line[] _lines = System.Array.Empty<Line>();
         Area[] _areas = System.Array.Empty<Area>();
         Dictionary<long, List<int>> _grid = new Dictionary<long, List<int>>();
@@ -91,7 +91,16 @@ namespace Paradise.Core.Vehicles
             string b = islandBank;
             // Laden + Aufbereiten (Kurven, Kreuzungen, Raster) komplett im Hintergrund
             _areas = System.Array.Empty<Area>();
-            _task = Task.Run(() => { var (segs, jn) = Load(b); var (l, g) = Build(segs); return (l, g, segs.Count, BuildAreas(jn, segs)); });
+            _hudRoads = null;
+            string? dir = bnkDir;
+            _task = Task.Run(() =>
+            {
+                var (segs, jn) = Load(b);
+                var (l, g) = Build(segs);
+                // Minimap-Straßen wie die exe (HudMapRoads): Netz aus ROAD_MAP + ROAD_DETAIL, Farben/Breiten aus GamePC.cpr [HudMap]
+                var roads = HudMapRoads.Build(IaNetwork.LoadFromBank(b), World.GamePC.Load(dir));
+                return (l, g, segs.Count, BuildAreas(jn, segs), roads);
+            });
         }
 
         void LoadHud(string? bnkDir)
@@ -487,8 +496,9 @@ namespace Paradise.Core.Vehicles
                 else
                 {
                     var res = _task.Result;
-                    _lines = res.lines; _grid = res.grid; _areas = res.areas;
-                    Log.Info($"Minimap: {res.segs} Straßensegmente, {_lines.Length} Linien, {_areas.Length} Kreuzungsflächen");
+                    _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads;
+                    Log.Info($"Minimap: {res.segs} Straßensegmente, {_lines.Length} Linien, {_areas.Length} Kreuzungsflächen; " +
+                             $"HudMap: {_hudRoads.Strips.Count} Streifen, {_hudRoads.Rings.Count} Kreisverkehre");
                 }
                 _task = null;
             }
@@ -546,25 +556,7 @@ namespace Paradise.Core.Vehicles
                 for (int z = c0z; z <= c1z; z++)
                     if (_grid.TryGetValue(Key(x, z), out var lst))
                         foreach (int i in lst) if (seen.Add(i)) vis.Add(i);
-            // Kreuzungsflächen / Kreisel (JDET) unter den Straßen derselben Klasse
-            foreach (var ar in _areas)
-            {
-                if (ar.MaxX < car.X - reach || ar.MinX > car.X + reach || ar.MaxZ < car.Z - reach || ar.MinZ > car.Z + reach) continue;
-                FillArea(ar, car, fwd, right, scale, cxp, cyp, ar.Cls == 6 ? RoadMain : RoadTown, px);
-            }
-            foreach (byte pass in new byte[] { 1, 3, 6 })
-            {
-                var col = pass == 1 ? RoadDirt : pass == 3 ? RoadTown : RoadMain;
-                float half = MathF.Max(HalfOf(pass) * scale, 0.75f);
-                foreach (int i in vis)
-                {
-                    var l = _lines[i];
-                    if (l.Cls != pass) continue;
-                    float ax = (l.Ax - car.X) * right.X + (l.Az - car.Z) * right.Z, ay = (l.Ax - car.X) * fwd.X + (l.Az - car.Z) * fwd.Z;
-                    float bx = (l.Bx - car.X) * right.X + (l.Bz - car.Z) * right.Z, by = (l.Bx - car.X) * fwd.X + (l.Bz - car.Z) * fwd.Z;
-                    DrawLine(cxp + ax * scale, cyp + ay * scale, cxp + bx * scale, cyp + by * scale, half * l.W, col, px);
-                }
-            }
+            if (_hudRoads != null) DrawHudRoads(_hudRoads, car, fwd, right, scale, cxp, cyp, reach, px);
             // GPS-Route über den Straßen (Unity DrawGpsRoute: Band, Breite relativ zum Sichtradius)
             var route = Gps.HasTarget ? Gps.Route : null;
             if (route != null && route.Count >= 2)
@@ -591,14 +583,98 @@ namespace Paradise.Core.Vehicles
                 _bytes[o] = c.r;
                 _bytes[o + 1] = c.g;
                 _bytes[o + 2] = c.b;
-                //Orginal: ist Dunkler Background
-                _bytes[o + 3] = 64;// c.a; 
+                //Orginal: ist Dunkler Background – Straßen deckend (exe: Farben mit Alpha 255), nur der leere Grund mit 64
+                _bytes[o + 3] = c.a > 0 ? c.a : (byte)64;
             }
             if (_tex!.Gpu == null) { _tex.SetPixels32(_px); _tex.Apply(); }
             else FlashHost.Renderer?.UpdateTexture(_tex.Gpu, _bytes);
         }
 
         readonly List<float> _xs = new List<float>();
+        HudMapRoads? _hudRoads;
+        bool[]? _mask;
+
+        /// <summary>
+        /// exe 0xca1a10: je Typ 0..6 erst die Straßenstreifen, dann die Kreisverkehre (innere Scheibe sperrt, äußere in Straßenfarbe).
+        /// Unser Raster statt der GPU: Dreiecke mit Pixelmitte, gesperrte Pixel (innere Scheiben) werden nicht mehr bemalt.
+        /// </summary>
+        void DrawHudRoads(HudMapRoads h, V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, float reach, int px)
+        {
+            if (_mask == null || _mask.Length != px * px) _mask = new bool[px * px];
+            else System.Array.Clear(_mask);
+            float SX(float x, float z) => cxp + ((x - car.X) * right.X + (z - car.Z) * right.Z) * scale;
+            float SY(float x, float z) => cyp + ((x - car.X) * fwd.X + (z - car.Z) * fwd.Z) * scale;
+            int si = 0;
+            for (int t = 0; t < HudMapRoads.Types; t++)
+            {
+                for (; si < h.Strips.Count && h.Strips[si].Type == t; si++)
+                {
+                    var st = h.Strips[si];
+                    if (st.MaxX < car.X - reach || st.MinX > car.X + reach || st.MaxZ < car.Z - reach || st.MinZ > car.Z + reach) continue;
+                    var q = st.Xz;
+                    int nv = q.Length / 2;
+                    for (int i = 0; i + 2 < nv; i++)
+                        FillTri(SX(q[2 * i], q[2 * i + 1]), SY(q[2 * i], q[2 * i + 1]),
+                                SX(q[2 * i + 2], q[2 * i + 3]), SY(q[2 * i + 2], q[2 * i + 3]),
+                                SX(q[2 * i + 4], q[2 * i + 5]), SY(q[2 * i + 4], q[2 * i + 5]), st.Color, false, px);
+                }
+                foreach (var r in h.Rings)
+                {
+                    if (r.Type != t || r.Cx + r.R2 < car.X - reach || r.Cx - r.R2 > car.X + reach || r.Cz + r.R2 < car.Z - reach || r.Cz - r.R2 > car.Z + reach) continue;
+                    FillDisk(r.Cx, r.Cz, r.R1, default, true, SX, SY, px);
+                    FillDisk(r.Cx, r.Cz, r.R2, r.Color, false, SX, SY, px);
+                }
+            }
+        }
+
+        void FillDisk(float cx, float cz, float rad, Color32 col, bool mask, Func<float, float, float> sx, Func<float, float, float> sy, int px)
+        {
+            float ax = sx(cx + rad * HudMapRoads.CircleCos[0], cz + rad * HudMapRoads.CircleSin[0]);
+            float ay = sy(cx + rad * HudMapRoads.CircleCos[0], cz + rad * HudMapRoads.CircleSin[0]);
+            for (int i = 1; i + 1 < 24; i++)
+            {
+                float bx = cx + rad * HudMapRoads.CircleCos[i], bz = cz + rad * HudMapRoads.CircleSin[i];
+                float c2x = cx + rad * HudMapRoads.CircleCos[i + 1], c2z = cz + rad * HudMapRoads.CircleSin[i + 1];
+                FillTri(ax, ay, sx(bx, bz), sy(bx, bz), sx(c2x, c2z), sy(c2x, c2z), col, mask, px);
+            }
+        }
+
+        /// <summary>Dreieck füllen (Pixelmitte innerhalb). mask = nur sperren (Farbe 0, Alpha 0), sonst Farbe mischen wo nicht gesperrt.</summary>
+        void FillTri(float ax, float ay, float bx, float by, float cx, float cy, Color32 col, bool mask, int px)
+        {
+            float area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+            if (MathF.Abs(area) < 1e-9f) return;
+            int x0 = System.Math.Max(0, (int)MathF.Floor(MathF.Min(ax, MathF.Min(bx, cx)))), x1 = System.Math.Min(px - 1, (int)MathF.Ceiling(MathF.Max(ax, MathF.Max(bx, cx))));
+            int y0 = System.Math.Max(0, (int)MathF.Floor(MathF.Min(ay, MathF.Min(by, cy)))), y1 = System.Math.Min(px - 1, (int)MathF.Ceiling(MathF.Max(ay, MathF.Max(by, cy))));
+            if (x0 > x1 || y0 > y1) return;
+            float sgn = area > 0 ? 1f : -1f;
+            var p = _px!; var m = _mask!;
+            float sa = col.a / 255f;
+            for (int y = y0; y <= y1; y++)
+            {
+                float py = y + 0.5f;
+                for (int x = x0; x <= x1; x++)
+                {
+                    float qx = x + 0.5f;
+                    float e0 = ((bx - ax) * (py - ay) - (by - ay) * (qx - ax)) * sgn;
+                    float e1 = ((cx - bx) * (py - by) - (cy - by) * (qx - bx)) * sgn;
+                    float e2 = ((ax - cx) * (py - cy) - (ay - cy) * (qx - cx)) * sgn;
+                    if (e0 < 0f || e1 < 0f || e2 < 0f) continue;
+                    int o = y * px + x;
+                    if (m[o]) continue;
+                    if (mask) { m[o] = true; continue; }
+                    if (sa >= 1f) { p[o] = col; continue; }
+                    var dst = p[o];
+                    float da = dst.a / 255f, oa = sa + da * (1f - sa);
+                    if (oa <= 0f) continue;
+                    p[o] = new Color32(
+                        (byte)((col.r * sa + dst.r * da * (1f - sa)) / oa),
+                        (byte)((col.g * sa + dst.g * da * (1f - sa)) / oa),
+                        (byte)((col.b * sa + dst.b * da * (1f - sa)) / oa),
+                        (byte)(oa * 255f));
+                }
+            }
+        }
 
         /// <summary>Kreuzungsfläche füllen (Zeilen-Scan, Gerade-Ungerade-Regel über alle Umrisse: Mittelinsel bleibt frei).</summary>
         void FillArea(Area ar, V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, Color32 col, int px)
@@ -747,16 +823,20 @@ namespace Paradise.Core.Vehicles
         {
             var verts = new List<(float x, float z, Color32 c)>(1 << 18);
             var idx = new List<uint>(1 << 19);
-            foreach (var ar in _areas) AddArea(verts, idx, ar, ar.Cls == 6 ? RoadMain : RoadTown);
-            foreach (byte pass in new byte[] { 1, 3, 6 })
+            if (_hudRoads != null) AddHudRoads(verts, idx, _hudRoads, widthMul);
+            else
             {
-                var col = pass == 1 ? RoadDirt : pass == 3 ? RoadTown : RoadMain;
-                float half = HalfOf(pass) * widthMul;
-                foreach (var l in _lines)
+                foreach (var ar in _areas) AddArea(verts, idx, ar, ar.Cls == 6 ? RoadMain : RoadTown);
+                foreach (byte pass in new byte[] { 1, 3, 6 })
                 {
-                    if (l.Cls != pass) continue;
-                    if (MathF.Abs(l.Ax - l.Bx) < 1e-3f && MathF.Abs(l.Az - l.Bz) < 1e-3f) AddDisc(verts, idx, l.Ax, l.Az, half * l.W, col);
-                    else AddQuad(verts, idx, l.Ax, l.Az, l.Bx, l.Bz, half * l.W, col);
+                    var col = pass == 1 ? RoadDirt : pass == 3 ? RoadTown : RoadMain;
+                    float half = HalfOf(pass) * widthMul;
+                    foreach (var l in _lines)
+                    {
+                        if (l.Cls != pass) continue;
+                        if (MathF.Abs(l.Ax - l.Bx) < 1e-3f && MathF.Abs(l.Az - l.Bz) < 1e-3f) AddDisc(verts, idx, l.Ax, l.Az, half * l.W, col);
+                        else AddQuad(verts, idx, l.Ax, l.Az, l.Bx, l.Bz, half * l.W, col);
+                    }
                 }
             }
             var ov = new Paradise.Core.Render.ObjectVertex[verts.Count];
@@ -773,6 +853,47 @@ namespace Paradise.Core.Vehicles
             }
             Log.Info($"Karte: Straßennetz {verts.Count} Vertices, {idx.Count / 3} Dreiecke (Breite x{widthMul:0.##})");
             return (ov, idx.ToArray());
+        }
+
+        /// <summary>
+        /// Große Karte mit derselben Zeichnung wie die Minimap (HudMapRoads, exe 0xca1a10): je Typ 0..6 Streifen, dann Kreisverkehre
+        /// als Ring r1..r1 + Breite · w · mul / 4 (auf der GPU direkt als Ring statt innerer Sperrscheibe). Breite × mul je Zoomstufe
+        /// (wie bisher, die Breitenregel der großen Karte in der exe ist noch nicht gelesen).
+        /// </summary>
+        static void AddHudRoads(List<(float x, float z, Color32 c)> v, List<uint> idx, HudMapRoads h, float mul)
+        {
+            int si = 0;
+            for (int t = 0; t < HudMapRoads.Types; t++)
+            {
+                for (; si < h.Strips.Count && h.Strips[si].Type == t; si++)
+                {
+                    var st = h.Strips[si];
+                    var q = HudMapRoads.Corners(st, mul);
+                    int nv = q.Length / 2;
+                    if (nv < 3) continue;
+                    uint b0 = (uint)v.Count;
+                    for (int i = 0; i < nv; i++) v.Add((q[2 * i], q[2 * i + 1], st.Color));
+                    for (uint i = 0; i + 2 < nv; i++) { idx.Add(b0 + i); idx.Add(b0 + i + 1); idx.Add(b0 + i + 2); }
+                }
+                foreach (var r in h.Rings)
+                {
+                    if (r.Type != t) continue;
+                    float r2 = r.R1 + r.RingWidth * r.W * mul * 0.25f;
+                    uint b0 = (uint)v.Count;
+                    for (int i = 0; i < 24; i++)
+                    {
+                        float c = HudMapRoads.CircleCos[i], sn = HudMapRoads.CircleSin[i];
+                        v.Add((r.Cx + r.R1 * c, r.Cz + r.R1 * sn, r.Color));
+                        v.Add((r.Cx + r2 * c, r.Cz + r2 * sn, r.Color));
+                    }
+                    for (uint i = 0; i < 23; i++)
+                    {
+                        uint a = b0 + 2 * i;
+                        idx.Add(a); idx.Add(a + 1); idx.Add(a + 3);
+                        idx.Add(a); idx.Add(a + 3); idx.Add(a + 2);
+                    }
+                }
+            }
         }
 
         /// <summary>Unity AddQuad: Rechteck mit Überstand 0,6 x halbe Breite (schließt Fugen in Kurven).</summary>

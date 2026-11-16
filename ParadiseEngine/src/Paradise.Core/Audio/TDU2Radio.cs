@@ -76,6 +76,9 @@ public sealed class TDU2Radio
 
     string _currentTitle = "", _currentArtist = "";
     int _titleScrollOffset, _artistScrollOffset;
+    /// <summary>Laufender Titel/Interpret (Entwicklermenü F1 > Audio).</summary>
+    public string CurrentTitle => _currentTitle;
+    public string CurrentArtist => _currentArtist;
 
     sealed class RadioTrack { public string FilePath = "", Title = "", Artist = ""; }
 

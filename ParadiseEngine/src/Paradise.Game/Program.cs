@@ -66,6 +66,8 @@ var startMode = (gmArg >= 0 && gmArg + 1 < args.Length ? Paradise.Game.Gamemodes
 
 Paradise.Core.Savegame.TDU2SaveGame.Hook();
 loop.Add(new Paradise.Game.Screens.ScreenModule(window, opts, terrain, vehicles, loop.Stop) { StartMode = startMode });
+// Entwicklermenü (F1, Unity TDU2DevMenu) – zuletzt, damit es über allen Oberflächen liegt
+loop.Add(new Paradise.Game.Screens.DevMenu(renderer, terrain, vehicles, window, opts));
 
 loop.Run();
 
@@ -73,19 +75,62 @@ Log.Info("Game Stopp, Clean up and Shutdown");
 // Aufräumen Schritt für Schritt mit Log. Hängt ein Schritt (Spiel reagiert nach "Beenden" nicht mehr), nennt der Wächter ihn
 // nach 5 s im Log und beendet den Prozess – die Ursache wird dann dort behoben.
 string shutdownStep = "Module";
-var shutdownGuard = new Thread(() => { Thread.Sleep(5000); Log.Warn("Beenden hängt bei: " + shutdownStep + " – Prozess wird beendet"); ProcessEnd.Now(); }) { IsBackground = true, Name = "Beenden-Wächter" };
+using var shutdownCts = new CancellationTokenSource();
+
+var shutdownGuard = new Thread(() =>
+{
+    if (!shutdownCts.Token.WaitHandle.WaitOne(5000))
+    {
+        Log.Warn("Beenden hängt bei: " + shutdownStep);
+        ProcessEnd.Now();
+    }
+})
+{
+    IsBackground = true,
+    Name = "Beenden-Wächter"
+};
 shutdownGuard.Start();
-loop.Dispose();
-shutdownStep = "Renderer"; Log.Info("Beenden: Module freigegeben");
-renderer.Dispose();
-shutdownStep = "Fenster"; Log.Info("Beenden: Renderer freigegeben");
-window.Dispose();
-Log.Info("Beenden: fertig");
-// Alles ist freigegeben und gespeichert (Log: "fertig"). Environment.Exit(0) blieb danach hängen (Logs 10:34/10:41: "fertig",
-// Fenster offen): ExitProcess wartet beim Entladen der DLLs auf Treiber-/Audio-Threads. Wie Unity Application.Quit:
-// Prozess sofort beenden, ohne DLL-Entladen.
-Log.Info("Beenden: Prozess wird beendet");
-ProcessEnd.Now();
+
+Log.Info("Game Stopp, Clean up and Shutdown");
+
+try
+{
+    Log.Debug("Beenden: Module");
+
+    loop.Dispose();
+
+    Log.Debug("Beenden: Renderer");
+    renderer.Dispose();
+
+    Log.Debug("Beenden: Fenster");
+    window.Dispose();
+
+    Log.Debug("Beenden: fertig");
+    shutdownCts.Cancel();
+}
+catch (Exception ex)
+{
+    Log.Error("Fehler beim Shutdown: " + ex);
+}
+finally
+{
+    Log.Info("Beenden: Prozess wird beendet");
+    ProcessEnd.Now();
+    shutdownCts.Cancel();
+}
+
+//loop.Dispose();
+//shutdownStep = "Renderer"; Log.Info("Beenden: Module freigegeben");
+//renderer.Dispose();
+//shutdownStep = "Fenster"; Log.Info("Beenden: Renderer freigegeben");
+//window.Dispose();
+//shutdownCts.Cancel();
+//Log.Info("Beenden: fertig");
+//// Alles ist freigegeben und gespeichert (Log: "fertig"). Environment.Exit(0) blieb danach hängen (Logs 10:34/10:41: "fertig",
+//// Fenster offen): ExitProcess wartet beim Entladen der DLLs auf Treiber-/Audio-Threads. Wie Unity Application.Quit:
+//// Prozess sofort beenden, ohne DLL-Entladen.
+//Log.Info("Beenden: Prozess wird beendet");
+//ProcessEnd.Now();
 
 static class ProcessEnd
 {
