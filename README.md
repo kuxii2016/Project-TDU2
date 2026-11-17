@@ -23,6 +23,10 @@ The goal is to regain full control over rendering, performance, resource managem
   <img src="./Screenshots/avatare.PNG" width="49%" alt="Avatare & Shops"/>
 </p>
 
+<p align="center">
+  <img src="./Screenshots/stickershop.PNG" width="49%" alt="Sticker Shop"/>
+  <img src="./Screenshots/tuner.PNG" width="49%" alt="Tuner Shop"/>
+</p>
 ---
 
 ## Why a Custom Engine?
