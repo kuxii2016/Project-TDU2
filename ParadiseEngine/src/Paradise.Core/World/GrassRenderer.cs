@@ -5,10 +5,10 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Erzeugt Gras/Büsche um den Betrachter aus der Grastyp-Karte (.pgr) eines Sektors. Portiert aus dem Unity-Projekt (GrassRenderer).
-/// Grastypen aus fx/grasstypes.xml, Texturen aus fx/tallgrass.bnk (setgrass.2db = 16 Sprites, setbush.2db = 4 Sprites).
-/// Das Spiel generiert Gras prozedural zur Laufzeit; Dichte/Verteilung hier ist eine Annäherung.
-/// Koordinaten: sektor-lokal (Ursprung = Sektorecke), Origin = Sektorursprung in Spielkoordinaten.
+/// Generates grass and bushes around the viewer based on a sector's grass type map (.pgr). Ported from the Unity project (GrassRenderer).
+/// Grass types from fx/grasstypes.xml, textures from fx/tallgrass.bnk (setgrass.2db = 16 sprites, setbush.2db = 4 sprites).
+/// The game procedurally generates grass at runtime; the density/distribution here is an approximation.
+/// Coordinates: sector-local (origin = sector corner), Origin = sector origin in game coordinates.
 /// </summary>
 public sealed class GrassRenderer : IDisposable
 {
@@ -28,7 +28,7 @@ public sealed class GrassRenderer : IDisposable
     public int MaxChunksPerFrame = 6;
     public float SectorSize = WorldLayout.SectorSize;
     public int Seed;
-    /// <summary>fx/tallgrass.bnk noise.rle (256×256 Bytes) – Größenrauschen für UseNoiseScale (exe 0xc68c28).</summary>
+    /// <summary>fx/tallgrass.bnk noise.rle (256×256 bytes) – size noise for UseNoiseScale (exe 0xc68c28).</summary>
     public GrassMap? Noise;
 
     sealed class Chunk { public IGpuMesh? Grass, Bush; }
@@ -40,7 +40,7 @@ public sealed class GrassRenderer : IDisposable
 
     public int ChunkCount => _chunks.Count;
 
-    /// <summary>Pro Frame (Unity: Update). viewerGame = Kamera in Spielkoordinaten.</summary>
+    /// <summary>Per frame viewerGame = camera in game coordinates.</summary>
     public void Update(IRenderer r, Vector3 viewerGame, double time)
     {
         if (Heights == null || Map == null || Types == null || GrassMaterial == null) return;
@@ -174,7 +174,7 @@ public sealed class GrassRenderer : IDisposable
         return System.Math.Clamp((float)t.Width / cells / t.Height, 0.25f, 4f);
     }
 
-    /// <summary>TD_TallGrass oT3.x je Ecke (exe-Tabelle 0xc68dd8): Anteil reine Grasfarbe, 0 = ganz Bodenfarbe.</summary>
+    /// <summary>TD_TallGrass oT3.x per corner (exe table 0xc68dd8): Proportion of pure grass color; 0 = entirely ground color.</summary>
     static void BlendMix(int mode, out byte root, out byte tip)
     {
         switch (mode)
@@ -214,7 +214,7 @@ public sealed class GrassRenderer : IDisposable
         }
     }
 
-    /// <summary>MathUtil.Hash01 aus dem Unity-Projekt.</summary>
+    /// <summary>MathUtil.Hash01 from the Unity project.</summary>
     public static float Hash01(int x, int y, int seed)
     {
         unchecked

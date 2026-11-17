@@ -4,14 +4,14 @@ using System.Text.RegularExpressions;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Findet alle Map-Dateien einer Insel (portiert aus dem Unity-Projekt, reiner IO-/Regex-Code):
-///   Euro/Bnk/islands/&lt;insel&gt;/level/&lt;insel&gt;.bnk           Insel-LOD (Terrain + Objekte)
-///   .../level/commonworld.bnk                              Objekt-Library (Bäume, Büsche, Props)
-///   .../level/area-A/area-A-B/area-A-B.bnk                 Area-LOD
-///   .../level/area-A/area-A-B/sector-A-B-C-D.bnk           Sektor (Full Mesh + Objekte + Vegetation)
+/// Finds all map files for an island ( pure IO/regex code):
+///   Euro/Bnk/islands/island/level/island.bnk               Island LOD (terrain + objects)
+///   .../level/commonworld.bnk                              Object library (trees, bushes, props)
+///   .../level/area-A/area-A-B/area-A-B.bnk                 Area LOD
+///   .../level/area-A/area-A-B/sector-A-B-C-D.bnk           Sector (full mesh + objects + vegetation)
 ///   .../level/spots.bin                                    POIs
-///   .../fx/grasstypes.xml, .../fx/tallgrass.bnk            Gras
-/// Die Dateien liegen lose unter Euro/Bnk oder in den bigfile_*.big (GameFiles löst beides auf).
+///   .../fx/grasstypes.xml, .../fx/tallgrass.bnk            Grass
+/// The files are located either in the Euro/Bnk folder or in the bigfile_*.big files (GameFiles extracts both).
 /// </summary>
 public sealed class IslandIndex
 {
@@ -27,15 +27,11 @@ public sealed class IslandIndex
     static readonly Regex AreaRx = new(@"^area-(\d+)-(\d+)\.bnk$", RegexOptions.IgnoreCase);
     static readonly Regex SectorRx = new(@"^sector-(\d+)-(\d+)-(\d+)-(\d+)\.bnk$", RegexOptions.IgnoreCase);
 
-    /// <summary>Sucht den islands-Ordner ausgehend vom angegebenen Pfad (Spielordner, Euro, Bnk oder islands).</summary>
+    /// <summary>Searches for the “islands” folder starting from the specified path (game folder, Euro, Bnk, or islands).</summary>
     public static string? FindIslandsDir(string? root)
     {
         if (string.IsNullOrEmpty(root)) return null;
-
-        // Bei gepackten Installationen existiert kein physischer islands-Ordner: GameFiles.Init lädt
-        // die .map-Indizes, danach beantwortet GameFiles.DirectoryExists die virtuellen Verzeichnisse.
         if (!SamePath(GameFiles.Root, root) && GameFiles.IsGameRoot(root)) GameFiles.Init(root);
-
         var bnk = GameFiles.BnkDir;
         if (bnk != null)
         {

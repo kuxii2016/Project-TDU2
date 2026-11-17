@@ -13,10 +13,10 @@ public enum Gamemode
     GAME_MODE_MISSION = 4,
     GAME_MODE_EDITOR = 5, //Race Editor, TDU2 hat einen Race-Editor, in dem Leute Rennen erstellen und ins Comunity Center Hochladen können, andere spieler können das Rennen dann Spielen
     GAME_MODE_CARSHOWCASE = 6,
-    GAME_MODE_TESTCAR = 7, //KI Failed Fehlt TODO
-    GAME_MODE_GARAGE = 8, //KI Failed Fehlt TODO
-    GAME_MODE_LIVING = 9, //KI Failed Fehlt TODO
-    GAME_MODE_GOODIES = 10, //ClothesShop
+    GAME_MODE_TESTCAR = 7, 
+    GAME_MODE_GARAGE = 8, //Ported
+    GAME_MODE_LIVING = 9,  //Ported
+    GAME_MODE_GOODIES = 10, //Ported
     GAME_MODE_GAMBLING_HALL = 11, //Comunity Racing Center
     GAME_MODE_DRESSING = 12,
     GAME_MODE_ISLAND_CHANGE = 13,
@@ -31,7 +31,7 @@ public enum Gamemode
     GAME_MODE_SCHOOL = 22,
     GAME_MODE_SCREEN_SHOTS = 23, //TDUMedia Screenshot Album
     GAME_MODE_AITEST = 24, //Empty,TDU2 hat einen AI-Testmode, aber kein Gameplay, nur Testzwecke, daher hier nicht implementiert
-    GAME_MODE_HAIRDRESSER = 25,
+    GAME_MODE_HAIRDRESSER = 25, //Ported
     GAME_MODE_PHOTOGRAPH = 26,
     GAME_MODE_SPOT_VIEWER = 27,
     GAME_MODE_REPLAY = 28,

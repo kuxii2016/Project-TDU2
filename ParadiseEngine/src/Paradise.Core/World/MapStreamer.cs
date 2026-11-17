@@ -8,17 +8,16 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Streamt eine TDU2-Insel um den Betrachter. Portiert aus dem Unity-Projekt (TDU2MapStreamer):
-///   LOD2 = Insel-Bank (immer, Area-weise ausgeblendet sobald die Area steht)
-///   LOD1 = Area-Banks (Terrain-Stücke je Sektor + Area-Objekte + Spot-Exteriors "_low")
-///   LOD0 = Sektor-Banks (volles Terrain + Objekte + Spot-Exteriors)
-/// Statt GameObjects entstehen <see cref="Node"/>s (Mesh-Zeichenaufträge + RenderObjects).
-/// Koordinaten: Spielkoordinaten; Render-Raum = Spielkoordinaten * <see cref="RootMatrix"/> (Unity: _root.localPosition).
-/// Noch nicht portiert (folgen): Wasser, Vegetation/ObjectLibrary, WorldActors, Gras, Wetter/Licht.
+/// Streams a island around the viewer:
+///   LOD2 = Island banks (always; hidden area by area as soon as the area is loaded)
+///   LOD1 = Area banks (terrain pieces per sector + area objects + spot exteriors “_low”)
+///   LOD0 = Sector banks (full terrain + objects + spot exteriors)
+/// Instead of GameObjects, <see cref="Node"/>s are created (mesh draw commands + RenderObjects).
+/// Coordinates: Game coordinates; render space = game coordinates * <see cref="RootMatrix"/>
 /// </summary>
 public sealed class MapStreamer : IDisposable
 {
-    #region Einstellungen (Werte aus der Unity-Szene TDU2Main.unity, Komponente TDU2MapStreamer)
+    #region Settings (values from the Unity scene TDU2Main.unity, TDU2MapStreamer component)
     public string Island = "ibiza";
     public float AreaLoadDistance = 900f;
     public float AreaUnloadMargin = 1000f;
@@ -77,7 +76,7 @@ public sealed class MapStreamer : IDisposable
     public float TerrainDepthPush = 0.0015f;
     #endregion
 
-    /// <summary>Entspricht einem GameObject im Unity-Projekt: eigene Meshes und/oder Objekte, an-/abschaltbar.</summary>
+    /// <summary>Corresponds to a GameObject in the Unity project: custom meshes and/or objects that can be enabled or disabled.</summary>
     public sealed class Node
     {
         public string Name = "";
@@ -353,8 +352,8 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Meer-Material einer Sektor- (level 0, 768 m) oder Area-Bank (level 1, 6144 m) mit deren Colormap, wie das Original
-    /// (FUN_008be1e0: levelObj+0x670 = COLOR der TD_HeightMap der Ebene). null ohne NoiseNMap/Renderer.
+    /// Sea material from a sector (level 0, 768 m) or area bank (level 1, 6144 m) with its colormap, just like the original
+    /// (FUN_008be1e0: levelObj+0x670 = COLOR of the level's TD_HeightMap). null without NoiseNMap/Renderer.
     /// </summary>
     IGpuMaterial? OceanFor(BankModel model, Vector3 origin, int level, BuildResources res)
     {
@@ -366,7 +365,7 @@ public sealed class MapStreamer : IDisposable
         return m;
     }
 
-    /// <summary>Meeresfläche (300 km, 128x128 Quads, Welt-UVs) auf WaterLevel = SeaLevel + Inselhöhe + WaterOffset (Unity: BuildWater).</summary>
+    /// <summary>Sea area (300 km, 128x128 quads, world UVs) at WaterLevel = SeaLevel + island height + WaterOffset (Unity: BuildWater).</summary>
     void BuildWater(Vector3 center)
     {
         const float half = 150000f;
@@ -394,8 +393,8 @@ public sealed class MapStreamer : IDisposable
         _waterMesh = _renderer.CreateMesh(verts, tris);
         _islandRes.Owned.Add(_waterMesh);
         _waterPos = new Vector3(center.X, WaterLevel, center.Z);
-        // Meer wie TD_Ocean: NoiseNMap + Insel-Colormap (ibiza-o vs_2: Colormap-UV = Welt.xz / (6144 · AreaSize), Rand geklemmt
-        // wie die Border-Meshes). Sektor- und Area-Meer (…-o) kommen mit ihren eigenen Colormaps aus den Bänken (OceanFor).
+        // Ocean like TD_Ocean: NoiseNMap + island colormap (ibiza-o vs_2: colormap UV = Welt.xz / (6144 · AreaSize), border clipped
+        // like the border meshes). Sector and Area oceans (…-o) use their own colormaps from the banks (OceanFor).
         try
         {
             _oceanNoise = new OceanNoise(_renderer);
@@ -409,7 +408,7 @@ public sealed class MapStreamer : IDisposable
         catch (Exception ex) { Log.Warn("Meer (TD_Ocean): " + ex.Message); }
     }
 
-    /// <summary>Grastypen (fx/grasstypes.xml) und Atlanten (fx/tallgrass.bnk) laden (Unity: SetupGrass).</summary>
+    /// <summary>Load grass types (fx/grasstypes.xml) and atlases (fx/tallgrass.bnk).</summary>
     void SetupGrass()
     {
         try
@@ -444,7 +443,7 @@ public sealed class MapStreamer : IDisposable
         catch (Exception ex) { Log.Warn("Gras konnte nicht geladen werden: " + ex.Message); }
     }
 
-    /// <summary>Pro Frame aufrufen. viewerRender = Kameraposition im Render-Raum.</summary>
+    /// <summary>Call per frame. viewerRender = camera position in the render space.</summary>
     public void Update(Vector3 viewerRender, float dt)
     {
         if (_index == null) return;
@@ -503,7 +502,7 @@ public sealed class MapStreamer : IDisposable
         Lap("Streamer: Kartengelände", tp);
     }
 
-    /// <summary>Messpunkt für [DIAG Perf]: Zeit seit t0 eintragen, neuen Startpunkt zurückgeben.</summary>
+    /// <summary>Measurement point for [DIAG Perf]: Enter time since t0; return a new starting point.</summary>
     static long Lap(string name, long t0)
     {
         long now = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -511,10 +510,9 @@ public sealed class MapStreamer : IDisposable
         return now;
     }
 
-    // ------------------------------------------------------------------ Kartengelände (große Karte) – Unity TDU2MapStreamer
     /// <summary>
-    /// Gelände-Kachel der großen Karte: eine ganze Area aus ihrer eigenen Bank (Höhen 24 m, Colormap 1024² = 6 m je Pixel)
-    /// statt der groben Insel-LOD. Wird nur von der Karte gezeichnet (<see cref="RenderMapTerrain"/>), im Spiel unsichtbar.
+    /// Terrain tile for the large map: an entire area from its own bank (elevation 24 m, color map 1024² = 6 m per pixel)
+    /// instead of the coarse island LOD. Is only rendered by the map (<see cref="RenderMapTerrain"/>), invisible in-game.
     /// </summary>
     public sealed class MapTile { public AreaKey Key; public IGpuMesh? Mesh; public IGpuMaterial? Material; public IGpuTexture? Color; public Vector3 Origin; }
     /// <summary>Kartengelände (alle Areas mit eigener Colormap) nach dem Start im Hintergrund laden.</summary>
@@ -554,7 +552,7 @@ public sealed class MapStreamer : IDisposable
         });
     }
 
-    /// <summary>Höchstens eine Kachel je Bild auf die Grafikkarte (Textur, Material, Mesh).</summary>
+    /// <summary>At most one tile per image on the graphics card (texture, material, mesh).</summary>
     void PollMapTerrain()
     {
         if (!_mapQueue.TryDequeue(out var it)) return;
@@ -573,7 +571,7 @@ public sealed class MapStreamer : IDisposable
         catch (Exception ex) { Log.Warn("Kartengelände " + it.key + ": " + ex.Message); }
     }
 
-    /// <summary>Ganzes Area-Raster als ein Gitter, jede step-te Zelle (UV wie die LOD1-Stücke: 0..1 über die Area-Colormap).</summary>
+    /// <summary>The entire area raster as a grid, with every step-te cell (UV coordinates like the LOD1 pieces: 0..1 across the area colormap).</summary>
     static MeshData BuildMapGrid(HeightGrid g, int step)
     {
         var md = new MeshData { Name = "MapTerrain" };
@@ -600,7 +598,7 @@ public sealed class MapStreamer : IDisposable
         return md;
     }
 
-    /// <summary>Unity TDU2BigMap.DrawMapTerrain: nur die Kartenkacheln (Kartenkamera, kein Meer darüber – die Colormaps enthalten es).</summary>
+    /// <summary>Unity TDU2BigMap.DrawMapTerrain: only the map tiles (map camera, no ocean over them—the color maps include it).</summary>
     public void RenderMapTerrain(Vector3 cameraRender, FrameGlobals globals)
     {
         globals.CameraPosition = cameraRender;
@@ -782,7 +780,7 @@ public sealed class MapStreamer : IDisposable
         _sectors[k] = st;
     }
 
-    /// <summary>Pro Frame höchstens eine fertige Kachel aufbauen (verhindert Ruckler).</summary>
+    /// <summary>Render at most one finished tile per frame (prevents stuttering).</summary>
     void BuildCompleted()
     {
         foreach (var st in _areas.Values)
@@ -855,8 +853,8 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// LOD-Objekte der Area reichen oft über mehrere Sektoren -> bei allen überdeckten Sektoren angemeldet:
-    /// ausgeblendet, sobald einer davon gebaut ist.
+    /// LOD objects in the area often span multiple sectors -> registered for all sectors they overlap:
+    /// hidden as soon as one of them is built.
     /// </summary>
     void RegisterSpan(AreaState st, SectorKey center, Node node)
     {
@@ -882,7 +880,7 @@ public sealed class MapStreamer : IDisposable
 
     bool SectorBuilt(SectorKey k) => _sectors.TryGetValue(k, out var s) && s.Built;
 
-    /// <summary>LOD1-Objekt sichtbar, solange keiner seiner Sektoren als LOD0 gebaut ist.</summary>
+    /// <summary>LOD1 object is visible as long as none of its sectors are built as LOD0.</summary>
     bool Lod1Wanted(Node node, SectorKey key)
     {
         bool wanted;
@@ -896,16 +894,13 @@ public sealed class MapStreamer : IDisposable
         return wanted;
     }
 
-    // ------------------------------------------------------------------ LOD1 im Interieur sperren (Unity TDU2MapStreamer.BlockLod1)
-    // Solange ein Interieur offen ist, bleiben LOD1-Objekte (Area-Blöcke, Spot-Exterior "_low") und das grobe Insel-Gelände aus,
-    // die seinen Quader schneiden.
     bool _lod1Blocked;
     Vector3 _lod1BlockMin, _lod1BlockMax;   // Spielraum
 
     static bool Intersects(Vector3 amin, Vector3 amax, Vector3 bmin, Vector3 bmax)
         => amin.X <= bmax.X && amax.X >= bmin.X && amin.Y <= bmax.Y && amax.Y >= bmin.Y && amin.Z <= bmax.Z && amax.Z >= bmin.Z;
 
-    /// <summary>LOD1-Objekte im Quader (Spielraum) ausblenden; null = Sperre aufheben.</summary>
+    /// <summary>Hide LOD1 objects within the box (play area); null = unhide.</summary>
     public void BlockLod1(Vector3? min, Vector3? max)
     {
         if (min.HasValue && max.HasValue) { _lod1BlockMin = min.Value; _lod1BlockMax = max.Value; _lod1Blocked = true; }
@@ -915,7 +910,7 @@ public sealed class MapStreamer : IDisposable
         ApplyIslandLod();
     }
 
-    /// <summary>Unity ApplyIslandLod: grobes Insel-Gelände je Area an, solange die Area nicht gebaut ist – außer es schneidet ein offenes Interieur.</summary>
+    /// <summary>Unity ApplyIslandLod: Applies coarse island terrain to each area as long as the area is not built—unless it intersects with an open interior.</summary>
     void ApplyIslandLod()
     {
         foreach (var kv in _islandPieces)
@@ -926,7 +921,7 @@ public sealed class MapStreamer : IDisposable
         }
     }
 
-    /// <summary>Gebaute Welt-Knoten mit diesem Namen (Sektoren und Areas, z.B. "Spot_EPH_L0C" / "Spot_EPH_L0C_low").</summary>
+    /// <summary>Built World nodes with this name (sectors and areas, e.g., “Spot_EPH_L0C” / “Spot_EPH_L0C_low”).</summary>
     public IEnumerable<Node> NodesNamed(string name)
     {
         foreach (var s in _sectors.Values) if (s.Built) foreach (var n in s.Nodes) if (n.Name == name) yield return n;
@@ -947,9 +942,9 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Sektor-Skirts nur zeigen, wo jenseits der Kante kein LOD0-Sektor steht (dort grenzt das gröbere LOD1 an).
-    /// Zwischen zwei LOD0-Sektoren sind die Kanten höhengleich (geprüft) – ein Skirt hinge sonst z. B. in Tunnel
-    /// unter Sektorgrenzen (Ibiza Straße 869/907).
+    /// Only display sector skirts where there is no LOD0 sector beyond the edge (where the coarser LOD1 sector begins).
+    /// Between two LOD0 sectors, the edges are at the same elevation (verified)—otherwise, a skirt would hang, for example, in tunnels
+    /// below sector boundaries (Ibiza Street 869/907).
     /// </summary>
     void UpdateSkirts()
     {
@@ -1059,7 +1054,6 @@ public sealed class MapStreamer : IDisposable
         Lap("Sektor bauen: Akteure", tbs);
     }
 
-    // ------------------------------------------------------------------ Library / Platzierungen / World Actors
 
     void PollActors()
     {
@@ -1075,7 +1069,7 @@ public sealed class MapStreamer : IDisposable
         foreach (var st in _sectors.Values) if (st.Built) TryAddActors(st);
     }
 
-    /// <summary>World Actors eines Sektors (A-Platzierungen) als Objekte.</summary>
+    /// <summary>World Actors in a sector (A-rankings) as objects.</summary>
     void TryAddActors(SectorState st)
     {
         if (st.ActorsDone || _actors == null || st.Model == null || !LoadWorldActors) return;
@@ -1171,7 +1165,7 @@ public sealed class MapStreamer : IDisposable
         st.Instances = veg.InstanceCount;
     }
 
-    /// <summary>Zeitbudget je Bild für das Einbauen von Platzierungsgruppen bzw. Grasstücken (ms).</summary>
+    /// <summary>Time budget per image for inserting placement groups or grass patches (ms).</summary>
     public double VegetationBudgetMs = 3.0, GrassBudgetMs = 2.0;
     readonly record struct VegWork(SectorState St, PlacementRenderer Veg, PmiGroup G, Vector3 Origin, BuildResources? Res);
     readonly Queue<VegWork> _vegWork = new();
@@ -1193,7 +1187,6 @@ public sealed class MapStreamer : IDisposable
         }
     }
 
-    /// <param name="coll">Sektor für die Kollider der Instanzen (Bäume, Laternen, Props; Unity: MeshCollider je Instanz)</param>
     void AddPlacements(PlacementRenderer veg, PmiFile? pmi, Vector3 origin, BuildResources? res = null, SectorState? coll = null)
     {
         if (pmi == null || _library == null) return;
@@ -1260,7 +1253,7 @@ public sealed class MapStreamer : IDisposable
         }
     }
 
-    /// <summary>Hat das Library-Objekt Skinning-Daten (z.B. SF_GLISS)?</summary>
+    /// <summary>Does the library object have skinning data (e.g., SF_GLISS)?</summary>
     static bool SkinnedRail(LibraryObject obj)
     {
         foreach (var l in obj.Lods)
@@ -1275,8 +1268,8 @@ public sealed class MapStreamer : IDisposable
     static long _bakeCounter;
 
     /// <summary>
-    /// Leitplanken wie im Original (TD_Ground, 4-Bone-Skinning): v' = Summe w_i * (v * Knochen_i). Die Matrizen jeder
-    /// -S.pmi-Instanz passen Anfang und Ende jeder Planke an die Nachbarn an. Ergebnis ist ein eigenes Objekt pro Instanz.
+    /// Guardrails as in the original (TD_Ground, 4-bone skinning): v' = sum of w_i * (v * bone_i). The matrices of each
+    /// -S.pmi-instance adjust the start and end of each plank to match its neighbors. The result is a separate object for each instance.
     /// </summary>
     LibraryObject? BakeRail(LibraryObject src, Matrix4x4[] bones, BuildResources res)
     {
@@ -1331,9 +1324,7 @@ public sealed class MapStreamer : IDisposable
         return new LibraryObject { Key = src.Key, Name = src.Name, Lods = lods, Radius = src.Radius + 1f, BoundsMin = bmin, BoundsMax = bmax };
     }
 
-    // ------------------------------------------------------------------ Schildertext (§7.7)
-
-    /// <summary>Material des Schildertexts (Glyphen-Atlas rsalphab aus commonworld), null solange nicht geladen.</summary>
+    /// <summary>Sign text material (glyph atlas “rsalphab” from CommonWorld); set to null until loaded.</summary>
     IGpuMaterial? SignMaterial()
     {
         if (_signMat != null) return _signMat;
@@ -1354,7 +1345,7 @@ public sealed class MapStreamer : IDisposable
         node.Meshes.Add((mesh, mat, model));
     }
 
-    /// <summary>Schildertext für die Art-4-Gruppen einer .pmi (Kreuzungstafeln in der -O.pmi). Platzierung sektor-lokal.</summary>
+    /// <summary>Label text for the Art-4 groups in a .pmi file (intersection tables in the -O.pmi file). Placement: sector-local.</summary>
     void BuildSignTexts(SectorState st, PmiFile? pmi, string name)
     {
         var lay = _signLayout;
@@ -1377,7 +1368,7 @@ public sealed class MapStreamer : IDisposable
         if (node.Meshes.Count > 0) st.Nodes.Add(node);
     }
 
-    /// <summary>Schildertext an schon gebauten World Actors nachholen.</summary>
+    /// <summary>Add sign text to World Actors that have already been created.</summary>
     void RebuildActorSignTexts(SectorState st)
     {
         var lay = _signLayout;
@@ -1439,6 +1430,7 @@ public sealed class MapStreamer : IDisposable
         return list;
     }
 
+    //TODO: Remove and Cleanup
     static readonly HashSet<string> SpecialObjects = new()
     {
         "PORTAIL", "INTERIOR", "~a1~8aTAL_GA", "PORTAILG", "DOOR", "~85~96~94~b1~8fxAR",
@@ -1446,10 +1438,9 @@ public sealed class MapStreamer : IDisposable
     };
 
     /// <summary>
-    /// Platzierung wie im Spiel: Exterior-Szenen sind lokal um (0,0,0) modelliert und stehen an der Spot-Position
-    /// mit einer Drehung um Y = Value1 (Radiant). Tore/Türen: siehe ObjectBuilder (Wurzelmatrix bei Actor-Platzierung).
-    /// Wie Unity TDU2MapStreamer.BuildExterior: Objekte aus <see cref="SpecialObjects"/> (Tore, Türen, Waschanlage ECW_A …) auf
-    /// lokale Position 0 setzen.
+    /// Placement as in the game: Exterior scenes are modeled locally around (0,0,0) and are positioned at the spot location
+    /// with a rotation around the Y axis equal to Value1 (radians). Gates/doors: see ObjectBuilder (root matrix for actor placement).
+    /// local position 0.
     /// </summary>
     Node? BuildExterior(Spot spot, BankModel em, BuildResources res, string suffix)
     {
@@ -1466,8 +1457,7 @@ public sealed class MapStreamer : IDisposable
         return node;
     }
 
-    // ------------------------------------------------------------------ Interieur-Szenen (Unity LoadSceneModel/BuildScene)
-    /// <summary>Gebaute Szene (Interieur, Möbel): Objekte in Spielkoordinaten, eigene Ressourcen.</summary>
+    /// <summary>Built Scene (Interior, Furniture): Objects in game coordinates, custom resources.</summary>
     public sealed class SceneHandle
     {
         public readonly List<RenderObject> Objects = new();
@@ -1477,7 +1467,7 @@ public sealed class MapStreamer : IDisposable
         public bool Active = true;
     }
 
-    /// <summary>Hintergrund-Thread: Szenen-Bank laden (wie ein Exterior) und ihre Texturen bekannt machen.</summary>
+    /// <summary>Background thread: Load a scene bank (like an exterior) and register its textures.</summary>
     public BankModel LoadSceneModel(string bankPath)
     {
         var em = BankModel.Load(bankPath, BankKind.Exterior);
@@ -1486,7 +1476,7 @@ public sealed class MapStreamer : IDisposable
         return em;
     }
 
-    /// <summary>Hauptthread: Szene unter parent (Spielraum) bauen – mit Kollisionsdreiecken je Teil. interior = immer beleuchtet.</summary>
+    /// <summary>Main thread: Build a scene under the parent (play area) – using collision triangles for each part. interior = always lit.</summary>
     public SceneHandle BuildScene(BankModel em, Matrix4x4 parent, bool interior, bool glassOnly = false)
     {
         // Interieur: Kollisionsdreiecke aller Meshes – welche davon kollidieren, entscheidet das Spiel (Unity PrepareStatic)
@@ -1510,7 +1500,7 @@ public sealed class MapStreamer : IDisposable
         return h;
     }
 
-    /// <summary>Kollisionsdreiecke einer gebauten Szene (Spielraum, je 3 Punkte).</summary>
+    /// <summary>Collision triangles of a built scene (play area, 3 points each).</summary>
     public static List<Vector3> SceneTriangles(SceneHandle h)
     {
         var tris = new List<Vector3>();
@@ -1541,9 +1531,9 @@ public sealed class MapStreamer : IDisposable
         h.Model?.Release();
     }
 
-    /// <summary>Gezeichnete Szenen (Interieur, Möbel).</summary>
+    /// <summary>Drawn scenes (interiors, furniture).</summary>
     public readonly List<SceneHandle> Scenes = new();
-    /// <summary>Unity TDU2Interiors.HideWorld: Außenwelt nicht zeichnen (nur Szenen und Himmel).</summary>
+    /// <summary>Unity TDU2Interiors.HideWorld: Do not render the outside world (only scenes and the sky).</summary>
     public bool HideWorld;
 
     Node CreateMeshNode(string name, Vector3 gamePos, MeshData md, IGpuMaterial mat, BuildResources res)
@@ -1602,11 +1592,9 @@ public sealed class MapStreamer : IDisposable
         if (_islandPieces.TryGetValue(k, out var ip)) ip.Active = ShowIslandLod;
     }
 
-    // ------------------------------------------------------------------ Zeichnen (Unity: MeshRenderer/LODGroup + Culling)
-
     public int DrawnObjects { get; private set; }
 
-    /// <summary>Lade-/Baustatistik (Debug-UI): Laden = Hintergrund (Bank lesen, Meshes bauen), Bauen = Main-Thread (GPU-Upload).</summary>
+    /// <summary>Loading/Building Statistics (Debug UI): Loading = Background (read bank, build meshes), Building = Main Thread (GPU upload).</summary>
     public sealed class LoadStats
     {
         public int Loaded, Unloaded;
@@ -1626,8 +1614,8 @@ public sealed class MapStreamer : IDisposable
     public bool ActorsReady => _actors != null;
     public int PendingTextures => MaterialFactory.PendingTextures;
 
-    /// <summary>Zeilen für die Debug-UI.</summary>
-    /// <summary>Zähler für die Speicher-Diagnose (MemoryLog).</summary>
+    /// <summary>Lines for the debug UI.</summary>
+    /// <summary>Counters for memory diagnostics (MemoryLog).</summary>
     public string MemoryInfo()
     {
         int nodes = 0, objs = 0, cols = 0;
@@ -1655,7 +1643,7 @@ public sealed class MapStreamer : IDisposable
     public int LoadedSectors => _sectors.Count;
     public int LoadedAreas => _areas.Count;
 
-    /// <summary>Alles Aktive zeichnen. viewProj im Render-Raum (für Frustum-Culling wie bei Unity-Renderern).</summary>
+    /// <summary>Draw all active objects. viewProj is in render space (for frustum culling).</summary>
     readonly List<SectorState> _renderSectors = new();
     readonly List<List<DrawItem>> _sectorDraws = new();
     int[] _sectorDrawn = Array.Empty<int>();
@@ -1664,7 +1652,7 @@ public sealed class MapStreamer : IDisposable
     Vector4[] _collectPlanes = Array.Empty<Vector4>();
     Action<int>? _collectSector;
 
-    /// <summary>Arbeits-Thread: sichtbare Objekte (LOD) und Platzierungen eines Sektors sammeln – wie DrawNode/PlacementRenderer.Render.</summary>
+    /// <summary>Work thread: Collecting visible objects (LOD) and placements in a sector – like DrawNode/PlacementRenderer.Render.</summary>
     void CollectSector(int i)
     {
         var s = _renderSectors[i];
@@ -1777,10 +1765,8 @@ public sealed class MapStreamer : IDisposable
         DrawnObjects = drawn;
     }
 
-    // ------------------------------------------------------------------ Kollision (Physik)
     /// <summary>
-    /// Physikwelt für Kollisionsnetze der geladenen Sektoren (Unity: GenerateColliders – MeshCollider für Gelände,
-    /// Straßen und Gebäude). null = keine Kollision. Vom Spiel gesetzt, bevor Sektoren geladen werden.
+    /// Physics world for collision meshes of loaded sectors. null = no collision. Set by the game before sectors are loaded.
     /// </summary>
     public PhysicsWorld? Physics { get; set; }
     readonly Queue<SectorState> _colliderQueue = new();
@@ -1803,8 +1789,8 @@ public sealed class MapStreamer : IDisposable
     const int MaxColliderJobs = 3;
 
     /// <summary>
-    /// Kollisionsnetze der gebauten Sektoren (Gelände + feste Objekte, wie TDU2MapStreamer.AddColliders). Dreiecke und Bepu-Suchbaum
-    /// entstehen im Hintergrund; hier nur Übernahme fertiger Netze und Start neuer Aufträge (Daten-Schnappschuss im Hauptthread).
+    /// Collision meshes for the constructed sectors (terrain + fixed objects, such as MapStreamer.AddColliders). Triangles and the Bepu search tree
+    /// are generated in the background; this function only takes over finished meshes and starts new tasks (data snapshot in the main thread).
     /// </summary>
     void UpdateColliders()
     {
@@ -1902,15 +1888,14 @@ public sealed class MapStreamer : IDisposable
 
     readonly List<byte> _collSurf = new();
     /// <summary>
-    /// Gelände-Kollider absenken (m). Unity: 0 (Kollider auf Originalhöhe, sichtbares Gelände um TerrainLower tiefer).
-    /// Mit TerrainLower stehen die Räder auf Feldwegen sichtbar auf, aber Straßenkanten werden zu Stufen (Auto springt).
+    /// Lower terrain collider (m).
+    /// With TerrainLower enabled, the wheels are visibly in contact with dirt roads, but curbs become steps (the car bounces).
     /// </summary>
     public float TerrainColliderLower = 0f;
     readonly Dictionary<LibraryObject, (Vector3[] tris, byte surf)> _libColl = new();
-
     /// <summary>
-    /// Untergrund eines Objekts wie TDU2Vehicle.SurfaceOf im Unity-Projekt: Materialname + Haupt-/Detailtextur;
-    /// mehrheitlich "grass" = Gras (1), "earth/sand/gravel/terre/d2_/dirt_road" = Erde (2), sonst Asphalt (0).
+    /// Surface of an object such as TDU2Vehicle.SurfaceOf: material name + main/detail texture;
+    /// mostly “grass” = grass (1), “earth/sand/gravel/terre/d2_/dirt_road” = earth (2), otherwise asphalt (0).
     /// </summary>
     static byte SurfaceOf(RenderPart[] parts)
     {
@@ -1929,7 +1914,7 @@ public sealed class MapStreamer : IDisposable
         return 0;
     }
 
-    /// <summary>Kollisionsdreiecke (Objektraum) eines Library-Objekts (LOD0), gecacht.</summary>
+    /// <summary>Collision triangles (object space) of a library object (LOD0), cached.</summary>
     (Vector3[] tris, byte surf) LibraryCollision(LibraryObject obj)
     {
         if (_libColl.TryGetValue(obj, out var c)) return c;
@@ -1960,7 +1945,8 @@ public sealed class MapStreamer : IDisposable
         return c;
     }
 
-    /// <summary>Bodenhöhe per Physik-Raycast (Unity: Physics.Raycast nach unten). false = nichts getroffen.</summary>
+
+    /// <summary>Ground height determined by physics raycast (Unity: Physics.Raycast pointing downward). false = nothing hit.</summary>
     public bool RaycastDown(Vector3 game, float above, float maxDistance, out float y)
     {
         y = 0f;
@@ -1971,8 +1957,8 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Bodenhöhe aus der Heightmap des geladenen Sektors (Unity: TDU2MapStreamer.TryGetGroundHeight) – Rückfall der Radkontakte,
-    /// solange an der Stelle noch kein Kollider steht. Trifft keine Objekte (Brücken/Dächer), nur das Gelände.
+    /// Ground height from the heightmap of the loaded sector – fallback for wheel contacts,
+    /// as long as there is no collider at that location yet. Does not hit any objects (bridges/roofs), only the terrain.
     /// </summary>
     public bool TryGetGroundHeight(Vector3 game, out float y)
     {
@@ -1994,9 +1980,9 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Umgebungszone (Environment.TypeID der ambiences.xmb) an einer Spielposition aus den Sektor-.psa:
-    /// Zonen des Sektors und seiner Nachbarn, die den Punkt enthalten; die kleinste (spezifischste) gewinnt.
-    /// -1 = keine Zone (Sektor noch nicht geladen oder ohne Zonen).
+    /// Environment zone (Environment.TypeID from ambiences.xmb) at a game position from the sector.psa:
+    /// Zones of the sector and its neighbors that contain the point; the smallest (most specific) wins.
+    /// -1 = no zone (sector not yet loaded or has no zones).
     /// </summary>
     public int AmbienceZoneAt(float gx, float gz)
     {
@@ -2013,8 +1999,8 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Bodenhöhe für die große Karte (Unity TDU2MapStreamer.TryGetGroundHeight vollständig): Sektor, sonst geladene Area,
-    /// sonst grobe Insel-Höhenkarte. Getrennt von <see cref="TryGetGroundHeight"/>, das nur Sektoren nutzt (Radkontakte).
+    /// Ground elevation for the large map: sector, otherwise loaded area,
+    /// otherwise rough island elevation map. Separate from <see cref="TryGetGroundHeight"/>, which uses only sectors (wheel contacts).
     /// </summary>
     public bool TryGetMapGroundHeight(float gx, float gz, out float y)
     {
@@ -2037,7 +2023,6 @@ public sealed class MapStreamer : IDisposable
         return false;
     }
 
-    // ------------------------------------------------------------------ Stromleitungen
     private readonly PowerWires _powerWires = new();
 
     IEnumerable<PowerWires.SectorWires> WireSets()
@@ -2047,8 +2032,8 @@ public sealed class MapStreamer : IDisposable
     }
 
     /// <summary>
-    /// Aufhängepunkte bestimmen, sobald die Masten (Platzierungen) stehen. Masten im Nachbarsektor: bis zu 4 s warten,
-    /// danach mit der Post-Position bauen; wird der Nachbar später geladen, neu auflösen.
+    /// Determine attachment points once the masts (placements) are in place. Masts in the neighboring sector: wait up to 4 seconds,
+    /// then build using the post-position; if the neighboring sector is loaded later, recalculate.
     /// </summary>
     void UpdatePowerWires(float dt)
     {
@@ -2067,18 +2052,16 @@ public sealed class MapStreamer : IDisposable
         }
     }
 
-    /// <summary>Platzierte Library-Objekte (z.B. Laternen SF_LIGH*) im Umkreis, Spielkoordinaten (für TDU2Weather-Lampen).</summary>
+    /// <summary>Placed library objects (e.g., SF_LIGH* streetlights) within the vicinity, game coordinates (for TDU2Weather lamps).</summary>
     public void FindPlacementInstances(string[] prefixes, Vector3 posGame, float radius, List<(Matrix4x4 m, Vector3 bmin, Vector3 bmax, string name)> result)
     {
         foreach (var s in _sectors.Values)
             if (s.Built) s.Placements?.FindInstances(prefixes, posGame, radius, result);
     }
 
-    // ------------------------------------------------------------------ Debug-Auswahl (F10)
-
     /// <summary>
-    /// Debug: nächstes Objekt entlang des Blickstrahls (Bounds-Test) und seine Materialien (Name, Shader, Blend, Texturen,
-    /// Parameter) – zum Vergleichen fehlerhafter Texturen mit dem Unity-Projekt. Zeilen gehen auch ins Log.
+    /// Debug: the next object along the ray (bounds test) and its materials (name, shader, blend, textures,
+    /// parameters) – for comparing faulty textures with the Unity project. Lines are also written to the log.
     /// </summary>
     public List<string> Pick(Vector3 originRender, Vector3 dir)
     {

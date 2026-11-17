@@ -22,7 +22,6 @@ public sealed partial class DevMenu
     static string Num(float v, string fmt = "0") => v.ToString(fmt, CultureInfo.InvariantCulture);
     static string MB(long bytes) => (bytes / (1024.0 * 1024.0)).ToString("N0", CultureInfo.InvariantCulture) + " MB";
 
-    // ------------------------------------------------------------------ Hauptmenü (Unity MainMenu)
     List<Item> MainMenu() => new List<Item>
     {
         Head("RACING & TESTS"),
@@ -35,10 +34,11 @@ public sealed partial class DevMenu
         PhMenu("Traffic", "Traffic is not ported yet"),
 
         Head("WORLD"),
-        Menu("World Loading / Island travel", WorldMenu),
+        Menu("World / Island", WorldMenu),
         Menu("Streaming", StreamingMenu),
         Menu("Weather & Time of Day", WeatherMenu),
         Menu("GPS / Bookmarks", GpsMenu),
+        Menu("Audio ", AudioMenu),
 
         Head("INPUT"),
         Menu("Controls / Input Devices", ControlsMenu),
@@ -53,7 +53,6 @@ public sealed partial class DevMenu
         Menu("Rendering", RenderingMenu),
         Menu("Performance", UsageMenu),
         Menu("Jobs & Threads", JobsMenu),
-        Menu("Audio (volumes, now playing)", AudioMenu),
 
         Head("DEBUG VIEW"),
         Menu("Debug View Toggles (race / traffic / camera)", DebugViewMenu),
@@ -64,7 +63,7 @@ public sealed partial class DevMenu
         Menu("Flash Profiler", FlashProfilerMenu),
 
         Head(""),
-        Info("Close F1 · Up/Down Entry · Left/Right Value (Shift x10) · Enter to open · Backspace to go back · Delete (default)"),
+        Info("Close F1 | Up/Down Entry | Left/Right Value (Shift x10) | Enter to open | Backspace to go back | Delete (default)"),
     };
 
     // ------------------------------------------------------------------ Autos (Unity CarsMenu)

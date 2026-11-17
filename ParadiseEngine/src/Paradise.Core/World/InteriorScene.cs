@@ -4,16 +4,15 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Begehbare Interieurs (Euro/Bnk/interior/*.bnk): Autohändler (icd_*), Wohnbereich (lph_*/ich_*), Garage (gph_*/gch_*) ...
-/// Port von Unity InteriorScene. entities.xmb → ExportType_Entity:
-///   ArrayOf_Entity__FirstPerson   "FirstPerson": StartCamera = __Hc der Startkamera (Ich-Perspektive)
+/// Walkable interiors (Euro/Bnk/interior/*.bnk): Car dealership (icd_*), living area (lph_*/ich_*), garage (gph_*/gch_*)
+///   ArrayOf_Entity__FirstPerson   “FirstPerson”: StartCamera = __Hc of the start camera (first-person perspective)
 ///   ArrayOf_Entity__Camera        cam_entree, cam_entree_garage, Cam_Hostess ... (orient_pos_scale, Fov)
 ///   ArrayOf_Entity__Volume__FpSelectable  Hotspots: Exit/ExitDoor (Type 0), Hostess_area (1), Garage (5), Living (6),
 ///                                 Diary (9), Dressing (10), Billboard (12/14), Bar (50), Office (51), Club (54), Media (57)
-///                                 volume_mat = Spielraum → Einheitswürfel [-0,5, 0,5]³ (Spalten _0.._2, Translation _3)
-///   ArrayOf_Entity__PosCam        D_CAR_01.. Stellplätze für Autos
-///   ArrayOf_Entity__MyHouseObject Möbel (interior/myhouse/&lt;name ohne _NN&gt;.bnk)
-/// Matrizen als System.Numerics (Zeilenvektoren): Unity-Spalte i = Zeile i. "vorne" = lokale +Z-Achse.
+///                                 volume_mat = Game space → unit cube [-0.5, 0.5]³ (columns _0.._2, translation _3)
+///   ArrayOf_Entity__PosCam        D_CAR_01.. Parking spaces for cars
+///   ArrayOf_Entity__MyHouseObject Furniture (interior/myhouse/&lt;name without _NN&gt;.bnk)
+/// Matrices as System.Numerics (row vectors): Unity column i = row i. “front” = local +Z-axis.
 /// </summary>
 public sealed class InteriorScene
 {
@@ -31,12 +30,12 @@ public sealed class InteriorScene
     {
         public int Type;
         public string Str = "";
-        /// <summary>Spielraum -> Einheitswürfel [-0,5, 0,5]³ (Original: Kastentest gegen ±0,5, unpacked.exe 0x9392C0 mit 0x149484C/0x1482258;
-        /// vorher [-1,1]³ – alle Auswahlpunkte waren doppelt so groß, das Tagebuch füllte fast den ganzen Raum).</summary>
+        /// <summary>Play area -> Unit cube [-0.5, 0.5]³ (Original: Box test against ±0.5, unpacked.exe 0x9392C0 with 0x149484C/0x1482258;
+        /// previously [-1,1]³ – all selection points were twice as large; the diary filled almost the entire space).</summary>
         public Matrix4x4 Volume = Matrix4x4.Identity;
         public ulong Camera, Cinematic;
 
-        /// <summary>Strahl (Spielraum der Szene) gegen das Volumen; Abstand bis zum Eintritt.</summary>
+        /// <summary>Beam (scene space) against the volume; distance to the point of entry.</summary>
         public bool Raycast(Vector3 o, Vector3 d, out float t)
         {
             var lo = Vector3.Transform(o, Volume);
@@ -66,7 +65,7 @@ public sealed class InteriorScene
         }
     }
 
-    /// <summary>Ausstellungsauto auf Drehteller (Entity__Actor__ActorVehiclePosition, z.B. Casino-Lobby).</summary>
+    /// <summary>Display car on a turntable (Entity__Actor__ActorVehiclePosition, e.g., casino lobby).</summary>
     public sealed class ShowCar : Ent
     {
         public int VehicleId;
@@ -94,7 +93,7 @@ public sealed class InteriorScene
         return null;
     }
 
-    /// <summary>Startpunkt der Ich-Perspektive: FirstPerson.StartCamera, sonst cam_entree, sonst erste Kamera.</summary>
+    /// <summary>Starting point for the first-person perspective: FirstPerson.StartCamera, otherwise cam_entree, otherwise the first camera.</summary>
     public Ent? StartCam => Camera(StartCamera) ?? Camera("cam_entree") ?? (Cameras.Count > 0 ? Cameras[0] : null);
 
     public static InteriorScene Parse(BnkArchive bank)

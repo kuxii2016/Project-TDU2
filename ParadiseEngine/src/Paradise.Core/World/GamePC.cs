@@ -8,14 +8,14 @@ using System.Text;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// GamePC.cpr (Konfiguration der Original-exe, XTEA wie die übrigen .cpr) – nur die aktiven Zeilen.
-/// Portiert aus dem Unity-Projekt. Für den Spielstart wird ausgewertet (wie das Spiel ohne Online-Spielstand):
-///   AddLevel = "Ibiza"                 Startinsel (Hawai_Route/Dubai/Casino werden nicht als Start genommen)
-///   DEFAULTSTARTPOSITION x y z         Startposition (nur falls aktiv und nicht 0 0 0)
-///   [CarStateConfig] DefaultHouse "EPH_L2E_0345I", DefaultHouse2 …   Haus, in dem man beginnt
-///   DefaultCarConfig "Ferrari" "F430" "Scuderia"                    aktuelles Auto
-///   DefaultGarageConfig 379 …          Autos in der Garage (_id_car)
-///   DefaultMoney 27000                 Startgeld
+/// GamePC.cpr (configuration of the original EXE; XTEA, like the other .cpr files) – only the active lines.
+/// Ported from the Unity project. The following is evaluated when the game starts (as in the game without online save):
+///   AddLevel = “Ibiza”                 Starting island (Hawai_Route/Dubai/Casino are not used as the starting point)
+///   DEFAULTSTARTPOSITION x y z         Starting position (only if active and not 0 0 0)
+///   [CarStateConfig] DefaultHouse “EPH_L2E_0345I”, DefaultHouse2 …   House where you start
+///   DefaultCarConfig “Ferrari” ‘F430’ “Scuderia”                    current car
+///   DefaultGarageConfig 379 …          Cars in the garage (_id_car)
+///   DefaultMoney 27000                 Starting money
 /// </summary>
 public sealed class GamePC
 {
@@ -39,9 +39,8 @@ public sealed class GamePC
 
     private static GamePC? _cached;
     private static string? _cachedKey;
-
     /// <summary>
-    /// GamePC.cpr suchen (Ordner der exe = StreamingAssets, neben bzw. über dem Bnk-Ordner) und lesen; null = nicht gefunden.
+    /// Search for GamePC.cpr (folder containing the exe = StreamingAssets, next to or above the Bnk folder) and read it; null = not found.
     /// </summary>
     public static GamePC? Load(string? bnkDir)
     {
@@ -134,7 +133,7 @@ public sealed class GamePC
         return bad == 0;
     }
 
-    /// <summary>"//"-Kommentar abschneiden (außerhalb von Anführungszeichen).</summary>
+    /// <summary>Trim “//” comments (outside of quotation marks).</summary>
     private static string StripComment(string s)
     {
         bool q = false;
@@ -205,7 +204,7 @@ public sealed class GamePC
         }
     }
 
-    /// <summary>Erster Wert eines Schlüssels (z.B. "LockWalkmode"), sonst null.</summary>
+    /// <summary>First value of a key (e.g., “LockWalkmode”), otherwise null.</summary>
     public string? Get(string key, string? section = null)
     {
         foreach (var e in Entries)
@@ -214,7 +213,7 @@ public sealed class GamePC
         return null;
     }
 
-    /// <summary>Erstes Standard-Haus, das auf der geladenen Insel liegt.</summary>
+    /// <summary>The first standard house located on the loaded island.</summary>
     public Spot? FindHouse(IList<Spot> spots)
     {
         foreach (var h in Houses) { var s = FindSpot(spots, h); if (s != null) return s; }
@@ -222,9 +221,9 @@ public sealed class GamePC
     }
 
     /// <summary>
-    /// Spot über den vollen Namen aus der Datenbank (z.B. "EPH_L2E_0345I"). spots.bin enthält nur 8 Zeichen Code ("EPH_L2E")
-    /// und einen 8-Byte-Schlüssel = Zeichen des vollen Namens auf 8 Bytes aufsummiert (Byte k = Summe der Zeichen k, k+8, …).
-    /// Bei Namen mit Endung "I" weicht das Byte dieser Stelle ab – es wird nicht verglichen.
+    /// Spot representing the full name from the database (e.g., “EPH_L2E_0345I”). spots.bin contains only 8 characters of code (“EPH_L2E”)
+    /// and an 8-byte key = the characters of the full name summed up to 8 bytes (byte k = sum of characters k, k+8, …).
+    /// For names ending in “I”, the byte at this position differs—it is not compared.
     /// </summary>
     public static Spot? FindSpot(IList<Spot>? spots, string name)
     {

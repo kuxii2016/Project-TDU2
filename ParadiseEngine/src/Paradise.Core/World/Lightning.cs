@@ -4,36 +4,35 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Gewitter wie im Original (WFX_Lightning, Ctor 0xa59ed0, Lader 0xa59f40, Update 0xa5d5a0, Wetter 0xa5d310). Selbst
-/// disassembliert; Felder in Klammern = Versatz im Original-Objekt.
+/// Thunderstorm as in the original (WFX_Lightning, Ctor 0xa59ed0, Loader 0xa59f40, Update 0xa5d5a0, Weather 0xa5d310).
 /// <list type="bullet">
-/// <item><b>Zustände</b> (+0x310, Sprungtabelle 0xa5dd38): 0 Vorflackern (bis +0x3df4) → 1 Wachsen (0,2 s Pause, dann
-///   +0x3de8 lang; sichtbare Punkte = ceil(p·Anzahl)) → 2 Stehen (+0x3df0; danach Donner) → 3 Ausblenden (+0x3dfc, Alpha
-///   1 − t/Dauer, Blitz nicht mehr gezeichnet) → 4 Nachflackern (+0x3df8) → 5 Warten (+0x3e00) → neu würfeln, zurück zu 0.</item>
-/// <item><b>Würfeln</b> (5 → 0): Wachsen rand(0,1; 0,2), Ausblenden 0,8, Abstand rand(thunder_time_spacing_min_max.xy),
-///   Stehen rand(thunder_lightning_duration_min_max.xy), Vorflackern rand(thunder_flicker_duration_min_max.xy),
-///   Nachflackern rand(.zw) + rand(0,1; 0,12); Wetterwerte festhalten (0xa5c070), Form (0xa5a380), Ort (0xa5a5e0).</item>
-/// <item><b>Flackern</b> (0xa59d70): Frequenz rand(fA, fB) je Bild, Phase += f·2π·dt, an = sin(Phase) &gt; 0, bei jedem
-///   Einschalten Stärke rand(iA, iB). Zustand 0: (freq.x, freq.y, int.x, int.x) – int.y wird im Original nicht gelesen;
-///   sonst (freq.zw, int.zw). Glättung (0xa59e60): s = k·Flackern + (1 − k)·s, k = Ziel^(dt·30), Ziel 0,9 bzw. 0,3 ab Zustand 4.</item>
-/// <item><b>Blitzlicht</b> (+0x3e08..10): beim Start des Wachsens (4, 4, 1), je Bild ×0,7^(dt·30).</item>
-/// <item><b>Form</b> (0xa5a0f0): Mittelpunktverschiebung nur in x, Stufen-Amplitude ×0,48, Zufall rand·0,1 + 0,9 mit Vorzeichen.
-///   Hauptast (r2, 1) → (r1, 0), r = rand(−0,2; 0,2), 6 Stufen = 65 Punkte, Amplitude 0,05. Ebenen 2..5: je rand%3 + 2 Äste vom
-///   Ast [Ebene − 2], gleichmäßig verteilt, Richtung = (Mitte − Anfang)·rand(0,6; 0,9), x zusätzlich ±rand(0,9; 1,1),
-///   5 Stufen (33 Punkte), Amplitude 0,05/(Ebene − 1); Start = Start des Elternasts + Index.</item>
-/// <item><b>Ort</b> (0xa5a5e0): Entfernung S = rand·2000 + 1000 m in der waagrechten Blickrichtung der Kamera, Höhe des Bodens dort,
-///   Größe D = (rand·0,3 + 0,8)·800 m. Der seitliche Versatz des Originals (±S·[Kamera+0x17c]·1,5) ist 0: das Feld ist das w
-///   einer Culling-Maske der Kamera (0xf620e0) und dort immer 0.</item>
-/// <item><b>Streifen</b> (0xa5a970): halbe Breite = S·0,0075/3000/Ebene, u = −1/+1, Spitze u = 0, v = 1/Ebene, Vertexalpha =
-///   Alpha·255 (Hauptast: die ersten 5 Punkte i/5). Zeichnen TD_Lightning (Shader in GameShaders): Drehung um Y mit
-///   atan2(Kamerablick.x, .z), Farbe = lerp((1 − u²)²·v, (1 − clamp(5u)²)·v, 0,1), additiv SrcAlpha/One.</item>
-/// <item><b>Wetter</b> (0xa5d310, jedes Bild): sun_ambient += Blitzlicht.r, car_headlights_intensity ·= 1 − 0,25·r;
-///   Zustand 0/4 → 0xa5baf0 (Flackern), 1–3 → 0xa5af80 (Blitzlicht auf die Szene, solange Alpha ≥ 0,7).</item>
+/// <item><b>States</b> (+0x310, jump table 0xa5dd38): 0 Pre-flare (up to +0x3df4) → 1 Build-up (0.2 s pause, then
+///   +0x3de8 long; visible points = ceil(p·count)) → 2 Standstill (+0x3df0; followed by thunder) → 3 Fade out (+0x3dfc, alpha
+///   1 − t/duration, flash no longer drawn) → 4 Afterglow (+0x3df8) → 5 Wait (+0x3e00) → roll again, back to 0.</item>
+/// <item><b>Roll</b> (5 → 0): Grow rand(0,1; 0,2), Fade 0.8, Spacing rand(thunder_time_spacing_min_max.xy),
+///   Position rand(thunder_lightning_duration_min_max.xy), Pre-flicker rand(thunder_flicker_duration_min_max.xy),
+///   Afterglow rand(.zw) + rand(0.1; 0.12); Record weather values (0xa5c070), shape (0xa5a380), location (0xa5a5e0).</item>
+/// <item><b>Flicker</b> (0xa59d70): Frequency rand(fA, fB) per frame, Phase += f·2π·dt, on = sin(Phase) &gt; 0, at each
+///   power-up, intensity rand(iA, iB). State 0: (freq.x, freq.y, int.x, int.x) – int.y is not read in the original;
+///   otherwise (freq.zw, int.zw). Smoothing (0xa59e60): s = k·Flicker + (1 − k)·s, k = Target^(dt·30), Target 0.9 or 0.3 starting from state 4.</item>
+/// <item><b>Flash</b> (+0x3e08..10): at the start of growth (4, 4, 1), per frame ×0.7^(dt·30).</item>
+/// <item><b>Shape</b> (0xa5a0f0): Center shift only in x, step amplitude ×0.48, random rand·0.1 + 0.9 with sign.
+///   Main branch (r2, 1) → (r1, 0), r = rand(−0.2; 0.2), 6 steps = 65 points, amplitude 0.05. Levels 2–5: rand%3 + 2 branches each from
+///   Branch [Level − 2], evenly distributed, direction = (Center − Start)·rand(0.6; 0.9), x additionally ±rand(0.9; 1.1),
+///   5 levels (33 points), amplitude 0.05/(level − 1); start = start of the parent branch + index.</item>
+/// <item><b>Location</b> (0xa5a5e0): Distance S = rand·2000 + 1000 m in the camera’s horizontal line of sight, ground elevation at that point,
+///   size D = (rand·0.3 + 0.8)·800 m. The lateral offset of the original (±S·[Camera+0x17c]·1.5) is 0: the field is part
+///   of the camera’s culling mask (0xf620e0) and is always 0 there.</item>
+/// <item><b>Strip</b> (0xa5a970): half width = S·0.0075/3000/plane, u = −1/+1, tip u = 0, v = 1/plane, vertex alpha =
+///   alpha·255 (main branch: the first 5 points i/5). Draw TD_Lightning (shader in GameShaders): Rotate around Y with
+///   atan2(CameraView.x, .z), color = lerp((1 − u²)²·v, (1 − clamp(5u)²)·v, 0.1), additive SrcAlpha/One.</item>
+/// <item><b>Weather</b> (0xa5d310, every frame): sun_ambient += flashlight.r, car_headlights_intensity ·= 1 − 0.25·r;
+///  State 0/4 → 0xa5baf0 (flickering), 1–3 → 0xa5af80 (flashlight on the scene as long as alpha ≥ 0.7).</item>
 /// </list>
 /// </summary>
 public sealed class Lightning : IDisposable
 {
-    /// <summary>Zählt die Einschläge (Übergang Stehen → Ausblenden, Original: Umgebung spielt dann den Donner, 0x657340).</summary>
+    /// <summary>Counts the strikes (transition from “Standing” to “Fade Out”; original: the environment then plays the thunder sound, 0x657340).</summary>
     public static int Strikes { get; private set; }
 
     sealed class Branch
@@ -75,12 +74,12 @@ public sealed class Lightning : IDisposable
     float Rand(float a, float b) => a + (b - a) * Rand01();     // 0x538350
     int RandInt() => _rnd.Next(0, 32768);
 
-    /// <summary>Wert eines Wetterparameters mit den Überschreibungen dieses Bildes (sonst raw).</summary>
+    /// <summary>Value of a weather parameter based on the overrides in this image (otherwise raw).</summary>
     public Vector4 Value(string name, Vector4 raw) => _ov.TryGetValue(name, out var v) ? v : raw;
 
     /// <summary>
-    /// Jedes Bild. raw = Wetterwerte ohne Blitz, rawDir = sundirection, on = thunder_off_on &gt; 0,5 (FUN_00aa6ce0 → 0xa59d00).
-    /// camera/forward in Spielkoordinaten, ground(x, z) = Bodenhöhe oder null.
+    /// Each image. raw = weather values without lightning, rawDir = sundirection, on = thunder_off_on > 0.5 (FUN_00aa6ce0 → 0xa59d00).
+    /// camera/forward in game coordinates, ground(x, z) = ground level or null.
     /// </summary>
     public void Update(float dt, bool on, Func<string, Vector4, Vector4> raw, Vector4 rawDir,
                        Vector3 camera, Vector3 forward, Func<float, float, float?> ground)
@@ -197,7 +196,7 @@ public sealed class Lightning : IDisposable
         Place(camera, forward, ground);
     }
 
-    /// <summary>0xa5c070: Wetterwerte beim Würfeln festhalten (gemischte Werte ohne Blitz).</summary>
+    /// <summary>0xa5c070: Record weather values when rolling the dice (mixed values without lightning).</summary>
     void Snapshot(Func<string, Vector4, Vector4> raw, Vector4 rawDir)
     {
         _sHalo = raw("sunflare_halo_color", Vector4.Zero);
@@ -215,8 +214,7 @@ public sealed class Lightning : IDisposable
         _halo = _sHalo; _lens = _sLens; _core = _sCore; _hgg = _sHgg; _moon = _sMoon;
     }
 
-    // ------------------------------------------------------------------ Form
-    /// <summary>0xa5a0f0: Mittelpunktverschiebung (nur x), levels Stufen, Amplitude ×0,48 je Stufe.</summary>
+    /// <summary>0xa5a0f0: Center shift (x only), levels, amplitude ×0.48 per level.</summary>
     Vector2[] Generate(Vector2 a, Vector2 b, int levels, float amp)
     {
         var buf = new List<Vector2>(140) { a, b };
@@ -242,7 +240,7 @@ public sealed class Lightning : IDisposable
         return outp.ToArray();
     }
 
-    /// <summary>0xa5a380: Hauptast und Äste der Ebenen 2..5.</summary>
+    /// <summary>0xa5a380: Main branch and branches of levels 2–5.</summary>
     void BuildPaths(Vector2 a, Vector2 b)
     {
         _branches.Clear();
@@ -271,7 +269,7 @@ public sealed class Lightning : IDisposable
         }
     }
 
-    /// <summary>0xa5a5e0: Ort vor der Kamera (waagrechte Blickrichtung), Größe.</summary>
+    /// <summary>0xa5a5e0: Location in front of the camera (horizontal viewing direction), size.</summary>
     void Place(Vector3 camera, Vector3 forward, Func<float, float, float?> ground)
     {
         _size = Rand01() * 2000f + 1000f;
@@ -283,7 +281,6 @@ public sealed class Lightning : IDisposable
         _pos = p;
     }
 
-    // ------------------------------------------------------------------ Streifen (0xa5a970)
     void Build(int n)
     {
         _vCount = 0; _iCount = 0;
@@ -326,8 +323,8 @@ public sealed class Lightning : IDisposable
     }
 
     /// <summary>
-    /// Zeichnen (nur Wachsen/Stehen haben Punkte). TD_Lightning vs dreht den flachen Streifen um Y zur Kamera:
-    /// x' = x·cos θ, z' = −x·sin θ, θ = atan2(Blick.x, Blick.z) (CamDir_ObjSpace; Modell ohne Drehung → Weltblick).
+    /// Drawing (only “Grow” and “Stand” have points). TD_Lightning vs rotates the flat strip around the Y-axis toward the camera:
+    /// x' = x·cos θ, z' = −x·sin θ, θ = atan2(view.x, view.z) (CamDir_ObjSpace; model without rotation → world view).
     /// </summary>
     public void Draw(IRenderer r, Vector3 rootOffset, Vector3 viewForward)
     {
@@ -363,7 +360,7 @@ public sealed class Lightning : IDisposable
 
     static Vector4 Lerp(Vector4 a, Vector4 b, float t) => a * (1f - t) + b * t;   // 0x6a6a30
 
-    /// <summary>0xa5af80: Blitzlicht auf die Szene, solange Alpha ≥ 0,7; danach immer Sonnen-Halos/Mond aus, HGg 1000.</summary>
+    /// <summary>0xa5af80: Flashlight on the scene as long as Alpha ≥ 0.7; after that, always turn off sun halos/moon, HGg 1000.</summary>
     void ApplyBolt()
     {
         if (_alpha >= 0.7f)
@@ -400,7 +397,7 @@ public sealed class Lightning : IDisposable
         _ov["Skydome_moonPercent"] = new Vector4(_moon, 0, 0, 0);
     }
 
-    /// <summary>0xa5baf0: Flackern (f = 1 − geglättete Stärke). HGg/Mond/Halos kehren je Bild zu 25 % zu den festgehaltenen Werten zurück.</summary>
+    /// <summary>0xa5baf0: Flicker (f = 1 − smoothed intensity). HGg/Moon/Halos return to 25% of their recorded values per frame.</summary>
     void ApplyFlicker(float f)
     {
         _ov["photoshop_overlay_opacity"] = new Vector4(_sOverlay * f + (1f - f) * 0.9f, 0, 0, 0);

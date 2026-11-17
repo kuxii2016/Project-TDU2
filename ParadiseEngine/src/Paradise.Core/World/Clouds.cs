@@ -7,16 +7,16 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Wolkenkuppel wie im Original (exe Wolkenteil des Dom-Objekts):
+/// Cloud dome as in the original (i.e., the cloud portion of the dome object):
 /// <list type="bullet">
-/// <item>Daten: fx/clouds.bnk der Insel – Objekte CLOUD_A / CLOUD_B / CLOUD_R (+ Unterobjekte …_p), Texturen clouds/cloudsb,
-///   Shader TD_CloudMesh (Kuppel ~200 km Radius, 21–35 km hoch, in Weltkoordinaten).</item>
-/// <item>Auswahl: clouds_cloud3dname der Wetterart (0xd03130 vergleicht den Namen, Wechsel = Überblenden zweier Plätze).</item>
-/// <item>Drehung: 0xd028a0 – Winkel += clouds_cloud3dSpeed / 1000 · dt um die Y-Achse, nachmultipliziert (um den Weltursprung).</item>
-/// <item>Farben: Instance_Color = clouds_cloud3dcolor, ColorDown = clouds_cloud3dcolor2 (0xd03390/0xd05f80), AlphaBlend =
-///   clouds_cloud3dAlphaBlend, Haze = Skydome_haze, DirLight_Emissive = sunflare_core_emissive (0xc98817) – über den Frame-Puffer.</item>
+/// <item>Data: fx/clouds.bnk for the island – objects CLOUD_A / CLOUD_B / CLOUD_R (+ subobjects …_p), textures clouds/cloudsb,
+///   Shader TD_CloudMesh (dome ~200 km radius, 21–35 km high, in world coordinates).</item>
+/// <item>Selection: clouds_cloud3dname of the weather type (0xd03130 compares the name; change = crossfade between two locations).</item>
+/// <item>Rotation: 0xd028a0 – Angle += clouds_cloud3dSpeed / 1000 · dt around the Y-axis, multiplied by the world origin.</item>
+/// <item>Colors: Instance_Color = clouds_cloud3dcolor, ColorDown = clouds_cloud3dcolor2 (0xd03390/0xd05f80), AlphaBlend =
+///   clouds_cloud3dAlphaBlend, Haze = Skydome_haze, DirLight_Emissive = sunflare_core_emissive (0xc98817) – via the frame buffer.</item>
 /// </list>
-/// Offen: welcher Teil clouds_cloud3dSpeed.y nutzt (0xd02931: Argument > 1) – hier dreht alles mit .x.
+/// Open question: which part uses `clouds_cloud3dSpeed.y` (0xd02931: argument > 1) – here, everything rotates using `.x`.
 /// </summary>
 public sealed class Clouds : IDisposable
 {
@@ -33,7 +33,7 @@ public sealed class Clouds : IDisposable
 
     Clouds(IRenderer r) => _r = r;
 
-    /// <summary>fx/clouds.bnk laden. null, wenn die Insel keine hat.</summary>
+    /// Load <summary>fx/clouds.bnk. Return null if the island doesn't have any.</summary>
     public static Clouds? Load(string fxDir, IRenderer r, GlobalTextureCache textures)
     {
         string path = Path.Combine(fxDir, "clouds.bnk");
@@ -82,10 +82,10 @@ public sealed class Clouds : IDisposable
     readonly Dictionary<RenderObject, char> _letter = new();
 
     /// <summary>
-    /// Zugehörigkeit der Blätter zu CLOUD_A/B/R über die Hierarchie der Szene (HIEA): Unter CLOUDS hängen je Wolkenart ein Zweig
-    /// "CLOUD_x_0" (…→ Cx0_F) und ein zweiter Zweig, dessen Blatt ebenfalls "…_x_…" heißt. Die Namen liegen nur als Eden-Schlüssel
-    /// vor (Großbuchstaben, Bytes modulo 8 aufaddiert); Zeichen 5–7 der Namen bleiben bei ≤ 13 Zeichen unverändert: "_x_".
-    /// Ein Blatt gehört zur Wolkenart x, wenn es selbst oder ein Vorfahr diesen Schlüssel trägt.
+    /// Leaf assignment to CLOUD_A/B/R via the scene hierarchy (HIEA): Under CLOUDS, there is one branch for each cloud type
+    /// named “CLOUD_x_0” (…→ Cx0_F) and a second branch whose leaf is also named “…_x_…”. The names exist only as Eden keys
+    /// (uppercase letters, bytes summed modulo 8); characters 5–7 of the names remain unchanged if the name is ≤ 13 characters: “_x_”.
+    /// A leaf belongs to cloud type x if it itself or an ancestor carries this key.
     /// </summary>
     void AssignCloudLetters()
     {
@@ -122,12 +122,12 @@ public sealed class Clouds : IDisposable
         return b5 == (byte)'_' && b7 == (byte)'_' && b6 >= (byte)'A' && b6 <= (byte)'Z' ? (char)b6 : '\0';
     }
 
-    /// <summary>clouds_cloud3dname "CLOUD_B" -> 'B'.</summary>
+    /// <summary>clouds_cloud3dname “CLOUD_B” -> ‘B’.</summary>
     static char LetterOf(string cloud) => cloud.Length > 6 && cloud.StartsWith("CLOUD_", StringComparison.OrdinalIgnoreCase) ? char.ToUpperInvariant(cloud[6]) : '\0';
 
     bool IsPart(RenderObject o, string cloud) => _letter.TryGetValue(o, out var l) && l == LetterOf(cloud);
 
-    /// <summary>Drehung und Überblendgewichte (Materialwerte nur bei Änderung, höchstens alle 0,1 s).</summary>
+    /// <summary>Rotation and transition weights (material values only when changed, at most every 0.1 s).</summary>
     public void Update(float dt, double time)
     {
         _angle += RenderFx.CloudSpeed.X / 1000f * dt;
@@ -156,7 +156,7 @@ public sealed class Clouds : IDisposable
         return (IsPart(o, cur) ? b : 0f) + (IsPart(o, prev) ? 1f - b : 0f);
     }
 
-    /// <summary>Zeichnen (Spielkoordinaten -> Render-Raum über root).</summary>
+    /// <summary>Draw (game coordinates -> render space via root).</summary>
     public void Draw(Matrix4x4 root)
     {
         var rot = Matrix4x4.CreateRotationY(_angle);

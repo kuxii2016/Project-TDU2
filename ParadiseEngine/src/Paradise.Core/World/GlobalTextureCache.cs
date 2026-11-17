@@ -6,15 +6,14 @@ using System.Runtime.CompilerServices;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Zusatzinfos zu erzeugten Texturen – ersetzt TextureDef.PackedTextures / MeanLuminance
-/// (im Unity-Projekt über Texture2D.GetInstanceID()).
+/// Additional information about generated textures – replaces TextureDef.PackedTextures / MeanLuminance
 /// </summary>
 public static class TextureInfo
 {
     private sealed class Info { public bool Packed; public float MeanLum; }
     private static readonly ConditionalWeakTable<IGpuTexture, Info> _info = new();
 
-    /// <summary>Textur aus einer TextureDef erzeugen (wie TextureDef.CreateTexture) und Infos merken. Main-Thread.</summary>
+    /// <summary>Create a texture from a TextureDef (like TextureDef.CreateTexture) and store the information. Main thread.</summary>
     public static IGpuTexture? Create(IRenderer r, TextureDef def, TextureWrap u, TextureWrap v, bool linear = false)
     {
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -42,7 +41,7 @@ public static class TextureInfo
         return tex;
     }
 
-    /// <summary>"Gepackte" Detailtextur (nur R = Graustufen-Detail).</summary>
+    /// <summary>“Packed” detail texture (R only = grayscale detail).</summary>
     public static bool IsPacked(IGpuTexture? t) => t != null && _info.TryGetValue(t, out var i) && i.Packed;
 
     /// <summary>Mittlere Helligkeit (0..1) einer Textur.</summary>
@@ -56,9 +55,9 @@ public static class TextureInfo
 }
 
 /// <summary>
-/// Texturen einer einzelnen geladenen Bank (Sektor/Area/Insel). Portiert aus dem Unity-Projekt.
-/// Die TextureDefs werden im Hintergrund gelesen, die GPU-Texturen erst bei Bedarf im
-/// Main-Thread erzeugt und beim Entladen freigegeben.
+/// Textures for a single loaded bank (sector/area/island). Ported from the Unity project.
+/// The TextureDefs are read in the background; the GPU textures are generated only when needed on the
+/// main thread and released when the bank is unloaded.
 /// </summary>
 public sealed class LocalTextureSet
 {
@@ -89,8 +88,8 @@ public sealed class LocalTextureSet
 }
 
 /// <summary>
-/// Globaler Texturindex (commonworld.bnk, tallgrass.bnk, Sektor-/Area-Bänke ...): Key -> Bankeintrag,
-/// lazy geladen und behalten. Portiert aus dem Unity-Projekt.
+/// Global texture index (commonworld.bnk, tallgrass.bnk, sector/area banks, etc.): Key -> bank entry,
+/// loaded lazily and cached. Ported from the Unity project.
 /// </summary>
 public sealed class GlobalTextureCache
 {
@@ -102,10 +101,10 @@ public sealed class GlobalTextureCache
     public GlobalTextureCache(IRenderer renderer) => _renderer = renderer;
 
     public int Count { get { lock (_index) return _index.Count; } }
-    /// <summary>Erzeugte GPU-Texturen (Diagnose).</summary>
+    /// <summary>Generated GPU textures (diagnostics).</summary>
     public int LoadedCount => _loaded.Count;
 
-    /// <summary>Liest die Keys aller .2db einer Bank (nur 40 Byte pro Textur). Thread-sicher aufrufbar.</summary>
+    /// <summary>Reads the keys of all .2db files in a bank (only 40 bytes per texture). Can be called thread-safely.</summary>
     public void IndexBank(BnkArchive bank)
     {
         var add = new List<(ulong, BnkEntry, string)>();
@@ -125,7 +124,7 @@ public sealed class GlobalTextureCache
         }
     }
 
-    /// <summary>Bank aus einem Pfad indizieren (ignoriert Fehler/fehlende Datei).</summary>
+    /// <summary>Index a bank from a path (ignores errors/missing files).</summary>
     public void IndexBankFile(string? path)
     {
         if (string.IsNullOrEmpty(path) || !GameFiles.Exists(path))
@@ -144,7 +143,6 @@ public sealed class GlobalTextureCache
 
     public ulong KeyByName(string fileName) { lock (_index) return _byName.TryGetValue(fileName, out var k) ? k : 0; }
 
-    /// <summary>Main-Thread.</summary>
     public IGpuTexture? Get(ulong key, TextureWrap u = TextureWrap.Repeat, TextureWrap v = TextureWrap.Repeat)
     {
         if (key == 0) return null;

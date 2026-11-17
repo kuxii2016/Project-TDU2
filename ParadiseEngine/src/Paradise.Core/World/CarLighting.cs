@@ -4,43 +4,40 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// Licht der Autos wie im Original (unpacked.exe, GS_CarDisplay.cpp):
+/// Car lights as in the original GS_CarDisplay.cpp:
 ///
-/// 0x744990 – Lichtwerte je Bild für das Auto (Ausgabe: Ambient, DirLight diffuse, DirLight specular, Richtung):
-///   1. Außen: Ambient = sun_ambient, Diffus = sun_diffuse, Glanz = sun_specular (Wetter, roh – Gamma-Raum, kein "d − a"
-///      wie im Unity-Projekt). Im Tunnel (Faktor [+0x2ad0] > 0, World/TunnelLight) werden die drei Farben zu
-///      tunnel_light_ambient / _diffuse / _specular übergeblendet (0x40b80c lerp, Faktor = Tunnelfaktor).
-///      Offen: die Lichtrichtung (0x7148e0) wird ebenso zur Tunnelrichtung (0x19cc100) übergeblendet – hier noch Sonnenrichtung.
-///      Im Interieur (Spielmodi 3, 0x1d, 0x1e, 8, 0x16, 0x23) kommt das Licht vom Umgebungsobjekt der Szene (noch nicht portiert:
-///      dort bleibt <see cref="CarLightGlobals.On"/> aus und die Autos nutzen das bisherige Licht).
-///   2. Für Autos (car+0x79a0): Ambient ×= car_sun_ambiant_factor, Diffus ×= car_sun_diffuse_factor,
-///      Glanz ×= car_sun_specular_factor (Werte gelesen in 0x7461f0 -> 0x1661954/58/5c).
-///   3. Lichtkegel der Straßenlampen (outside_lightbeam_intensity × 1.5, 0x431264) werden zu Ambient und Diffus addiert
-///      – hier nicht, unsere Lampen kommen im Shader über TDU2Lamps dazu.
-///   4. Sättigung (alle drei Farben): c = lerp(Luma(c), c, 1 + car_lighting_saturation), Luma = (0.299, 0.587, 0.114)
-///      (0x14aba84..8c; Hawaii: −0.6 zu jeder Uhrzeit -> 40 % Sättigung).
+/// 0x744990 – Light values per frame for the car (output: Ambient, DirLight diffuse, DirLight specular, direction):
+///   1. Outside: Ambient = sun_ambient, Diffuse = sun_diffuse, Specular = sun_specular (weather, raw – gamma space, no “d − a”).
+///      In a tunnel (factor [+0x2ad0] > 0, World/TunnelLight), the three colors are
+///      blended into tunnel_light_ambient / _diffuse / _specular (0x40b80c lerp, factor = tunnel factor).
+///      In interiors (game modes 3, 0x1d, 0x1e, 8, 0x16, 0x23), the light comes from the scene’s ambient object (not yet ported)
+///   2. For cars (car+0x79a0): Ambient ×= car_sun_ambient_factor, Diffuse ×= car_sun_diffuse_factor,
+///      Specular ×= car_sun_specular_factor (values read from 0x7461f0 -> 0x1661954/58/5c).
+///   3. Light beams from street lamps (outside_lightbeam_intensity × 1.5, 0x431264) are added to ambient and diffuse
+///      – not here; our lamps are added in the shader via TDU2Lamps.
+///   4. Saturation (all three colors): c = lerp(Luma(c), c, 1 + car_lighting_saturation), Luma = (0.299, 0.587, 0.114)
+///      (0x14aba84..8c; Hawaii: −0.6 at all times -> 40% saturation).
 ///
-/// 0x7175a0 – ENVCOEFF der Lack-Materialien je Bild:
-///   t = (1 − Schmutz) · car_envmap_factor   (0x757f70: 1 + car[+0x3b4] · (−1); Schmutz hier 0 = sauberes Auto)
+/// 0x7175a0 – ENVCOEFF for paint materials per frame:
+///   t = (1 − dirt) · car_envmap_factor   (0x757f70: 1 + car[+0x3b4] · (−1); dirt here 0 = clean car)
 ///   TD_CarPaint2: ENVCOEFF = (t · F.z, F.w, F.x, F.y), F = car_fresnel_coeff_power_boost_specular
-///   TD_CarPaint:  ENVCOEFF.x = t (y bleibt der Materialwert)
+///   TD_CarPaint:  ENVCOEFF.x = t (y remains the material value)
 /// </summary>
 public static class CarLighting
-{
-    /// <summary>Schalter aus Game/Config (GraphicsConfig.OriginalCarLight). Aus = bisheriges Unity-Licht am Auto.</summary>
+{    /// <summary>Switch from Game/Config (GraphicsConfig.OriginalCarLight). Off = the car's original Unity light.</summary>
     public static bool Enabled;
 
     /// <summary>
-    /// Lampen-Werte des Wetters für die Lichtsteuerung (exe FUN_00c4e710, Docs OpenTDU2 car_lights_spec §2.2), jedes Bild gelesen:
-    /// car_headlight_flare_intensity (Scheinwerfer, nachts 1), car_poslight_intensity (Positionslicht), car_caustics_intensity
-    /// (Lichtkegel auf dem Boden), car_headlights_intensity. Gelesen von Vehicles/TDU2VehicleLights.
+    /// Weather-related light values for lighting control (exe FUN_00c4e710, Docs OpenTDU2 car_lights_spec §2.2), read from each frame:
+    /// car_headlight_flare_intensity (headlights, 1 at night), car_poslight_intensity (parking lights), car_caustics_intensity
+    /// (light cone on the ground), car_headlights_intensity. Read from Vehicles/TDU2VehicleLights.
     /// </summary>
     public static float HeadlightFlare, PosLight, Caustics, HeadlightsIntensity;
 
     static readonly Vector3 Luma = new(0.299f, 0.587f, 0.114f);
 
     /// <summary>
-    /// Autolicht aus den Wetterwerten berechnen. S = Wetterwert nach Name (mit Vorgabe), wie WorldWeather.Update ihn liest.
+    /// Calculate car headlights based on weather data. S = weather data by name (with default), as read by WorldWeather.Update.
     /// </summary>
     public static CarLightGlobals Compute(Func<string, Vector4, Vector4> S)
     {
@@ -91,7 +88,7 @@ public static class CarLighting
         };
     }
 
-    /// <summary>lerp(Luma(c), c, s) wie 0x40f835 mit dem Grauwert als Vektor.</summary>
+    /// <summary>lerp(Luma(c), c, s) as 0x40f835, using the grayscale value as a vector.</summary>
     static Vector3 Saturate(Vector3 c, float s)
     {
         float l = Vector3.Dot(c, Luma);

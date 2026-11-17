@@ -6,7 +6,7 @@ namespace Paradise.Core.World;
 
 public enum BankKind { Island, Area, Sector, Exterior, Generic }
 
-/// <summary>Eine Objekt-Szene: .3dd (Instanzen/Hierarchie) + .3dg (Geometrie) + .2dm (Materialien). Portiert aus dem Unity-Projekt.</summary>
+/// <summary>An object scene: .3dd (instances/hierarchy) + .3dg (geometry) + .2dm (materials).</summary>
 public sealed class ObjectSet
 {
     public string Name = "";
@@ -14,7 +14,7 @@ public sealed class ObjectSet
     public Geometry3DG? Geo;
     public Material2DM? Materials;
     public readonly Dictionary<ulong, MeshData?> Meshes = new();
-    /// <summary>Platzierungen relativ zum Bank-Ursprung (null = einmal an Identität). Exteriors: aus entities.xmb.</summary>
+    /// <summary>Placements relative to the bank's origin (null = once at identity). Exteriors: from entities.xmb.</summary>
     public List<Matrix4x4>? Placements;
 
     public static ObjectSet Load(BnkArchive bank, BnkEntry e3dd, BnkEntry e3dg, BnkEntry? e2dm, List<string>? log)
@@ -50,11 +50,10 @@ public sealed class ObjectSet
         Scene = null;
     }
 }
-
 /// <summary>
-/// Vollständig geparster Inhalt einer Map-Bank (Insel / Area / Sektor / Spot-Exterior). Portiert aus dem
-/// Unity-Projekt. <see cref="Load"/> ist thread-sicher und läuft im Hintergrund; GPU-Objekte werden danach
-/// von den Buildern im Main-Thread erzeugt.
+/// Fully parsed content of a map bank (Island / Area / Sector / Spot-Exterior). Ported from the
+/// Unity project. <see cref="Load"/> is thread-safe and runs in the background; GPU objects are then
+/// created by the builders on the main thread.
 /// </summary>
 public sealed class BankModel
 {
@@ -67,12 +66,12 @@ public sealed class BankModel
     public HeightGrid? Heights;
     public ulong ColorMapKey, SplatMapKey;
     public MaterialDef? TerrainMaterial;
-    // Objekte (<name>-o.3dd/.3dg/.2dm) oder, bei Exteriors, alle Szenen der Bank
+    // Objects (<name>-o.3dd/.3dg/.2dm) or, for exteriors, all scenes in the bank
     public ObjectSet? Objects;
     public readonly List<ObjectSet> ExtraObjects = new();
-    public PmiFile? Vegetation, Placements, Actors, Rails, Fbank;   // -V, -O, -A, -S (Leitplanken), -F
-    public GrassMap? Grass;   // Grastyp-Karte (.pgr)
-    public List<SoundZone>? SoundZones;   // Klangzonen (.psa, ESDZ/ZONE) für die Umgebungsgeräusche
+    public PmiFile? Vegetation, Placements, Actors, Rails, Fbank;   // -V, -O, -A, -S (guardrails), -F
+    public GrassMap? Grass;   // Grass Type Map (.pgr)
+    public List<SoundZone>? SoundZones;   // Sound zones (.psa, ESDZ/ZONE) for ambient noise
     public readonly LocalTextureSet Textures = new();
     public readonly List<string> Log = new();
 
@@ -151,12 +150,11 @@ public sealed class BankModel
             m.Objects = ObjectSet.Load(bank, odd, odg, odm, m.Log);
         return m;
     }
-
     /// <summary>
-    /// Spot-Exteriors (exterior/*.bnk) enthalten mehrere Szenen mit Hash-Namen. Sie werden wie im Spiel über
-    /// entities.xmb platziert: "Scenery" (Hauptgebäude, am Ursprung des Spots) und "Entity__Actor"/"…ActorShared"
-    /// (Tore, Flugzeug, Pflanzen … mit pos/rot/scale). Die Ressourcen-Hashes werden über hashcodes.xmb auf
-    /// Bankeinträge abgebildet. Ohne entities.xmb: alle "_sc_"-Szenen (Fallback).
+    /// Spot exteriors (exterior/*.bnk) contain multiple scenes with hash names. They are placed as in the game via
+    /// entities.xmb: “Scenery” (main building, at the origin of the spot) and ‘Entity__Actor’/“…ActorShared”
+    /// (gates, airplane, plants … with pos/rot/scale). The resource hashes are mapped to
+    /// bank entries via hashcodes.xmb. Without entities.xmb: all “_sc_” scenes (fallback).
     /// </summary>
     private static void LoadAllScenes(BankModel m, bool loadObjects)
     {
@@ -201,7 +199,7 @@ public sealed class BankModel
         catch (Exception ex) { m.Log.Add(dd.Name + ": " + ex.Message); }
     }
 
-    /// <summary>Interieurs der Spots (Autohäuser, Häuser) mitladen ("ArrayOf_Entity__Actor__Interior").</summary>
+    /// <summary>Load the interiors of the locations (car dealerships, houses) (“ArrayOf_Entity__Actor__Interior”).</summary>
     public static bool IncludeInteriors = true;
 
     private static bool LoadByEntities(BankModel m)
@@ -289,9 +287,9 @@ public sealed class BankModel
     }
 
     /// <summary>
-    /// orient_pos_scale aus entities.xmb. Die Quaternionen sind wie D3D-Matrizen (Zeilenvektoren) abgelegt, d.h. die
-    /// Rotation entspricht der inversen Quaternion (wie im Unity-Projekt, an den Spot-Kameras geprüft).
-    /// Ergebnis in Zeilenvektor-Konvention (Skalierung * Rotation * Translation = Unity TRS transponiert).
+    /// orient_pos_scale from entities.xmb. The quaternions are stored like D3D matrices (row vectors), i.e., the
+    /// rotation corresponds to the inverse quaternion (as verified in the Unity project using the spot cameras).
+    /// Result in row-vector convention (scaling * rotation * translation = transposed Unity TRS).
     /// </summary>
     public static Matrix4x4 EntityMatrix(XmbNode ops)
     {
@@ -310,7 +308,7 @@ public sealed class BankModel
         foreach (var s in ExtraObjects) yield return s;
     }
 
-    /// <summary>Textur aus dieser Bank, sonst aus dem globalen Cache (commonworld). Main-Thread.</summary>
+    /// <summary>Texture from this bank, otherwise from the global cache (commonworld). Main thread.</summary>
     public IGpuTexture? GetTexture(ulong key, TextureWrap u, TextureWrap v, GlobalTextureCache? global, IRenderer r)
     {
         if (key == 0) return null;
