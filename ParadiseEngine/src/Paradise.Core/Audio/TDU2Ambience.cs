@@ -5,13 +5,12 @@ using Paradise.Core.Formats;
 namespace Paradise.Core.Audio;
 
 /// <summary>
-/// Umgebungsgeräusche der Insel (islands/&lt;insel&gt;/sound/ambience/ambiences.xmb + lose *.wav), nach
-/// OpenTDU2 docs/re/ambience_audio_spec.md. Welcher Eintrag spielt, kommt aus den Klangzonen der Sektoren
-/// (Sector-*.psa, siehe <see cref="SoundZonesFile"/>; MapStreamer.AmbienceZoneAt) – der Zonentyp ist die
-/// Environment.TypeID. Tag/Nacht wählt Name_Resource_Day/Night (ohne Nacht-Datei die Tag-Datei),
-/// Wechsel mit 2,5 s Überblendung, Regen als zweite Schicht (Rain[0], Lautstärke über die Kurve).
-/// Wav-Name = &lt;Name_Resource&gt; klein + ".wav" im selben Ordner (spec 1, FUN_00cbf3e0).
-/// Donner: Lightning[] (eclair_*), beim Einschlag ein zufälliger Eintrag (0x657340, siehe <see cref="PlayLightning"/>).
+/// Ambient sounds of the island (islands/&lt;island&gt;/sound/ambience/ambiences.xmb + miscellaneous *.wav)
+/// (Sector-*.psa, see <see cref="SoundZonesFile"/>; MapStreamer.AmbienceZoneAt)—the zone type is the
+/// Environment.TypeID. Day/night is selected by Name_Resource_Day/Night (if no night file, the day file is used),
+/// Transition with a 2.5-second fade, rain as a second layer (Rain[0], volume controlled by the curve).
+/// WAV name = &lt;Name_Resource&gt; in lowercase + “.wav” in the same folder (spec 1, FUN_00cbf3e0).
+/// Thunder: Lightning[] (eclair_*), a random entry upon impact (0x657340, see <cref=“PlayLightning”/>).
 /// </summary>
 public sealed class TDU2Ambience : IDisposable
 {
@@ -23,7 +22,7 @@ public sealed class TDU2Ambience : IDisposable
     }
 
     public const float CrossFade = 2.5f;
-    /// <summary>Gesamtlautstärke der Umgebung (Game/Config/AudioConfig.Ambience).</summary>
+    /// <summary>Overall ambient volume (Game/Config/AudioConfig.Ambience).</summary>
     public float Volume = 0.6f;
 
     readonly string _dir;
@@ -49,7 +48,7 @@ public sealed class TDU2Ambience : IDisposable
 
     TDU2Ambience(string dir, string island) { _dir = dir; Island = island; }
 
-    /// <summary>ambiences.xmb der Insel laden (null, wenn es keine gibt).</summary>
+    /// <summary>Load the island's ambiences.xmb (null if none exists).</summary>
     public static TDU2Ambience? Load(string? bnkDir, string island)
     {
         if (string.IsNullOrEmpty(bnkDir)) return null;
@@ -119,10 +118,9 @@ public sealed class TDU2Ambience : IDisposable
             if (x <= c[i].x) { float t = (x - c[i - 1].x) / MathF.Max(1e-5f, c[i].x - c[i - 1].x); return c[i - 1].y + (c[i].y - c[i - 1].y) * t; }
         return c[^1].y;
     }
-
     /// <summary>
-    /// Jedes Bild. zoneType = MapStreamer.AmbienceZoneAt (-1 = unbekannt, der laufende Eintrag bleibt),
-    /// active = false (Interieur, keine Welt) blendet alles aus.
+    /// Any image. zoneType = MapStreamer.AmbienceZoneAt (-1 = unknown; the current entry remains),
+    /// active = false (interior, no world) hides everything.
     /// </summary>
     public void Update(int zoneType, bool night, float rain, bool active, float dt)
     {
@@ -143,7 +141,6 @@ public sealed class TDU2Ambience : IDisposable
             }
         }
 
-        // kurze Zonenwechsel an Grenzen nicht sofort umschalten (0,5 s gleiche Zone)
         if (key != _curKey && active && _curKey != null && key != null)
         {
             if (key != _pendingKey) { _pendingKey = key; _pendingTime = 0f; }
@@ -168,9 +165,9 @@ public sealed class TDU2Ambience : IDisposable
     }
 
     /// <summary>
-    /// Donner beim Einschlag (Original 0x657340 auf dem Umgebungs-Manager, aufgerufen von WFX_Lightning beim Übergang Stehen →
-    /// Ausblenden): nichts, solange der vorige Donner noch spielt oder die Umgebung aus ist; sonst Eintrag rand() % Anzahl,
-    /// Clip-Abstände 999999/1000000 (also ohne Abschwächung), Lautstärke = Umgebungslautstärke · Eintrag.Volume.
+    /// Thunder upon impact (original 0x657340 in the Environment Manager, called by WFX_Lightning during the transition from Standing →
+    /// Fade Out): nothing as long as the previous thunder is still playing or the environment is off; otherwise, entry rand() % count,
+    /// clip intervals 999999/1000000 (i.e., no attenuation), volume = environment volume · entry.Volume.
     /// </summary>
     public void PlayLightning()
     {

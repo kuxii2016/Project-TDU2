@@ -119,6 +119,8 @@ public enum MaterialKind
     SkyMoon,
     /// <summary>TD_Lightning (World/Lightning): Blitzstreifen, Farbe aus u/v, Alpha = Vertexalpha, additiv SrcAlpha/One (ObjectVertex).</summary>
     Lightning,
+    /// <summary>TDU2/Avatar bzw. TDU2/AvatarBlend (AvBlend) – Avatare: Haut/Kleidung/Textur/Haare/Auge (AvMode), gehäutet auf der CPU (ObjectVertex).</summary>
+    Avatar,
 }
 
 /// <summary>Material-Beschreibung (in Unity: Material + Shader-Properties). Defaults = Shader-Defaults.</summary>
@@ -266,6 +268,21 @@ public sealed class MaterialDesc
     public float MaxAlpha = 0.5f;
     // TDU2/CarShadow (Main = Schattentextur)
     public float Strength = 0.75f;
+
+    // TDU2/Avatar, TDU2/AvatarBlend (Core/Avatars/AvatarMaterials) – Main = SKIN/TEX/HAIR, Detail = DETAIL_GRAIN
+    public bool AvBlend;
+    public float AvMode;                           // _Mode: 0 Haut, 1 Kleidung, 2 Textur, 3 Haare, 4 Auge
+    public IGpuTexture? AvGloss, AvRamp, AvBump, AvLayer1, AvLayer2, AvLayer3;
+    public float AvBrightness = 1f, AvAlphaLum, AvGlossOn, AvRampOn, AvRampScale = 1.5f, AvBumpOn, AvDetailOn, AvOmbre, AvInCar, AvIndoor;
+    public Vector4 AvSkinClr = Vector4.One, AvDclClr = new(0f, 0f, 0f, 1f), AvCoeffs = new(0.5f, 0f, 0.5f, 0f), AvUVScale = new(1f, 1f, 10f, 10f);
+    public Vector4 AvBaseClr = new(0.5f, 0.5f, 0.5f, 1f), AvClrL1 = Vector4.One, AvClrL2 = Vector4.One, AvClrL3 = Vector4.One;
+    public Vector4 AvLayerOn, AvLayerUV = new(1f, 2f, 2f, 0f), AvUVOff, AvBColor = new(1f, 1f, 1f, 0.5f), AvTColor = new(0f, 0f, 0f, 1f);
+    public Vector4 AvPrimClr = new(0f, 0f, 0f, 1f), AvScdClr = Vector4.One, AvSpec = new(0.2f, 8f, 0f, 0f), AvCarInteg = new(0.35f, 0.5f, 1f, 0f), AvAtteFact;
+    /// <summary>Innenraum (Unity _TDU2AvatarIndoor/_TDU2IndoorDir/-Light/-AmbTop/-AmbBottom aus TDU2Interiors.SetAvatarIndoor).</summary>
+    /// <summary>Feinabstimmung (Unity _TDU2AvRampAdd, _TDU2AvRampRow, _TDU2AvAddMix, _TDU2AvAmbAdd; 0 = Original) und _TDU2AvHairSheen.</summary>
+    public Vector4 AvTweak;
+    public float AvHairSheen;
+    public Vector4 AvIndoorDir = new(0.25f, 1f, 0.35f, 0f), AvIndoorLight = new(0.5f, 0.47f, 0.43f, 1f), AvIndoorAmbTop = new(0.46f, 0.44f, 0.41f, 1f), AvIndoorAmbBottom = new(0.2f, 0.19f, 0.18f, 1f);
 
     public MaterialDesc Clone() => (MaterialDesc)MemberwiseClone();
 }

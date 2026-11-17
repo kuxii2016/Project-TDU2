@@ -19,7 +19,7 @@ namespace Paradise.Core.Render.Vulkan;
 public sealed unsafe partial class VulkanRenderer : IRenderer
 {
     private const int MaxFramesInFlight = 2;
-    private const int MaterialUboFloats = 96;                    // 24 x vec4 (TDU2/Car: 24)
+    private const int MaterialUboFloats = 112;                   // 28 x vec4 (TDU2/Car: 24, TDU2/Avatar: 28)
     private static readonly float[] ClearColor = { 0.33f, 0.37f, 0.42f, 1f };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -153,8 +153,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _shadowOnly = new();
     private int _cShadow;
 
-    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning }
-    private const int PipeCount = 33;
+    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning, Avatar, AvatarBlend, ShadowAvatar }
+    private const int PipeCount = 36;
 
     // ------------------------------------------------------------------ Zustand
     private readonly bool _validation;
@@ -563,7 +563,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         bool objectMesh = vm.IsObjectFormat;
         bool objectMat = mat.Kind is MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water
             or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-            or MaterialKind.Lightning;
+            or MaterialKind.Lightning or MaterialKind.Avatar;
         if (mat.Kind == MaterialKind.Overlay) return;
         if (objectMesh != objectMat)
         {
@@ -617,6 +617,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition)));
             return;
         }
+        if (mat.Kind == MaterialKind.Avatar && mat.Blend)
+        {
+            // Unity TDU2/AvatarBlend: Queue "Transparent", ZWrite Off (Augenbrauen, Wimpern, Haar-Strähnen)
+            var p = new Vector3(model.M41, model.M42, model.M43);
+            _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition)));
+            return;
+        }
         _opaque.Add((vm, mat, model));   // gezeichnet in EndFrame (erst Schattenkarten, dann Bild)
     }
 
@@ -634,6 +641,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.Sprite => PipeId.ShadowSprite,
         MaterialKind.Terrain => PipeId.ShadowTerrain,
         MaterialKind.Car => PipeId.ShadowCar,      // TDU2/Car: fullforwardshadows addshadow
+        MaterialKind.Avatar => PipeId.ShadowAvatar,   // TDU2/Avatar: addshadow (AvatarBlend wirft keinen Schatten)
         _ => null,   // Gras, Wasser, Transparent, Overlay: wie im Unity-Projekt ohne Schattenwurf
     };
 
@@ -949,6 +957,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.SkyStars => PipeId.SkyStars,
         MaterialKind.SkyMoon => PipeId.SkyMoon,
         MaterialKind.Lightning => PipeId.Lightning,
+        MaterialKind.Avatar => mat.Blend ? PipeId.AvatarBlend : PipeId.Avatar,
         MaterialKind.Particle => mat.Additive ? PipeId.ParticleAdd : PipeId.Particle,
         MaterialKind.Flare => PipeId.Flare,
         MaterialKind.MapTerrain => PipeId.MapTerrain,
@@ -2004,7 +2013,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.Terrain => _terrainSetLayout,
         MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
             or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-            or MaterialKind.Lightning => _objectSetLayout,
+            or MaterialKind.Lightning or MaterialKind.Avatar => _objectSetLayout,
         _ => _simpleSetLayout,
     };
 
@@ -2015,7 +2024,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MaterialKind.Terrain => _terrainSetLayout,
             MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
                 or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-                or MaterialKind.Lightning => _objectSetLayout,
+                or MaterialKind.Lightning or MaterialKind.Avatar => _objectSetLayout,
             _ => _simpleSetLayout,
         };
         var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _descriptorPool, DescriptorSetCount = 1, PSetLayouts = &layout };
@@ -2039,6 +2048,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon or MaterialKind.Lightning => new[] { T(d.Main, _white), _white, _white, _black, _black, _black },
             MaterialKind.Car or MaterialKind.CarShadow => new[] { T(d.Main, _white), T(d.EmissionTex, _black), T(d.LightMask, _white), T(d.StickerTex, _black), T(d.DirtTex, _black), T(d.FlakeTex, _gray) },   // 5: FLAKE (grau = Flocke 0)
             MaterialKind.CarGlass => new[] { T(d.Main, _white), T(d.EmissionTex, _black), T(d.LightMask, _white), T(d.StickerTex, _black), T(d.DirtTex, _black), T(d.Detail2Tex, _black) },   // 5: DETAIL2 (Original-Glas; schwarz Alpha 0 = ohne)
+            // TDU2/Avatar: Kleidung OCCLUSION, DETAIL_GRAIN, LAYER1..3; sonst SKIN/TEX/HAIR, GLOSSDETAILCUT, SPECTRALSCATTERING, NORMAL
+            MaterialKind.Avatar => d.AvMode > 0.5f && d.AvMode < 1.5f
+                ? new[] { T(d.AvBump, _gray), T(d.Detail, _gray), T(d.AvLayer1, _black), T(d.AvLayer2, _black), T(d.AvLayer3, _black), _white }
+                : new[] { T(d.Main, _white), T(d.AvGloss, _black), T(d.AvRamp, _white), T(d.AvBump, _gray), _black, _black },
             _ => new[] { T(d.Main, _white) },
         };
 
@@ -2130,6 +2143,21 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 SetVec(f, 22, d.TdRampFlake.X, d.TdRampFlake.Y, d.TdRampFlake.Z, d.TdRampFlake.W);   // roh (Gamma-Raum wie das Original)
                 SetVec(f, 23, d.TdFlakeABNS.X, d.TdFlakeABNS.Y, d.TdFlakeABNS.Z, d.TdFlakeABNS.W);
                 break;
+            case MaterialKind.Avatar:
+                // Unity: SetColor-Werte linear (SetCol), SetVector-Werte roh (SetRaw) – TDU2Avatar.shader-Properties
+                SetCol(f, 0, d.Color);
+                SetVec(f, 1, d.AvMode, d.Cutoff, d.AvBrightness, d.AvAlphaLum);
+                SetCol(f, 2, d.AvSkinClr); SetCol(f, 3, d.AvDclClr); SetRaw(f, 4, d.AvCoeffs); SetRaw(f, 5, d.AvUVScale); SetCol(f, 6, d.AvBaseClr);
+                SetCol(f, 7, d.AvClrL1); SetCol(f, 8, d.AvClrL2); SetCol(f, 9, d.AvClrL3);
+                SetVec(f, 10, d.AvLayerOn.X, d.AvLayerOn.Y, d.AvLayerOn.Z, d.AvGlossOn);
+                SetVec(f, 11, d.AvLayerUV.X, d.AvLayerUV.Y, d.AvLayerUV.Z, d.AvRampOn);
+                SetVec(f, 12, d.AvUVOff.X, d.AvUVOff.Y, d.AvOmbre, d.AvBumpOn);
+                SetCol(f, 13, d.AvBColor); SetCol(f, 14, d.AvTColor); SetCol(f, 15, d.AvPrimClr); SetCol(f, 16, d.AvScdClr);
+                SetRaw(f, 17, d.AvSpec); SetRaw(f, 18, d.AvCarInteg); SetRaw(f, 19, d.AvAtteFact);
+                SetVec(f, 20, d.AvInCar, d.AvDetailOn, d.AvRampScale, d.AvIndoor);
+                SetRaw(f, 21, d.AvIndoorDir); SetCol(f, 22, d.AvIndoorLight); SetCol(f, 23, d.AvIndoorAmbTop); SetCol(f, 24, d.AvIndoorAmbBottom);
+                SetRaw(f, 25, d.AvTweak); SetVec(f, 26, d.AvHairSheen, 0f, 0f, 0f);
+                break;
             case MaterialKind.Cloud:
                 SetVec(f, 0, d.CloudWeight, 0f, 0f, 0f);
                 break;
@@ -2178,9 +2206,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         mat.Set = set;
         mat.Additive = (d.Kind == MaterialKind.Transparent || d.Kind == MaterialKind.SpriteGlow || d.Kind == MaterialKind.Particle) && d.Additive;
+        mat.Blend = d.Kind == MaterialKind.Avatar && d.AvBlend;
         mat.WaterSort = d.Kind == MaterialKind.Water && d.Ocean ? (d.OceanLevel >= 2 ? float.MaxValue : d.OceanLevel == 1 ? 3e38f : 2e38f) : float.MaxValue;
     }
 
+    private static void SetCol(float* f, int i, Vector4 c) { var l = ToLin(c); SetVec(f, i, l.X, l.Y, l.Z, c.W); }
+    private static void SetRaw(float* f, int i, Vector4 v) => SetVec(f, i, v.X, v.Y, v.Z, v.W);
     private static void SetVec(float* f, int i, float x, float y, float z, float w)
     {
         f[i * 4] = x; f[i * 4 + 1] = y; f[i * 4 + 2] = z; f[i * 4 + 3] = w;
@@ -2279,6 +2310,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public Silk.NET.Vulkan.Buffer Ubo;
         public GpuAllocator.Allocation UboMem;
         public bool Additive;
+        /// <summary>TDU2/AvatarBlend (Alpha-Blend, ZWrite Off) statt TDU2/Avatar.</summary>
+        public bool Blend;
         /// <summary>Sortierwert in der Transparent-Liste für Wasser (Meer: Insel vor Area vor Sektor).</summary>
         public float WaterSort = float.MaxValue;
         public MaterialKind Kind { get; set; }
@@ -2560,6 +2593,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreatePipeline(c, PipeId.CarGlass, GameShaders.CarVert, GameShaders.CarGlassFrag, _objectSetLayout, true, blend: 4);
         CreatePipeline(c, PipeId.CarShadow, GameShaders.CarVert, GameShaders.CarShadowFrag, _objectSetLayout, true, blend: 5);
         CreatePipeline(c, PipeId.ShadowCar, GameShaders.CarVert, GameShaders.ShadowCarFrag, _objectSetLayout, true, blend: 0, shadow: true);
+        CreatePipeline(c, PipeId.Avatar, GameShaders.AvatarVert, GameShaders.AvatarFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.AvatarBlend, GameShaders.AvatarVert, GameShaders.AvatarBlendFrag, _objectSetLayout, true, blend: 1);
+        CreatePipeline(c, PipeId.ShadowAvatar, GameShaders.AvatarVert, GameShaders.ShadowAvatarFrag, _objectSetLayout, true, blend: 0, shadow: true);
         CreatePipeline(c, PipeId.Skidmark, GameShaders.FxVert, GameShaders.SkidmarkFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.Cloud, GameShaders.CloudVert, GameShaders.CloudFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.SkyStars, GameShaders.SkyStarsVert, GameShaders.SkyStarsFrag, _objectSetLayout, true, blend: 1);

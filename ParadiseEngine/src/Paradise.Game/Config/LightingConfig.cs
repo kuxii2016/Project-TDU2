@@ -103,6 +103,38 @@ public sealed class LightingConfig
         };
     }
 
+    // ---------------- Avatare (Unity TDU2Interiors.AvatarIndoor* und Entwicklermenü-Feinabstimmung des Avatar-Shaders, 0 = Original)
+    /// <summary>Avatare im Interieur: Deckenlicht statt Sonne (Farbe rgb, Richtung) und Umgebung oben/unten (Unity-Inspektorwerte).</summary>
+    /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,5/0,47/0,43).</summary>
+    public float[] AvatarIndoorLight { get; set; } = { 0.738f, 0.694f, 0.635f };
+    public float[] AvatarIndoorDir { get; set; } = { 0.25f, 1f, 0.35f };
+    /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,46/0,44/0,41).</summary>
+    public float[] AvatarIndoorAmbTop { get; set; } = { 0.725f, 0.696f, 0.653f };
+    public float[] AvatarIndoorAmbBottom { get; set; } = { 0.2f, 0.19f, 0.18f };
+    /// <summary>Hautton-Rampe + Verstärkung, Zeile der Rampe (0 = COEFFS.z), Umgebung auf der Lichtseite, zusätzliches Umgebungslicht, Haarglanz.</summary>
+    public float AvatarRampAdd { get; set; } = 0f;
+    public float AvatarRampRow { get; set; } = 0f;
+    public float AvatarAddMix { get; set; } = 0f;
+    public float AvatarAmbientAdd { get; set; } = 0f;
+    public float AvatarHairSheen { get; set; } = 0f;
+
+    /// <summary>Avatar-Licht übertragen (Core/Avatars/AvatarLight).</summary>
+    public void ApplyAvatars()
+    {
+        static Vector4 V(float[] a) => new(a.Length > 0 ? a[0] : 0f, a.Length > 1 ? a[1] : 0f, a.Length > 2 ? a[2] : 0f, 1f);
+        var dir = V(AvatarIndoorDir); dir.W = 0f;
+        Paradise.Core.Avatars.AvatarLight.IndoorDir = dir;
+        Paradise.Core.Avatars.AvatarLight.IndoorLight = V(AvatarIndoorLight);
+        Paradise.Core.Avatars.AvatarLight.IndoorAmbTop = V(AvatarIndoorAmbTop);
+        Paradise.Core.Avatars.AvatarLight.IndoorAmbBottom = V(AvatarIndoorAmbBottom);
+        Paradise.Core.Avatars.AvatarLight.RampAdd = AvatarRampAdd;
+        Paradise.Core.Avatars.AvatarLight.RampRow = AvatarRampRow;
+        Paradise.Core.Avatars.AvatarLight.AddMix = AvatarAddMix;
+        Paradise.Core.Avatars.AvatarLight.AmbAdd = AvatarAmbientAdd;
+        Paradise.Core.Avatars.AvatarLight.HairSheen = AvatarHairSheen;
+        Paradise.Core.Avatars.AvatarLight.Changed();
+    }
+
     /// <summary>Wetter-Einstellungen übertragen (DiffuseScale/AmbientScale gelten auch für die Wetterwerte).</summary>
     public void ApplyTo(WorldWeather w)
     {

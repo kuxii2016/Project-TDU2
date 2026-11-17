@@ -150,19 +150,17 @@ public sealed class PauseMenu
         if (!typing)
         {
             // Menü-Belegung (Game/Config/KeyConfig.cs, Unity TDU2Controls "menu_*")
-            if (TDU2Controls.Pressed("menu_up")) ui.Input("Move", "up");
-            if (TDU2Controls.Pressed("menu_down")) ui.Input("Move", "down");
-            if (TDU2Controls.Pressed("menu_left")) ui.Input("Move", "left");
-            if (TDU2Controls.Pressed("menu_right")) ui.Input("Move", "right");
+            // Tasten-Buttons des Films zuerst, sonst Move (Gamemodes/Utils/FlashNav, wie der Flash Player des Spiels)
+            FlashNav.Directions(ui);
         }
         // Texteingabe: nur Enter bestätigt (Buchstaben gehören dem Textfeld), sonst die belegbare Bestätigungstaste
-        if (typing ? _ctx.Pressed(VK_RETURN) : TDU2Controls.ConfirmPressed()) ui.Input("A");
+        if (typing ? _ctx.Pressed(VK_RETURN) : TDU2Controls.ConfirmPressed()) FlashNav.Send(ui, FlashKey.Confirm);
         bool esc = _ctx.Pressed(VK_ESCAPE);
         bool back = !typing && TDU2Controls.BackPressed();
         if (esc || back)
         {
             // Zurück; reagiert der Film nicht (keine B-Funktion), Menü direkt schließen – nie im Pausenzustand hängen bleiben
-            if (!ui.Input("B")) { Log.Info("Pausemenü: B nicht verarbeitet -> schließen"); Close(); return; }
+            if (!FlashNav.Send(ui, FlashKey.Back)) { Log.Info("Pausemenü: B nicht verarbeitet -> schließen"); Close(); return; }
             if (esc) _escAt = _clock;
         }
         // ESC im Hauptmenü muss nach der Schließ-Animation "paou" liefern; blockiert der Film, trotzdem schließen
@@ -174,8 +172,8 @@ public sealed class PauseMenu
             if (!string.Equals(inOpt, "true", StringComparison.OrdinalIgnoreCase) && inOpt != "1") { Log.Info("Pausemenü: ESC ohne paou -> schließen"); Close(); }
         }
         if (_ctx.Pressed(VK_F10)) Close();   // Notausgang
-        if (!typing && TDU2Controls.Pressed("menu_opt1")) ui.Input("X");
-        if (!typing && TDU2Controls.Pressed("menu_opt2")) ui.Input("Y");
+        if (!typing && FlashNav.Pressed(FlashKey.X)) FlashNav.Send(ui, FlashKey.X);
+        if (!typing && FlashNav.Pressed(FlashKey.Y)) FlashNav.Send(ui, FlashKey.Y);
     }
 
     // ------------------------------------------------------------------ FSCommands

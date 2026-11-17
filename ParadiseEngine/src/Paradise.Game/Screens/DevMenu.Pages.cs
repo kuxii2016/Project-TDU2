@@ -45,7 +45,7 @@ public sealed partial class DevMenu
         PhBool("Input overlay (axes, pedals, buttons)", false),
 
         Head("PLAYER & ONLINE"),
-        PhMenu("Avatar", "Avatars are not ported yet"),
+        Menu("Avatar", AvatarMenu),
         Menu("Network", NetworkMenu),
         Menu("Savegame / Profile / Money", SavegameMenu),
 

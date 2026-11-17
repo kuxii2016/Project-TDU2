@@ -55,11 +55,23 @@ public abstract partial class InteriorUtils
             float ly = look.LengthSquared() > 1e-9f ? Vector3.Normalize(look).Y : 0f;
             _pitch = Math.Clamp(-MathF.Asin(Math.Clamp(ly, -1f, 1f)) * 180f / MathF.PI, -60f, 60f);
             _vy = 0f;
+            _settle = true;
         }
+
+        /// <summary>Nach Place: Unity CharacterController drückt die Kapsel beim Einschalten aus dem Boden heraus. Liegt der Boden
+        /// zwischen Füßen und Augen (cam_entree in ias_d: Auge 1,65 m über y 3,54, Boden 3,99), stehen die Füße danach auf ihm –
+        /// sonst begann der Bodenstrahl (Füße + 0,40 m) unter dem Boden und man fiel durch.</summary>
+        bool _settle;
 
         public void Update(float dt, InputState input, PhysicsWorld? phys)
         {
             if (dt <= 0f) return;
+            if (_settle && phys != null)
+            {
+                _settle = false;
+                if (phys.Raycast(Feet + Vector3.UnitY * EyeHeight, -Vector3.UnitY, EyeHeight + 0.05f, out var top) && top.Distance < EyeHeight)
+                    Feet.Y = Feet.Y + EyeHeight - top.Distance;
+            }
             if (LookEnabled)
             {
                 // Unity: Input.GetAxis("Mouse X/Y") ≈ Pixel x 0,1

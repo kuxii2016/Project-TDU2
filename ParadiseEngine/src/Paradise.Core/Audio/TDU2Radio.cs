@@ -9,18 +9,17 @@ using System.Text;
 
 namespace Paradise.Core.Audio;
 
-/// <summary>Sender des Autoradios (Unity enum RadioStation, Reihenfolge = Ziffernblock 4/6).</summary>
 public enum RadioStation { off = 0, hariba, roadtrack, kalua }
 
 /// <summary>
-/// Car Radio:
-///  - Hariba / RoadRock: Original stations from Euro/Bnk/sound/radio (db_data.cpr: DBRadioStation/DBRadioMessage, setup.xmb).
-///    Online (radio time from the server), the deterministic playlist runs synchronously for all players; offline, it plays randomly.
-///  - Kalua: Custom MP3 files from SharedAssets/Radio next to the exe.
-///  - Display in the HUD (hud.bnk /HUD/radio): Logo,Station name, artist/song title as scrolling text, volume.
-/// Buttons control the game screen (Paradise.Game): <see cref="Toggle"/>, <see cref="ChangeStation"/>, <see cref="ChangeVolume"/>.
-/// The station and volume are stored in the game save file (original DATA RadioOptions, <see cref="ApplySaved"/>/<see cref="SavedStation"/>);
-/// If there is no game save file, the default values from Game/Config/AudioConfig apply.
+/// Autoradio:
+///  - Hariba / RoadRock: Original-Sender aus Euro/Bnk/sound/radio (db_data.cpr: DBRadioStation/DBRadioMessage, setup.xmb).
+///    Online (Sendezeit vom Server) läuft die deterministische Wiedergabeliste für alle Spieler synchron; offline wird zufällig abgespielt.
+///  - Kalua: Benutzerdefinierte MP3-Dateien aus dem Ordner „SharedAssets/Radio“ neben der EXE-Datei.
+///  - Anzeige im HUD (hud.bnk /HUD/radio): Logo, Sendername, Interpret/Songtitel als Lauftext, Lautstärke.
+/// Schaltflächen steuern den Spielbildschirm (Paradise.Game): <see cref="Toggle"/>, <see cref="ChangeStation"/>, <see cref="ChangeVolume"/>.
+/// Der Sender und die Lautstärke werden in der Spielspeicherdatei gespeichert (ursprüngliche DATA RadioOptions, <see cref="ApplySaved"/>/<see cref="SavedStation"/>);
+/// Wenn keine Spielspeicherdatei vorhanden ist, gelten die Standardwerte aus Game/Config/AudioConfig.
 /// </summary>
 public sealed class TDU2Radio
 {
@@ -76,13 +75,11 @@ public sealed class TDU2Radio
 
     string _currentTitle = "", _currentArtist = "";
     int _titleScrollOffset, _artistScrollOffset;
-    /// <summary>Laufender Titel/Interpret (Entwicklermenü F1 > Audio).</summary>
     public string CurrentTitle => _currentTitle;
     public string CurrentArtist => _currentArtist;
 
     sealed class RadioTrack { public string FilePath = "", Title = "", Artist = ""; }
 
-    /// <summary>Unity Start(): Instance, MP3 folder, radio data in the background.</summary>
     public TDU2Radio(string? bnkDir)
     {
         Instance = this;
@@ -101,7 +98,6 @@ public sealed class TDU2Radio
         _radioDataTask = Task.Run(() => TDU2RadioData.Load(dir));
     }
 
-    /// <summary>Unity SetHudPlayer: Load the hud.bnk minimap and display the radio within it.</summary>
     public void SetHudPlayer(VmfPlayer? hud)
     {
         if (ReferenceEquals(_hud, hud)) return;
@@ -129,7 +125,6 @@ public sealed class TDU2Radio
         _tracksLoaded = true;
     }
 
-    /// <summary>Radio muted (interiors/driving school: the spot sound plays there). The station continues to play.</summary>
     public bool Muted
     {
         get => _muted;
@@ -144,7 +139,6 @@ public sealed class TDU2Radio
         _radioSource.Volume = _muted ? 0f : System.Math.Clamp(CurrentVolume / 10f, 0f, 1f);
     }
 
-    /// <summary>Update() without button detection (the game page handles this via Toggle/ChangeStation/ChangeVolume).</summary>
     public void Update(float dt)
     {
         _time += dt;
@@ -162,7 +156,6 @@ public sealed class TDU2Radio
         if (_hud != null && _isOpen && (DateTime.Now - LastStationChange).TotalSeconds > 5) { _isOpen = false; ChangeRadio(); }
     }
 
-    /// <summary>Keypad 5: Display on/off.</summary>
     public void Toggle()
     {
         _isOpen = !_isOpen;

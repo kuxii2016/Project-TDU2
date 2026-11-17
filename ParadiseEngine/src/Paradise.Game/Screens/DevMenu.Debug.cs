@@ -1,4 +1,5 @@
 using Paradise.Core.Audio;
+using Paradise.Core.Avatars;
 using Paradise.Core.Flash;
 using Paradise.Core.Online;
 using Paradise.Core.Savegame;
@@ -55,6 +56,138 @@ public sealed partial class DevMenu
         IslandTravel.Go(island, true, Mgr?.CurrentCar?.FileName, arrival);
         Toast("Flight to " + IslandTravel.DisplayName(island));
         Close();
+    }
+
+    // ------------------------------------------------------------------ Avatare (Unity AvatarMenu / ClothesMenu)
+    static readonly string[] SexNames = { "Male", "Female" };
+    static readonly string[] EthNames = { "European", "Asian", "African" };
+    static readonly (ClothePart part, string name)[] AvatarParts =
+    {
+        (ClothePart.Hair, "Hair"), (ClothePart.Top, "Top"), (ClothePart.Bottom, "Trousers / skirt"),
+        (ClothePart.Dress, "Dress"), (ClothePart.Shoes, "Shoes"), (ClothePart.Helmet, "Hat / helmet"),
+        (ClothePart.Glasses, "Glasses"), (ClothePart.Gloves, "Gloves"), (ClothePart.Beard, "Beard"),
+        (ClothePart.Accessories, "Accessories"), (ClothePart.Belt, "Belt"),
+    };
+    List<string>? _clipNames;
+
+    static AvatarConfig Cfg => AvatarConfigs.Local;
+    static void SetCfg(AvatarConfig c) => AvatarConfigs.SetLocal(c);
+
+    static Item LightFloat(string label, Func<float> get, Action<float> set, float step, float min, float max, float def) =>
+        Float(label, get, v => { set(v); AvatarLight.Changed(); }, step, min, max, def, "0.00");
+
+    static float Gray(System.Numerics.Vector4 c) => c.X * 0.299f + c.Y * 0.587f + c.Z * 0.114f;
+
+    List<Item> AvatarMenu()
+    {
+        var l = new List<Item>();
+        if (!AvatarLibrary.Ready) { l.Add(Info("Avatar data not loaded yet (database)")); return l; }
+        l.Add(Head("OWN AVATAR"));
+        l.Add(Table("Model (sex)", SexNames, () => Cfg.Sex, v => { var c = AvatarConfig.Default(v); c.Ethnic = Cfg.Ethnic; SetCfg(c); Toast("Model: " + SexNames[v]); }, 0));
+        l.Add(Table("Ethnicity (head, skin)", EthNames, () => Cfg.Ethnic, v => { var c = Cfg; c.Ethnic = v; SetCfg(c); }, 0));
+        l.Add(Menu("Clothes", ClothesMenu));
+        l.Add(Action_("Default look", () => { var c = AvatarConfig.Default(Cfg.Sex); c.Ethnic = Cfg.Ethnic; SetCfg(c); Toast("Default look"); }));
+        l.Add(Info("Encoded", () => { var s = AvatarConfigs.LocalCode ?? "-"; return s.Length > 60 ? s.Substring(0, 60) + "…" : s; }));
+        l.Add(Head("DISPLAY"));
+        l.Add(Bool("Show drivers", () => CarAvatar.ShowDrivers, v => CarAvatar.ShowDrivers = v, true));
+        l.Add(Bool("Show passengers", () => CarAvatar.ShowPassengers, v => CarAvatar.ShowPassengers = v, true));
+        l.Add(Bool("NPCs in interiors", () => InteriorNpcs.Show, v => InteriorNpcs.Show = v, true));
+        l.Add(Bool("Hide head in cockpit view", () => CarAvatar.All.Count == 0 || CarAvatar.All[0].HideHeadInCockpit,
+            v => { foreach (var a in CarAvatar.All) a.HideHeadInCockpit = v; }, true));
+        l.Add(Head("SHADER (fine tuning, 0 = original; defaults: Game/Config/LightingConfig.cs)"));
+        l.Add(LightFloat("Skin ramp + boost", () => AvatarLight.RampAdd, v => AvatarLight.RampAdd = v, 0.05f, -1.5f, 2f, 0f));
+        l.Add(LightFloat("Skin ramp row (0 = COEFFS.z)", () => AvatarLight.RampRow, v => AvatarLight.RampRow = v, 0.05f, 0f, 1f, 0f));
+        l.Add(LightFloat("Ambient on lit side (0 = original)", () => AvatarLight.AddMix, v => AvatarLight.AddMix = v, 0.05f, 0f, 1f, 0f));
+        l.Add(LightFloat("Extra ambient light", () => AvatarLight.AmbAdd, v => AvatarLight.AmbAdd = v, 0.02f, -0.5f, 1f, 0f));
+        l.Add(LightFloat("Extra hair sheen", () => AvatarLight.HairSheen, v => AvatarLight.HairSheen = v, 0.05f, -0.33f, 1f, 0f));
+        l.Add(LightFloat("Indoor: ceiling light", () => Gray(AvatarLight.IndoorLight), v => AvatarLight.IndoorLight = new(v, v * 0.94f, v * 0.86f, 1f), 0.02f, 0f, 2f, 0.47f));
+        l.Add(LightFloat("Indoor: ambient top", () => Gray(AvatarLight.IndoorAmbTop), v => AvatarLight.IndoorAmbTop = new(v, v * 0.96f, v * 0.9f, 1f), 0.02f, 0f, 2f, 0.44f));
+        l.Add(LightFloat("Indoor: ambient bottom", () => Gray(AvatarLight.IndoorAmbBottom), v => AvatarLight.IndoorAmbBottom = new(v, v * 0.95f, v * 0.9f, 1f), 0.02f, 0f, 2f, 0.19f));
+        l.Add(Head("ANIMATION"));
+        _clipNames ??= AvatarLibrary.ClipNames();
+        var clips = _clipNames;
+        l.Add(new Item
+        {
+            Label = "Clip (avatarsdriver.bnk)",
+            Value = () => string.IsNullOrEmpty(CarAvatar.DebugClip) ? "Seated pose (normal)" : CarAvatar.DebugClip!,
+            Change = d =>
+            {
+                int i = clips.IndexOf(CarAvatar.DebugClip ?? "");
+                int n = clips.Count + 1;   // -1 = normal
+                i = ((i + 1 + d) % n + n) % n - 1;
+                CarAvatar.DebugClip = i < 0 ? null : clips[i];
+            },
+            Reset = () => CarAvatar.DebugClip = null,
+        });
+        l.Add(Float("Playback speed", () => CarAvatar.DebugSpeed, v => CarAvatar.DebugSpeed = v, 0.1f, 0f, 4f, 1f, "0.0", "x"));
+        l.Add(Bool("IK hands/feet (wheel, pedals)", () => CarAvatar.DebugIK, v => CarAvatar.DebugIK = v, true));
+        l.Add(Head("INFO / ACTIONS"));
+        l.Add(Info("Avatars in cars / NPCs", () => CarAvatar.All.Count + " / " + InteriorNpcs.Npcs.Count));
+        l.Add(Info("Clips in avatarsdriver.bnk", () => clips.Count.ToString(Inv)));
+        l.Add(Action_("Rebuild all avatars", () =>
+        {
+            foreach (var a in CarAvatar.All.ToArray())
+            {
+                var code = a.ConfigCode?.Invoke();
+                a.Rebuild(AvatarConfig.Decode(code) ?? a.Avatar?.Config ?? Cfg);
+            }
+            Toast("Avatars rebuilt");
+        }));
+        return l;
+    }
+
+    static List<ClotheInfo> PartItems(ClothePart part, int sex)
+    {
+        var res = new List<ClotheInfo>();
+        foreach (var c in AvatarLibrary.AllClothes)
+            if (c.Part == part && c.Valid && !c.IsNothing && (sex == 1 ? c.ForWoman : c.ForMan) && AvatarLibrary.HasBank(c)) res.Add(c);
+        res.Sort((a, b) => string.CompareOrdinal(a.File, b.File));
+        return res;
+    }
+
+    List<Item> ClothesMenu()
+    {
+        var l = new List<Item> { Head("CLOTHES  (Left/Right item · Shift x10 · Delete = remove)") };
+        int sex = Cfg.Sex;
+        foreach (var (part, name) in AvatarParts)
+        {
+            var p = part;
+            if (p == ClothePart.Dress && sex != 1) continue;
+            if (p == ClothePart.Beard && sex == 1) continue;
+            var list = PartItems(p, sex);
+            if (list.Count == 0) continue;
+            l.Add(new Item
+            {
+                Label = name + "  (" + list.Count + ")",
+                Value = () => Cfg.Worn(p)?.File ?? "-",
+                Change = d =>
+                {
+                    var c = Cfg; var w = c.Worn(p);
+                    int i = w != null ? list.IndexOf(w) : -1;
+                    int n = list.Count + 1;   // -1 = nichts
+                    i = ((i + 1 + d) % n + n) % n - 1;
+                    c.Remove(p);
+                    if (i >= 0) c.Set(list[i], 0);
+                    SetCfg(c);
+                },
+                Reset = () => { var c = Cfg; c.Remove(p); SetCfg(c); },
+            });
+            l.Add(new Item
+            {
+                Label = "    Colour",
+                Value = () => { var w = Cfg.Worn(p); return w != null ? (Cfg.ColorOf(w.Hash) + 1) + " / " + Math.Max(1, w.NbColors) : "-"; },
+                Change = d =>
+                {
+                    var c = Cfg; var w = c.Worn(p);
+                    if (w == null) return;
+                    int n = Math.Max(1, w.NbColors);
+                    int col = ((c.ColorOf(w.Hash) + Math.Sign(d)) % n + n) % n;
+                    c.Set(w, col); SetCfg(c);
+                },
+                Reset = () => { var c = Cfg; var w = c.Worn(p); if (w != null) { c.Set(w, 0); SetCfg(c); } },
+            });
+        }
+        return l;
     }
 
     // ------------------------------------------------------------------ GPS / Lesezeichen (Unity GpsMenu)

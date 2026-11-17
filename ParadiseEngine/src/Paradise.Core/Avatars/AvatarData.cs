@@ -1,0 +1,523 @@
+using Paradise.Core.Diagnostics;
+using Paradise.Core.Formats;
+using Paradise.Core.Online;
+using Paradise.Core.Render;
+using Paradise.Core.World;
+using System.Globalization;
+using System.Numerics;
+using System.Text;
+
+namespace Paradise.Core.Avatars;
+
+/// <summary>DBClothe._parttype</summary>
+public enum ClothePart { None = 0, Bottom = 1, Glasses = 2, Hair = 3, Gloves = 4, Helmet = 5, Shoes = 6, Top = 7, Dress = 8, Beard = 9, Accessories = 10, Belt = 11 }
+/// <summary>A clothing item from DBClothe (db_data.cpr). Ported from Unity Avatars/AvatarData.cs.</summary>
+public sealed class ClotheInfo
+{
+    public int Hash, IdNum, Sex, Price, NbColors, Brand, SubBrand, SortIndex, MinAreaLevel, NameHc, HairCutStyle, DrivingType;
+    public ClothePart Part;
+    public string File = "";
+    public bool Valid, Dlc, PreOrder;
+    /// <summary>Körperteile, die sichtbar bleiben (false = verdeckt). Namen wie die DBClothe-Felder ohne "_".</summary>
+    public readonly Dictionary<string, bool> Visible = new(StringComparer.OrdinalIgnoreCase);
+    public bool IsNothing => File.IndexOf("_NO_", StringComparison.OrdinalIgnoreCase) >= 0;
+    public bool ForMan => Sex != 1;
+    public bool ForWoman => Sex != 2;
+    public override string ToString() => $"{File} ({Part}, #{Hash})";
+}
+
+/// <summary>
+/// Avatar appearance: gender, origin (skin/head), and a DBClothe hash code with color for each part.
+/// Can be encoded compactly as text (game state, server player list): “a1;Gender;Origin;Hash:Color,Hash:Color,…[;eEye,Eyebrow[,r,g,b]]”.
+/// </summary>
+public sealed class AvatarConfig
+{
+    public int Sex;        // 0 Mann, 1 Frau
+    public int Ethnic;     // 0 occidental, 1 asiatisch, 2 afrikanisch (Kopf und Hautfarbe)
+    public List<int> Items = new();
+    public List<int> Colors = new();
+    /// <summary>Gesicht aus der .avt (AvatarConfiguration): EyeID (Zelle des 5x5-Iris-Atlas), EyebrowsID (Zelle des 2x4-Brauen-Atlas),
+    /// EyebrowsColor. -1 / Alpha &lt; 0 = nicht gesetzt (Material-Vorgabe).</summary>
+    public int EyeId = -1, BrowId = -1;
+    public Vector4 BrowColor = new(0f, 0f, 0f, -1f);
+    public bool HasBrowColor => BrowColor.W >= 0f;
+
+    public string Encode()
+    {
+        var ic = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder("a1;");
+        sb.Append(Sex).Append(';').Append(Ethnic).Append(';');
+        for (int i = 0; i < Items.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(Items[i].ToString(ic)).Append(':').Append((i < Colors.Count ? Colors[i] : 0).ToString(ic));
+        }
+        if (EyeId >= 0 || BrowId >= 0 || HasBrowColor)
+        {
+            sb.Append(";e").Append(EyeId.ToString(ic)).Append(',').Append(BrowId.ToString(ic));
+            if (HasBrowColor) sb.Append(',').Append(BrowColor.X.ToString("0.###", ic)).Append(',').Append(BrowColor.Y.ToString("0.###", ic)).Append(',').Append(BrowColor.Z.ToString("0.###", ic));
+        }
+        return sb.ToString();
+    }
+
+    public static AvatarConfig? Decode(string? s)
+    {
+        if (string.IsNullOrEmpty(s) || !s.StartsWith("a1;", StringComparison.Ordinal)) return null;
+        var parts = s.Split(';');
+        if (parts.Length < 3) return null;
+        var ic = CultureInfo.InvariantCulture;
+        var c = new AvatarConfig();
+        int.TryParse(parts[1], NumberStyles.Integer, ic, out c.Sex);
+        int.TryParse(parts[2], NumberStyles.Integer, ic, out c.Ethnic);
+        c.Sex = System.Math.Clamp(c.Sex, 0, 1); c.Ethnic = System.Math.Clamp(c.Ethnic, 0, 2);
+        if (parts.Length > 3 && parts[3].Length > 0)
+            foreach (var it in parts[3].Split(','))
+            {
+                var kv = it.Split(':');
+                if (kv.Length < 1 || !int.TryParse(kv[0], NumberStyles.Integer, ic, out int h)) continue;
+                int col = 0;
+                if (kv.Length > 1) int.TryParse(kv[1], NumberStyles.Integer, ic, out col);
+                c.Items.Add(h); c.Colors.Add(col);
+            }
+        if (parts.Length > 4 && parts[4].StartsWith("e", StringComparison.Ordinal))
+        {
+            var f = parts[4].Substring(1).Split(',');
+            if (f.Length > 0) int.TryParse(f[0], NumberStyles.Integer, ic, out c.EyeId);
+            if (f.Length > 1) int.TryParse(f[1], NumberStyles.Integer, ic, out c.BrowId);
+            if (f.Length > 4 && float.TryParse(f[2], NumberStyles.Float, ic, out float r) && float.TryParse(f[3], NumberStyles.Float, ic, out float g)
+                && float.TryParse(f[4], NumberStyles.Float, ic, out float b))
+                c.BrowColor = new Vector4(r, g, b, 1f);
+        }
+        return c;
+    }
+
+    public AvatarConfig Clone() => Decode(Encode()) ?? new AvatarConfig { Sex = Sex, Ethnic = Ethnic };
+
+    /// <summary>Set a piece (replaces an existing piece of the same type).</summary>
+    public void Set(ClotheInfo? item, int color)
+    {
+        if (item == null) return;
+        for (int i = Items.Count - 1; i >= 0; i--)
+            if (AvatarLibrary.Clothe(Items[i])?.Part == item.Part) { Items.RemoveAt(i); if (i < Colors.Count) Colors.RemoveAt(i); }
+        Items.Add(item.Hash); Colors.Add(System.Math.Clamp(color, 0, System.Math.Max(0, item.NbColors - 1)));
+    }
+
+    /// <summary>Remove a part of a type.</summary>
+    public void Remove(ClothePart part)
+    {
+        for (int i = Items.Count - 1; i >= 0; i--)
+            if (AvatarLibrary.Clothe(Items[i])?.Part == part) { Items.RemoveAt(i); if (i < Colors.Count) Colors.RemoveAt(i); }
+    }
+
+    /// <summary>An instance of a type (or null).</summary>
+    public ClotheInfo? Worn(ClothePart part)
+    {
+        foreach (int h in Items) { var c = AvatarLibrary.Clothe(h); if (c != null && c.Part == part) return c; }
+        return null;
+    }
+
+    public int ColorOf(int hash) { int i = Items.IndexOf(hash); return i >= 0 && i < Colors.Count ? Colors[i] : 0; }
+
+    /// <summary>Default appearance (streetwear like a new player, Brad or Miami hairstyle).</summary>
+    public static AvatarConfig Default(int sex = 0)
+    {
+        var c = new AvatarConfig { Sex = sex, Ethnic = 0 };
+        string[] files = sex == 0
+            ? new[] { "M_HR_R_Brad", "M_SW_T_ShortSleeves_Long_01", "M_SW_B_Pant_00", "M_SW_S_Shoes_00" }
+            : new[] { "W_HR_R_Miami", "W_SW_T_ShortSleeves_Long_01a", "W_SW_B_Pant_00", "W_SW_S_Shoes_Low_01" };
+        foreach (var f in files) { var ci = AvatarLibrary.ClotheByFile(f); if (ci != null) { c.Items.Add(ci.Hash); c.Colors.Add(0); } }
+        return c;
+    }
+}
+
+/// <summary>CPU data for an avatar part (body, head, clothing item), read in the background.</summary>
+public sealed class AvatarPartData
+{
+    public string Name = "";
+    public readonly List<SkinPrim> Prims = new();
+    public readonly List<MaterialDef?> PrimMaterials = new();
+    public readonly LocalTextureSet Textures = new();
+    public bool HasHairColor;
+    public Vector4 HairPrim, HairScd;
+}
+
+/// <summary>
+/// Core avatar data: DBClothe/DBPNJ, bank index avatar/clothes/collection/file.bnk, shared textures
+/// (common_bodies.bnk, clothes/common_clothes.bnk), skeletons and animations (scenarics/avatars/avatarsdriver.bnk).
+/// </summary>
+public static class AvatarLibrary
+{
+    public static string? BnkDir { get; private set; }
+    public static bool Ready => _clothes != null;
+    static Dictionary<int, ClotheInfo>? _clothes;
+    static readonly Dictionary<string, ClotheInfo> _byFile = new(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, string> _bankByStem = new(StringComparer.OrdinalIgnoreCase);
+    static readonly object _lock = new();
+    public static GlobalTextureCache? CommonTextures { get; private set; }
+    static readonly Dictionary<int, XsbSkeleton?> _skel = new();
+    static readonly Dictionary<string, AnmClip?> _clips = new(StringComparer.OrdinalIgnoreCase);
+    static BnkArchive? _bodies, _anims;
+    static readonly Dictionary<string, (AvatarConfig cfg, string name)> _pnj = new(StringComparer.OrdinalIgnoreCase);
+    static readonly string[] PnjSlots = { "hair", "top", "bottom", "gloves", "shoes", "glasses", "helmet", "dress", "beard", "accessories" };
+
+    /// <summary>Character appearance (DBPNJ._configid, e.g., “SPT_Clothes_Seller04”); null = unknown.</summary>
+    public static AvatarConfig? PnjConfig(string? configId)
+    {
+        if (configId == null || !_pnj.TryGetValue(configId, out var p)) return null;
+        var c = p.cfg.Clone();
+        ApplyAvt(c, configId);
+        return c;
+    }
+
+    static Dictionary<string, byte[]>? _avt;
+    static readonly Dictionary<string, string> _pnjFile = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Character's face from avatar/config/pnj.bnk configid.avt (variants such as “STO_Tess_Wintory” -> “STO_Tess”).
+    /// Format (AvatarConfiguration): u16 root key, followed by entries {u16 length (including key), u16 key, data} in big-endian order.
+    /// Keys: 0xCD26 BodyID (gender = %2, origin = /2), 0x82B9 EyeID, 0xC881 EyebrowsID, 0xC643 EyebrowsColor (float4).
+    /// </summary>
+    static void ApplyAvt(AvatarConfig c, string configId)
+    {
+        byte[]? d;
+        lock (_lock)
+        {
+            if (_avt == null)
+            {
+                _avt = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var path = Path.Combine(BnkDir ?? "", "avatar", "config", "pnj.bnk");
+                    var b = File.Exists(path) ? BnkArchive.Open(path) : null;
+                    if (b != null) foreach (var e in b.All(".avt")) _avt[Path.GetFileNameWithoutExtension(e.Name)] = b.Read(e);
+                }
+                catch (Exception ex) { Log.Warn("pnj.bnk: " + ex.Message); }
+            }
+            string id = _pnjFile.TryGetValue(configId, out var file) ? Path.GetFileNameWithoutExtension(file) : configId;
+            if (!_avt.TryGetValue(id, out d)) id = configId;
+            while (!_avt.TryGetValue(id, out d))
+            {
+                int u = id.LastIndexOf('_');
+                if (u < 4) break;
+                id = id.Substring(0, u);
+            }
+        }
+        if (d == null || d.Length < 6) return;
+        int BE16(int o) => (d[o] << 8) | d[o + 1];
+        float BEF(int o) => BitConverter.ToSingle(new[] { d[o + 3], d[o + 2], d[o + 1], d[o] }, 0);
+        for (int p = 2; p + 4 <= d.Length;)
+        {
+            int len = BE16(p), key = BE16(p + 2), q = p + 4, n = len - 2;
+            if (len < 2 || p + 2 + len > d.Length) break;
+            int val = n == 2 ? BE16(q) : n == 1 ? d[q] : -1;
+            switch (key)
+            {
+                case 0xCD26: if (val >= 0 && val <= 5) { c.Sex = val % 2; c.Ethnic = val / 2; } break;
+                case 0x82B9: if (val >= 0) c.EyeId = val; break;
+                case 0xC881: if (val >= 0) c.BrowId = val; break;
+                case 0xC643: if (n >= 12) c.BrowColor = new Vector4(BEF(q), BEF(q + 4), BEF(q + 8), 1f); break;
+            }
+            p += 2 + len;
+        }
+    }
+
+    /// <summary>DBPNJ._pnj_name (e.g., “Clothes seller Highlife”).</summary>
+    public static string? PnjName(string? configId) => configId != null && _pnj.TryGetValue(configId, out var p) ? p.name : null;
+    /// <summary>All characters (DBPNJ._configid), sorted – Animation Viewer in the Developer Menu.</summary>
+    public static List<string> PnjIds() { var l = new List<string>(_pnj.Keys); l.Sort(StringComparer.OrdinalIgnoreCase); return l; }
+
+    public static readonly string[] BodyFlags =
+    {
+        "abdomen", "ankles", "arms", "back", "calves", "cleavage", "cleavage_large", "cleavage_sides", "feet", "forearms", "hands",
+        "knees", "lower_abdomen", "lower_back", "pelvis", "shoulders", "thighs", "upper_back_center", "upper_back_sides", "upper_chest", "base",
+    };
+
+    public static IEnumerable<ClotheInfo> AllClothes { get { if (_clothes != null) foreach (var c in _clothes.Values) yield return c; } }
+    public static ClotheInfo? Clothe(int hash) => _clothes != null && _clothes.TryGetValue(hash, out var c) ? c : null;
+    public static ClotheInfo? ClotheByFile(string? file) => file != null && _byFile.TryGetValue(file, out var c) ? c : null;
+    public static bool HasBank(ClotheInfo? c) => c != null && _bankByStem.ContainsKey(c.File);
+
+    /// <summary>Thread-safe; one-time use. <paramref name="dbRoot"/> = Root of db_data.cpr (CarDatabase.Root).</summary>
+    public static void Init(string? bnkDir, XmbNode? dbRoot, IRenderer renderer)
+    {
+        lock (_lock)
+        {
+            if (_clothes != null && BnkDir == bnkDir) return;
+            BnkDir = bnkDir;
+            var map = new Dictionary<int, ClotheInfo>();
+            var rows = dbRoot?.Get("DBClothe");
+            if (rows != null)
+                foreach (var r in rows.Items)
+                {
+                    var c = new ClotheInfo
+                    {
+                        Hash = r.I("_hashcode"),
+                        IdNum = r.I("_id_num"),
+                        Sex = r.I("_sex"),
+                        Price = r.I("_price"),
+                        NbColors = r.I("_nb_colors"),
+                        Brand = r.I("_brand"),
+                        SubBrand = r.I("_subbrand"),
+                        SortIndex = r.I("_sort_index"),
+                        MinAreaLevel = r.I("_min_arealevel"),
+                        NameHc = r.I("_clothename_hc"),
+                        HairCutStyle = r.I("_haircutstyle"),
+                        DrivingType = r.I("_drivingtype"),
+                        Part = (ClothePart)r.I("_parttype"),
+                        File = r.S("_file", "") ?? "",
+                        Valid = r.B("_isvalid", true),
+                        Dlc = r.B("_dlc"),
+                        PreOrder = r.B("_ispreorder"),
+                    };
+                    foreach (var f in BodyFlags) c.Visible[f] = r.B("_" + f, true);
+                    map[c.Hash] = c;
+                    _byFile.TryAdd(c.File, c);
+                }
+            // Figuren (DBPNJ): Aussehen je _configid (Verkäufer, Friseur, Fahrer …)
+            _pnj.Clear();
+            var pnj = dbRoot?.Get("DBPNJ");
+            if (pnj != null)
+                foreach (var r in pnj.Items)
+                {
+                    string id = r.S("_configid", "") ?? "";
+                    if (string.IsNullOrEmpty(id)) continue;
+                    var cfg = new AvatarConfig { Sex = r.I("_sex") == 1 ? 1 : 0, Ethnic = 0 };
+                    foreach (var slot in PnjSlots)
+                    {
+                        int h = r.I("_clothe_" + slot);
+                        if (h == 0) continue;
+                        cfg.Items.Add(h); cfg.Colors.Add(r.I("_" + slot + "_color"));
+                    }
+                    _pnj[id] = (cfg, r.S("_pnj_name", "") ?? "");
+                    string file = r.S("_fileconfigid", "") ?? "";
+                    if (!string.IsNullOrEmpty(file)) _pnjFile[id] = file;
+                }
+            string clothesDir = Path.Combine(bnkDir ?? "", "avatar", "clothes");
+            try
+            {
+                if (Directory.Exists(clothesDir))
+                    foreach (var f in Directory.GetFiles(clothesDir, "*.bnk", SearchOption.AllDirectories))
+                        _bankByStem.TryAdd(Path.GetFileNameWithoutExtension(f), f);
+            }
+            catch (Exception ex) { Log.Warn("Avatar-Kleidung: " + ex.Message); }
+            CommonTextures = new GlobalTextureCache(renderer);
+            foreach (var name in new[] { Path.Combine("avatar", "common_bodies.bnk"), Path.Combine("avatar", "clothes", "common_clothes.bnk") })
+            {
+                var p = Path.Combine(bnkDir ?? "", name);
+                try { if (File.Exists(p)) CommonTextures.IndexBank(BnkArchive.Open(p)); }
+                catch (Exception ex) { Log.Warn("Avatar: " + p + " - " + ex.Message); }
+            }
+            _clothes = map;
+            Log.Info($"Avatare: {map.Count} Kleidungsstücke, {_bankByStem.Count} Kleidungsbänke, {CommonTextures.Count} gemeinsame Texturen, {_pnj.Count} Figuren");
+        }
+    }
+
+    static BnkArchive? Bodies
+    {
+        get
+        {
+            if (_bodies == null)
+            {
+                var p = Path.Combine(BnkDir ?? "", "avatar", "common_bodies.bnk");
+                if (File.Exists(p)) _bodies = BnkArchive.Open(p);
+            }
+            return _bodies;
+        }
+    }
+
+    /// <summary>Skeleton of a gender (all heads/bodies of a gender share the same .xsb file).</summary>
+    public static XsbSkeleton? Skeleton(int sex)
+    {
+        lock (_lock)
+        {
+            if (_skel.TryGetValue(sex, out var s)) return s;
+            var b = Bodies;
+            var e = b?.Find(sex == 1 ? "woman_body.xsb" : "man_body.xsb");
+            s = e != null ? XsbSkeleton.Parse(b!.Read(e)) : null;
+            _skel[sex] = s;
+            return s;
+        }
+    }
+
+    static BnkArchive? Anims
+    {
+        get
+        {
+            if (_anims == null)
+            {
+                var p = Path.Combine(BnkDir ?? "", "scenarics", "avatars", "avatarsdriver.bnk");
+                if (File.Exists(p)) _anims = BnkArchive.Open(p);
+            }
+            return _anims;
+        }
+    }
+
+    /// <summary>Names of all clips in scenarics/avatars/avatarsdriver.bnk (Developer Menu).</summary>
+    public static List<string> ClipNames()
+    {
+        var res = new List<string>();
+        lock (_lock) { var a = Anims; if (a != null) foreach (var e in a.All(".anm")) res.Add(Path.GetFileNameWithoutExtension(e.Name)); }
+        res.Sort(StringComparer.OrdinalIgnoreCase);
+        return res;
+    }
+
+    /// <summary>Clip from scenarics/avatars/avatarsdriver.bnk (name without extension, e.g., “stance_turn”).</summary>
+    public static AnmClip? Clip(string name)
+    {
+        lock (_lock)
+        {
+            if (_clips.TryGetValue(name, out var c)) return c;
+            var a = Anims;
+            var e = a?.Find(name + ".anm");
+            c = e != null ? AnmClip.Parse(a!.Read(e), name) : null;
+            if (c == null) Log.Warn("Avatar-Animation fehlt: " + name);
+            _clips[name] = c;
+            return c;
+        }
+    }
+
+    static readonly string[] EthSuffix = { "occ", "asia", "afrik" };
+
+    /// <summary>Body (with skin variant) and head of a specific gender/ethnicity.</summary>
+    public static List<AvatarPartData> LoadBody(int sex, int ethnic)
+    {
+        var list = new List<AvatarPartData>();
+        var b = Bodies;
+        if (b == null) return list;
+        string who = sex == 1 ? "woman" : "man";
+        string eth = EthSuffix[System.Math.Clamp(ethnic, 0, 2)];
+        string skin = ethnic == 0 ? who + "_body.2dm" : who + "_body_" + eth + ".2dm";
+        var body = LoadPart(b, who + "_body", skin, null, 0, false);
+        var head = LoadPart(b, who + "_head_" + eth, null, null, 0, false);
+        if (body != null) list.Add(body);
+        if (head != null) list.Add(head);
+        return list;
+    }
+
+    /// <summary>Clothing item (avatar/clothes/collection/file.bnk), color 0 = as modeled.</summary>
+    public static AvatarPartData? LoadClothe(ClotheInfo? c, int color, bool helmetTwin = false)
+    {
+        if (c == null || c.IsNothing) return null;
+        string file = c.File;
+        // Frisur unter einem Hut: "<datei>_HELMET" (Haare bleiben nur am Nacken sichtbar)
+        if (helmetTwin && c.Part == ClothePart.Hair && _bankByStem.ContainsKey(file + "_HELMET")) file += "_HELMET";
+        if (!_bankByStem.TryGetValue(file, out var path)) return null;
+        var bank = BnkArchive.Open(path);
+        string stem = file.ToLowerInvariant();
+        bool hair = c.Part == ClothePart.Hair || c.Part == ClothePart.Beard;
+        var part = LoadPart(bank, stem, null, hair ? null : stem + "_mat.2dm", hair ? 0 : color, true);
+        if (part != null && hair && color > 0 && HairColor(color, out var p, out var s)) { part.HasHairColor = true; part.HairPrim = p; part.HairScd = s; }
+        return part;
+    }
+
+    static Dictionary<string, (Vector4 prim, Vector4 scd)>? _hairMat;
+
+    /// <summary>Hair color c (1..14): Material “A”+(c-1) from avatar/clothes/common_clothes.bnk hair_mat.2dm.</summary>
+    public static bool HairColor(int c, out Vector4 prim, out Vector4 scd)
+    {
+        prim = new Vector4(0f, 0f, 0f, 1f); scd = Vector4.One;
+        lock (_lock)
+        {
+            if (_hairMat == null)
+            {
+                _hairMat = new Dictionary<string, (Vector4, Vector4)>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var p = Path.Combine(BnkDir ?? "", "avatar", "clothes", "common_clothes.bnk");
+                    var b = File.Exists(p) ? BnkArchive.Open(p) : null;
+                    var e = b?.Find("hair_mat.2dm");
+                    if (e != null)
+                        foreach (var m in Material2DM.Parse(b!.Read(e)).Materials.Values)
+                        {
+                            m.TryGetParam("PRIMCLR", out var pc); m.TryGetParam("SCDCLR", out var sc);
+                            _hairMat[m.Name ?? ""] = (new Vector4(pc.X, pc.Y, pc.Z, 1f), new Vector4(sc.X, sc.Y, sc.Z, 1f));
+                        }
+                }
+                catch (Exception ex) { Log.Warn("hair_mat.2dm: " + ex.Message); }
+            }
+            string letter = ((char)('A' + System.Math.Clamp(c - 1, 0, 25))).ToString();
+            if (!_hairMat.TryGetValue(letter, out var v)) return false;
+            prim = v.prim; scd = v.scd;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Part of a bench: .3dd (instance -> object, material list) + .3dg (skinned geometry) + .2dm (materials); color variant
+    /// from stem_mat.2dm (materials in alphabetical order instead of the piece’s materials, except for “UNCHANGEABLE”).
+    /// </summary>
+    static AvatarPartData? LoadPart(BnkArchive bank, string stem, string? mat2dm, string? variants2dm, int color, bool ownTextures)
+    {
+        var e3dd = bank.Find(stem + ".3dd");
+        var e3dg = bank.Find(stem + ".3dg");
+        var e2dm = bank.Find(mat2dm ?? (stem + ".2dm"));
+        if (e3dd == null || e3dg == null) { Log.Warn("Avatar-Teil fehlt: " + stem); return null; }
+        var scene = Scene3DD.Parse(bank.Read(e3dd));
+        var geo = Geometry3DG.Parse(bank.Read(e3dg));
+        var mats = e2dm != null ? Material2DM.Parse(bank.Read(e2dm)) : null;
+        MaterialDef? variant = null;
+        if (color > 0 && variants2dm != null)
+        {
+            var ev = bank.Find(variants2dm);
+            if (ev != null)
+            {
+                var vl = new List<MaterialDef>(Material2DM.Parse(bank.Read(ev)).Materials.Values);
+                vl.Sort((x, y) => { int r = string.CompareOrdinal(x.Name, y.Name); return r != 0 ? r : x.Key.CompareTo(y.Key); });
+                if (color - 1 < vl.Count) variant = vl[color - 1];
+            }
+        }
+        var part = new AvatarPartData { Name = stem };
+        if (ownTextures)
+            foreach (var e in bank.All(".2db"))
+            {
+                try { var def = TextureDef.Parse(bank.Read(e), Path.GetFileNameWithoutExtension(e.Name)); if (def != null) part.Textures.Add(def); }
+                catch (Exception) { }
+            }
+        ulong unchangeable = MaterialDef.KeyFromName("UNCHANGEABLE");
+        foreach (var insOff in scene.InsOffsets)
+        {
+            var ins = scene.GetIns(insOff);
+            if (ins.Lods == null || ins.Lods.Length == 0) continue;
+            if (!geo.GeoHash.TryGetValue(ins.Lods[0].ObjKey, out int geom)) continue;
+            var bankKeys = scene.ReadMaterialBank(ins.MaterialBankOffset);
+            foreach (var pr in SkinnedGeometry.Read(geo, geom))
+            {
+                ulong mk = pr.MaterialIndex >= 0 && pr.MaterialIndex < bankKeys.Length ? bankKeys[pr.MaterialIndex] : 0;
+                MaterialDef? def = null;
+                if (mats != null && mk != 0) mats.Materials.TryGetValue(mk, out def);
+                if (variant != null && def != null && def.Key != unchangeable) def = variant;
+                part.Prims.Add(pr);
+                part.PrimMaterials.Add(def);
+            }
+        }
+        return part;
+    }
+}
+
+
+/// <summary>Appearance of your own player (game state “avatar”) and other players (server player list).</summary>
+public static class AvatarConfigs
+{
+    /// <summary>Custom avatar: from the game save; otherwise, the default appearance.</summary>
+    public static AvatarConfig Local => AvatarConfig.Decode(LocalCode) ?? AvatarConfig.Default();
+    static string? _offline;
+
+    /// <summary>Custom appearance (game state; without logging in, the setting from the developer menu).</summary>
+    public static string? LocalCode => !string.IsNullOrEmpty(TDU2Session.Save?.avatar) ? TDU2Session.Save.avatar : _offline;
+
+    /// <summary>A fellow player's coded appearance (set by the game: Game/Online/TDU2GameData; empty = unknown).</summary>
+    public static Func<int, string?>? RemoteCodeProvider;
+    public static string RemoteCode(int playerId) => RemoteCodeProvider?.Invoke(playerId) ?? "";
+    public static AvatarConfig ForPlayer(int playerId) => AvatarConfig.Decode(RemoteCode(playerId)) ?? AvatarConfig.Default();
+
+    /// <summary>Save custom appearance (game state, to the server).</summary>
+    public static void SetLocal(AvatarConfig? cfg)
+    {
+        if (cfg == null) return;
+        if (TDU2Session.Save == null) { _offline = cfg.Encode(); LocalChanged?.Invoke(); return; }
+        TDU2Session.Save.avatar = cfg.Encode();
+        if (TDU2Session.LoggedIn) TDU2Session.SaveAsync();
+        LocalChanged?.Invoke();
+    }
+
+    public static event Action? LocalChanged;
+}

@@ -6,17 +6,16 @@ using Paradise.Core.Vehicles;
 namespace Paradise.Core.Audio;
 
 /// <summary>
-/// Musik in Interieurs wie im Spiel (portiert aus Unity TDU2SpotAudio): Autoradio stumm, stattdessen die Spot-Musik aus
-/// Bnk/sound/musics (MngMusic, "%sSound/Musics/%s"). Zuerst wird im Exterior-Bank des Spots (entities.xmb) nach einem Verweis
-/// auf eine der Musikdateien gesucht, sonst gilt die Tabelle (Spot-Code-Präfix → Datei). Varianten (playerhouse01..03,
-/// clothesshop01/02, club…) werden je Spot fest über den Spot-Index gewählt. Beim Verlassen ausblenden, Radio wieder an.
+/// Music in interiors and in-game (ported from Unity TDU2SpotAudio): Mute the car stereo and play the spot music from
+/// Bnk/sound/musics (MngMusic, “%sSound/Musics/%s”) instead. First, the system searches the spot’s exterior bank (entities.xmb) for a reference
+/// to one of the music files; otherwise, the table applies (Spot code prefix → file). Variants (playerhouse01..03,
+/// clothesshop01/02, club…) are selected for each Spot via the Spot index. Fade out when leaving; turn the radio back on.
 /// </summary>
 public static class SpotMusic
 {
     public static float Volume = 0.6f;
     public static float FadeSeconds = 1.0f;
-
-    /// <summary>Spot-Code-Präfix → Musikdatei (ohne .wav). Längere Präfixe zuerst (Unity TDU2SpotAudio.Table).</summary>
+    /// <summary>Spot code prefix → music file (without .wav). Longer prefixes first (Unity TDU2SpotAudio.Table).</summary>
     static readonly (string prefix, string music)[] Table =
     {
         ("ERS_A", "schoolasphalt"), ("ERS_B", "schooldirt"), ("ERS_C", "schoolclassic"),
@@ -33,10 +32,10 @@ public static class SpotMusic
     static bool _inside, _ducked;
     static string? _current;
 
-    /// <summary>Gerade laufende Spot-Musik (Dateiname) oder null.</summary>
+    /// <summary>Currently playing spot music (filename) or null.</summary>
     public static string? Current => _current;
 
-    /// <summary>Interieur betreten: Radio stumm, Musik des Spots laden (Hintergrund) und einblenden.</summary>
+    /// <summary>Enter the interior: Mute the radio, load the commercial's music (in the background), and fade it in.</summary>
     public static void Enter(string? code, int spotIndex, string? bnkDir, string? exteriorDir)
     {
         lock (_lock)
@@ -60,8 +59,7 @@ public static class SpotMusic
             });
         }
     }
-
-    /// <summary>Interieur verlassen: Musik ausblenden, Radio wieder an.</summary>
+    /// <summary>Exiting the vehicle: Mute the music, turn the radio back on.</summary>
     public static void Exit()
     {
         lock (_lock)
@@ -73,7 +71,7 @@ public static class SpotMusic
         }
     }
 
-    /// <summary>Ausblenden, solange eine andere Musik läuft (große Karte im Interieur), danach wieder einblenden.</summary>
+    /// <summary>Hide while other music is playing (large map in the interior), then show again.</summary>
     public static void Duck(bool on)
     {
         lock (_lock)
@@ -109,7 +107,7 @@ public static class SpotMusic
         return (AudioClip.FromWav("SpotMusic_" + pick, GameFiles.ReadAllBytes(path)), pick);
     }
 
-    /// <summary>Exterior-Bank des Spots (entities.xmb) nach einem String durchsuchen, der einer Musikdatei entspricht.</summary>
+    /// <summary>Search the spot's exterior bank (entities.xmb) for a string that matches a music file.</summary>
     static string? FromExterior(string? extDir, string code, Dictionary<string, string> available)
     {
         try

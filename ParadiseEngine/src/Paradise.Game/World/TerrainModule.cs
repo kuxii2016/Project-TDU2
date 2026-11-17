@@ -78,6 +78,7 @@ public sealed class TerrainModule : GameModule
     {
         if (_world.Root == null) { Log.Warn("TerrainModule: kein Spielordner gefunden."); return; }
         _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
+        _light.ApplyAvatars();
         _globals = _light.ToFrameGlobals();
         // Kollision der Welt (Unity: GenerateColliders) – vor Initialize, damit schon die ersten Sektoren eingetragen werden
         _physics = new PhysicsWorld();

@@ -1328,6 +1328,229 @@ void main() {
     }
 }";
 
+    // ------------------------------------------------------------------ TDU2/Avatar, TDU2/AvatarBlend (TDU2Avatar.shader / TDU2AvatarBlend.shader)
+    // Original-Shader-Sets TD_Skin2/TD_Skinface (Modus 0), TD_Clothe2 (1), TD_Avatar (2), TD_Hair (3), TD_Eye (4).
+    // Texturen je Modus (binding 0..5): Haut: SKIN, GLOSSDETAILCUT, SPECTRALSCATTERING, NORMAL; Kleidung: OCCLUSION, DETAIL_GRAIN,
+    // LAYER1, LAYER2, LAYER3; sonst TEX/HAIR auf 0. Die gehäuteten Vertices kommen im Avatar-Raum (CPU-Häutung, Core/Avatars/AvatarRig).
+    // Material-Properties (binding 6):
+    //  c0 _Color, c1 _Mode,_Cutoff,_Brightness,_AlphaLum, c2 _SkinClr, c3 _DclClr, c4 _Coeffs, c5 _UVScale, c6 _BaseClr,
+    //  c7..c9 _ClrL1..3, c10 _LayerOn (xyz), w _GlossOn, c11 _LayerUV (xyz), w _RampOn, c12 _UVOff (xy), z _Ombre, w _BumpOn,
+    //  c13 _BColor, c14 _TColor, c15 _PrimClr, c16 _ScdClr, c17 _Spec, c18 _CarInteg, c19 _AtteFact,
+    //  c20 _InCar,_DetailOn,_RampScale,_TDU2AvatarIndoor, c21 _TDU2IndoorDir, c22 _TDU2IndoorLight, c23 _TDU2IndoorAmbTop, c24 _TDU2IndoorAmbBottom
+    //  c25 _TDU2AvRampAdd,_TDU2AvRampRow,_TDU2AvAddMix,_TDU2AvAmbAdd, c26.x _TDU2AvHairSheen (Feinabstimmung, 0 = Original)
+    private const string AvatarMat = @"
+layout(set = 0, binding = 6) uniform AvatarMat { vec4 c[28]; } am;
+";
+
+    public const string AvatarVert = Common + ObjectInputs + AvatarMat + @"
+layout(location = 0) out vec3 vNormal;
+layout(location = 1) out vec2 vUv0;
+layout(location = 2) out vec2 vUv1;
+layout(location = 3) out vec2 vUv2;
+layout(location = 4) out vec3 vWorld;
+layout(location = 5) out float vFoot;
+layout(location = 6) out float vHgt;
+void main() {
+    vec4 world = pc.model * vec4(inPos, 1.0);
+    gl_Position = pc.viewProj * world;
+    vNormal = mat3(pc.model) * inNormal;
+    vUv0 = inUv0; vUv1 = inUv1; vUv2 = inUv2;
+    vWorld = world.xyz;
+    // gehäutete Höhe im Avatar-Raum
+    float h = inPos.y;
+    float d = max(0.001, am.c[18].y - am.c[18].x);
+    vFoot = am.c[20].x > 0.5 ? clamp((h - am.c[18].x) / d, 0.0, 1.0) : 1.0;
+    vHgt = h;
+}";
+
+    private const string AvatarFragBody = @"
+layout(set = 0, binding = 0) uniform sampler2D tex0;
+layout(set = 0, binding = 1) uniform sampler2D tex1;
+layout(set = 0, binding = 2) uniform sampler2D tex2;
+layout(set = 0, binding = 3) uniform sampler2D tex3;
+layout(set = 0, binding = 4) uniform sampler2D tex4;
+layout(set = 0, binding = 5) uniform sampler2D tex5;
+layout(location = 0) in vec3 vNormal;
+layout(location = 1) in vec2 vUv0;
+layout(location = 2) in vec2 vUv1;
+layout(location = 3) in vec2 vUv2;
+layout(location = 4) in vec3 vWorld;
+layout(location = 5) in float vFoot;
+layout(location = 6) in float vHgt;
+layout(location = 0) out vec4 outColor;
+const vec3 LUM = vec3(0.299, 0.587, 0.114);
+
+vec2 SampleUV(float which) { return which < 0.5 ? vUv0 : (which < 1.5 ? vUv1 : vUv2); }
+
+// Tangentenraum ohne Tangenten im Vertex: Basis aus den Bildschirmableitungen (UV0)
+vec3 TangentToWorld(vec3 n, vec3 N) {
+    vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
+    vec2 du1 = dFdx(vUv0), du2 = dFdy(vUv0);
+    vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * du1.x + dp1perp * du2.x;
+    vec3 B = dp2perp * du1.y + dp1perp * du2.y;
+    float invmax = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+    return normalize(mat3(T * invmax, B * invmax, N) * n);
+}
+
+void main() {
+    float mode = am.c[1].x;
+    bool indoor = am.c[20].w > 0.5;
+    vec2 uv = vUv0;
+    vec4 c = vec4(1.0);
+    vec3 n = vec3(0.0, 0.0, 1.0);
+    float scatter = 0.0, ao = 1.0, aux = 1.0;
+    float occl = indoor ? mix(0.55, 1.0, clamp(vHgt / 1.0, 0.0, 1.0)) : 1.0;
+    float specK = am.c[17].x, specP = am.c[17].y;
+    bool bump = false;
+    if (mode < 0.5)
+    {
+        // Haut: Farbe = SKIN (Dekal DCLCLR über GLOSSDETAILCUT.b x COEFFS.y), Glanz = .r, Durchscheinen = .g
+        c = texture(tex0, uv) * am.c[0];
+        c.a = 1.0;
+        if (am.c[10].w > 0.5)
+        {
+            vec4 g = texture(tex1, uv);
+            c.rgb = mix(c.rgb, am.c[3].rgb, clamp(g.b * am.c[4].y, 0.0, 1.0));
+            specK *= g.r;
+            scatter = clamp(g.g, 0.0, 1.0);
+        }
+        if (am.c[12].w > 0.5) { vec4 nt = texture(tex3, uv); vec2 xy = nt.ag * 2.0 - 1.0; n = vec3(xy, sqrt(clamp(1.0 - dot(xy, xy), 0.0, 1.0))); bump = true; }   // DXT5nm (AG)
+    }
+    else if (mode < 1.5)
+    {
+        // TD_Clothe2: BASECLR, LAYER1/LAYER2 über Alpha, Stoffkorn DETAIL.b dunkelt ab, LAYER3 darüber
+        c = am.c[6];
+        float alpha = am.c[6].a;
+        vec4 det = am.c[20].y > 0.5 ? texture(tex1, uv * am.c[5].zw) : vec4(0.5, 0.5, 1.0, 0.5);
+        if (am.c[10].x > 0.5) { vec4 l = texture(tex2, SampleUV(am.c[11].x) * am.c[5].xy); float a = l.a * am.c[7].a; c.rgb = mix(c.rgb, am.c[7].rgb * l.rgb, a); alpha = max(alpha, a); }
+        if (am.c[10].y > 0.5) { vec4 l = texture(tex3, SampleUV(am.c[11].y)); float a = l.a * am.c[8].a; c.rgb = mix(c.rgb, am.c[8].rgb * l.rgb, a); alpha = max(alpha, a); }
+        c.rgb *= det.b;
+        if (am.c[10].z > 0.5) { vec4 l = texture(tex4, SampleUV(am.c[11].z)); float a = l.a * am.c[9].a; c.rgb = mix(c.rgb, am.c[9].rgb * l.rgb, a); alpha = max(alpha, a); }
+        c.a = AVATAR_BLEND ? alpha : 1.0;
+        specK *= det.b;
+        if (am.c[12].w > 0.5)
+        {
+            // OCCLUSION: RG = Normale, B = eingebackene Verdeckung; Stoffkorn-Normale (DETAIL.ag) addiert, z = 1
+            vec4 occ = texture(tex0, uv);
+            vec2 xy = occ.rg * 2.0 - 1.0;
+            if (am.c[20].y > 0.5) xy += vec2(det.a, det.g) * 2.0 - 1.0;
+            n = normalize(vec3(xy, 1.0));
+            ao = occ.b;
+            bump = true;
+        }
+    }
+    else if (mode < 2.5)
+    {
+        // TD_Avatar: Farbe = TEX x COLOR, Deckkraft = TEX.a
+        vec4 t = texture(tex0, uv + am.c[12].xy);
+        c = t * am.c[0];
+        if (am.c[1].w > 0.5) c = vec4(am.c[0].rgb, max(t.r, max(t.g, t.b)) * am.c[0].a);
+        if (am.c[12].z > 0.5) { c = mix(am.c[13], am.c[14], t.a); specK = max(specK, 0.5); specP = max(specP, 40.0); }
+    }
+    else if (mode < 3.5)
+    {
+        // TD_Hair: Farbe lerp(PRIMCLR, SCDCLR, HAIR.g), Glanz x HAIR.b, Helligkeit HAIR.r, Deckkraft HAIR.a
+        vec4 h = texture(tex0, uv);
+        c.rgb = mix(am.c[15].rgb, am.c[16].rgb, h.g);
+        c.a = h.a;
+        specK *= h.b;
+        aux = h.r;
+    }
+    else
+    {
+        // Augen: Iris-Zelle des 5x5-Atlas über UVOFF
+        c = texture(tex0, uv + am.c[12].xy) * am.c[0];
+        c.a = 1.0;
+        specK = 0.6; specP = 60.0;
+    }
+    vec3 albedo = c.rgb * am.c[1].z;
+    float alphaOut = c.a;
+    if (alphaOut < am.c[1].y) discard;
+    // beidseitige Flächen: Rückseite mit umgedrehter Normale
+    if (!gl_FrontFacing) n.z = -n.z;
+    vec3 Ng = normalize(vNormal);   // Unity: Tangentenraum der Mesh-Normale, Rückseite über n.z
+    vec3 N = bump ? TangentToWorld(n, Ng) : normalize(Ng * n.z);
+    vec3 V = normalize(fr.camPos.xyz - vWorld);
+    float gloss = specK * (indoor ? 0.5 : 1.0);
+
+    // Lichtmodell der Original-Shader: Licht = lerp(Umgebung x atteFact.x, Sonne x atteFact.y, t)
+    vec3 att = mix(am.c[19].xyz, vec3(1.0), vFoot);
+    vec3 L, lc, amb;
+    float atten;
+    if (indoor)
+    {
+        L = normalize(am.c[21].xyz);
+        lc = am.c[22].rgb;
+        atten = 1.0;
+        amb = mix(am.c[24].rgb, am.c[23].rgb, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));
+    }
+    else
+    {
+        L = normalize(fr.sunDir.xyz);
+        lc = fr.sunColor.rgb;
+        atten = TDU2Shadow(vWorld, N);
+        amb = max(fr.ambient.rgb, vec3(0.0));
+    }
+    float nl = dot(N, L);
+    float rv = max(dot(reflect(-L, N), V), 1e-4);
+    vec4 tw = am.c[25];
+    amb = (amb + tw.w) * att.x;
+    vec3 dif = lc * att.y, spl = lc * att.z;
+    vec3 light, spec, col;
+    if (mode < 0.5)
+    {
+        float w = am.c[4].x;
+        float u = clamp((nl + w) / (1.0 + w), 0.0, 1.0);
+        u = clamp(clamp(dot(V, -L), 0.0, 1.0) * am.c[17].z * (1.0 - clamp(dot(N, V), 0.0, 1.0)) + u, 0.0, 1.0) * atten;
+        amb = mix(amb, dot(amb, LUM) * am.c[2].rgb, scatter);
+        dif = mix(dif, dot(dif, LUM) * am.c[2].rgb, scatter);
+        spl = mix(spl, dot(spl, LUM) * am.c[2].rgb, scatter);
+        float rv2 = tw.y > 0.001 ? tw.y : am.c[4].z;
+        vec3 ramp = am.c[11].w > 0.5 ? texture(tex2, vec2(u, rv2)).rgb * (am.c[20].z + tw.x) : vec3(1.0);
+        light = (mix(amb, dif, u) + amb * u * tw.z) * ramp;
+        spec = spl * pow(max(rv * atten, 1e-4), max(1.0, specP)) * gloss;
+        col = albedo * light + spec;
+    }
+    else if (mode > 2.5 && mode < 3.5)
+    {
+        float u = clamp(0.75 * nl + 0.25, 0.0, 1.0) * atten;
+        light = (mix(amb, dif, u) + amb * u * tw.z) * ao;
+        vec3 h = normalize(L + V);
+        spec = spl * pow(clamp(dot(N, h), 0.0, 1.0), max(1.0, specP)) * gloss * atten * clamp(1.75 * nl + 0.25, 0.0, 1.0);
+        vec3 dark = light * albedo + spec;
+        vec3 lit = albedo * (1.0 + dot(light, LUM) * 0.33) + spec * (0.33 + am.c[26].x);
+        col = mix(dark, lit, clamp(dot(light * aux + spec, LUM), 0.0, 1.0));
+    }
+    else
+    {
+        float u = clamp(nl, 0.0, 1.0) * atten;
+        light = (mix(amb, dif, u) + amb * u * tw.z) * ao;
+        spec = spl * pow(max(rv * atten, 1e-4), max(1.0, specP)) * gloss * ao;
+        col = albedo * light + spec;
+    }
+    col *= occl;
+    // Zusatzlichter (Unity Forward-Add: Straßenlampen, Scheinwerfer): einfach diffus
+    if (!indoor) col += albedo * TDU2Lamps(vWorld, N) * occl * ao;
+    outColor = vec4(TDU2Fog(col, vWorld), alphaOut);
+}";
+
+    public const string AvatarFrag = Common + AvatarMat + "\n#define AVATAR_BLEND false\n" + AvatarFragBody;
+    public const string AvatarBlendFrag = Common + AvatarMat + "\n#define AVATAR_BLEND true\n" + AvatarFragBody;
+
+    // Schattenwurf TDU2/Avatar (addshadow: Alpha-Test mit _Cutoff auf TEX/HAIR)
+    public const string ShadowAvatarFrag = Common + AvatarMat + @"
+layout(set = 0, binding = 0) uniform sampler2D tex0;
+layout(location = 1) in vec2 vUv0;
+void main() {
+    float mode = am.c[1].x;
+    if (am.c[1].y > 0.0 && mode > 1.5 && mode < 3.5) {
+        vec4 t = texture(tex0, vUv0 + (mode < 2.5 ? am.c[12].xy : vec2(0.0)));
+        float a = mode < 2.5 ? (am.c[1].w > 0.5 ? max(t.r, max(t.g, t.b)) : t.a) * am.c[0].a : t.a;
+        if (a < am.c[1].y) discard;
+    }
+}";
+
     // ------------------------------------------------------------------ TDU2/Skidmark, Partikel (Sprites/Default)
     public const string FxVert = Common + ObjectInputs + @"
 layout(location = 0) out vec4 vColor;

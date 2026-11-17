@@ -43,6 +43,11 @@ namespace Paradise.Core.Vehicles
         VehicleRigidbody? _rb;
         VehicleEffects? _fx;
         VehicleAudio? _audio;
+        Avatars.CarAvatar? _driver;
+        /// <summary>Fahrer-Avatar im Auto (Unity TDU2VehicleManager.ShowDriver).</summary>
+        public bool ShowDriver = true;
+        /// <summary>Fahrer-Avatar des aktuellen Autos (null ohne Sitz-Dummy oder ohne Avatardaten).</summary>
+        public Avatars.CarAvatar? Driver => _driver;
         VehicleLights? _lights;
         CarDirt? _dirt;
         /// <summary>
@@ -123,6 +128,9 @@ namespace Paradise.Core.Vehicles
                 avail.Sort((a, b) => string.Compare(a.ModelName, b.ModelName, StringComparison.OrdinalIgnoreCase));
                 lock (Available) { Available.Clear(); Available.AddRange(avail); }
                 Database = db; Cameras = cams; Physics = phys;
+                // Avatare (Kleidung aus DBClothe, Bänke unter avatar/, Animationen unter scenarics/avatars) – Unity TDU2VehicleManager
+                try { Avatars.AvatarLibrary.Init(bnk, db.Root, _r); }
+                catch (Exception ex) { Log.Warn("Avatare: " + ex.Message); }
             });
         }
 
@@ -658,6 +666,13 @@ namespace Paradise.Core.Vehicles
             // Bodenschatten, Reifenspuren, Staub, glühende Bremsscheiben (TDU2VehicleEffects)
             _fx = new VehicleEffects(_r);
             _fx.Setup(veh, _model, a);
+            // Fahrer (Unity TDU2CarAvatar.Attach: eigenes Aussehen aus dem Spielstand, Lenkung = Vehicle.Steer)
+            _driver?.Dispose(); _driver = null;
+            if (ShowDriver)
+            {
+                _driver = Avatars.CarAvatar.Attach(_r, _model, Avatars.AvatarConfigs.Local, false, () => veh.Steer);
+                if (_driver != null) _driver.ConfigCode = () => Avatars.AvatarConfigs.LocalCode;
+            }
             // Verschmutzung (dirt_scratch, DBCarDirtData)
             _dirt = new CarDirt();
             _dirt.Setup(veh, _model);
@@ -717,6 +732,7 @@ namespace Paradise.Core.Vehicles
             _lights?.Dispose();
             _lights = null;
             _rb?.Dispose(); _rb = null;
+            _driver?.Dispose(); _driver = null;
             _model?.Destroy(); _model = null; RimId = 0; InteriorId = 0;
             _assets?.DestroyTextures(); _assets = null;
         }
@@ -771,6 +787,7 @@ namespace Paradise.Core.Vehicles
             }
             _model.UpdateTransforms(root);
             _model.Draw(_r);
+            _driver?.Render(Vector3.Transform(Camera.position, UnityToRender(gameToRender)), Paradise.Core.World.WorldWeather.Inside);
             _fx?.Render(UnityToRender(gameToRender));
             _lights?.RenderFlares(_r, tr, Camera.position, U.Rot(Camera.rotation, Vec.Up), UnityToRender(gameToRender));
         }

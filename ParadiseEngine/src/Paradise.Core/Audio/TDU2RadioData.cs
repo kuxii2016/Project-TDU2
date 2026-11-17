@@ -58,7 +58,6 @@ namespace Paradise.Core.Audio
     /// <summary>
     /// Reads the radio configuration: DBRadioStation + DBRadioMessage from db_data.cpr, the song durations
     /// from sound/radio/setup.xmb, and resolves each message into its corresponding bank in sound/radio/{music,jingle,comment,advertising}.
-    /// Pure data storage without the Unity API -> can be loaded in the background.
     /// </summary>
     public sealed class TDU2RadioData
     {

@@ -378,6 +378,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Innenräume sind immer beleuchtet: leuchtende Materialien mit aufbauen (MapStreamer.BuildScene, MaterialFactory.Interior)
         MaterialFactory.MinFloorReflection = _pendingKind == Kind.Garage ? GarageFloorReflection : 0f;   // Unity InteriorFx.MinFloorReflection
         _scene = st.BuildScene(model, _holder, true);
+        InteriorNpcs.Build(_v.Renderer, data, model.Bank);   // Figuren (Unity TDU2InteriorNpcs: Verkäufer, Friseur …)
         MaterialFactory.MinFloorReflection = 0f;
         SetupMirror();
         st.Scenes.Add(_scene);
@@ -424,6 +425,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (cam != null) { eye = Vector3.Transform(cam.Position, _holder); look = Vector3.TransformNormal(cam.Forward, _holder); }
         else { eye = _holder.Translation + Vector3.UnitY * 1.7f; look = Vector3.TransformNormal(Vector3.UnitZ, _holder); }
         _fp!.Place(eye, look);
+        Log.Info($"Interieur Start: Kamera {(cam != null ? cam.Name : "-")} Auge {eye.Y:0.00}, Holder y {_holder.Translation.Y:0.00}, Spot y {_spot?.Position.Y ?? 0f:0.00}, Sicherheitsboden {_floorPoint.Y:0.00}");
         int tris = 0; foreach (var c in _colliders) tris += c.Triangles;
         Log.Info($"Interieur aufgebaut: {Path.GetFileNameWithoutExtension(_pendingBank)} ({_kind}), {_scene.Objects.Count} Objekte, {tris} Kollisionsdreiecke, " +
                  $"{data.Selectables.Count} Hotspots, {data.CarSlots.Count} Stellplätze, {data.HouseObjects.Count} Möbel, Exterior {_hiddenExterior.Count} Teile aus, " +
@@ -445,7 +447,12 @@ public abstract partial class InteriorUtils : GameModeHandler
                     if (seen.Add(pt.Material) && MaterialFactory.TryGetInfo(pt.Material, out var mi))
                         Log.Info($"  Material {mi.Def.Name} [{pt.Material.Kind}] Blend {mi.Blend} Haupt {mi.MainTexture ?? "-"} Detail {mi.DetailTexture ?? "-"} " +
                                  $"NachtLM {(mi.Desc.NightLm != null ? "ja" : "nein")} Interieur-LM {mi.Desc.InteriorLm} Unlit {mi.Desc.Unlit} Alpha {mi.Desc.Color.W:0.00} Cutoff {mi.Desc.Cutoff:0.00} Spiegel {mi.Desc.ReflMix:0.00} DetailAlpha {mi.Desc.DetailAlpha}");
+        // Unity _afterBuild: Schritt nach dem Aufbau (Garderobe öffnet ihren Modus, sobald idr_* steht)
+        if (_afterBuild != null) { var a = _afterBuild; _afterBuild = null; a(); }
     }
+
+    /// <summary>Wird einmal nach dem nächsten BuildInterior ausgeführt (Unity TDU2Interiors._afterBuild).</summary>
+    internal static Action? _afterBuild;
 
     // ------------------------------------------------------------------ Ausstellungs-/Garagenautos (Unity TDU2Interiors)
     internal sealed class DisplayCar
@@ -642,6 +649,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Bodenspiegelung (Unity InteriorMirror): Ebene in den Render-Raum (Gleitkomma-Ursprung -> jedes Bild)
         RenderFx.PlanarOn = _mirrorValid && _scene != null && _sceneTask == null;
         if (RenderFx.PlanarOn) RenderFx.PlanarY = st.GameToRender(new Vector3(_holder.Translation.X, _mirrorY, _holder.Translation.Z)).Y;
+        if (_scene != null && _sceneTask == null) InteriorNpcs.Render(_holder * st.RootMatrix);
         if (_cars.Count == 0) return;
         // Unity: Reflexionssonde des Interieurs in der Mitte des Raums (statt der Würfelkarte der Bank: Echtzeit)
         RenderFx.ProbeOn = true;
@@ -975,6 +983,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (st != null) st.HideWorld = false;
         if (_scene != null && st != null) st.DestroyScene(_scene);
         _scene = null; _data = null;
+        InteriorNpcs.Clear();
         foreach (var f in _furniture) st?.DestroyScene(f);
         EndDealerModes();
         GAME_MODE_LIVING.EndHomeModes();
@@ -997,7 +1006,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         _fp = null;
         _t.Input.CursorLocked = false;
         _t.NearClip = 1f;
-        _spot = null; _spotBanks = null; _sceneTask = null;
+        _spot = null; _spotBanks = null; _sceneTask = null; _afterBuild = null;
         Paradise.Core.World.WorldWeather.Inside = false;   // Unity SetInteriorAmbient(false)
         Paradise.Core.Audio.SpotMusic.Exit();
         _v.Suspended = false;
@@ -1197,6 +1206,9 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 9 when _ui != null: GAME_MODE_LIVING.OpenDiary(); break;       // Tagebuch (home.vmf diary_in): MyTDULife, My House
             case 57: GAME_MODE_LIVING.OpenMedia(); break;                       // Fernseher: TDU Media (tdmedia.bnk)
             case 12 or 14 when _kind == Kind.Garage: GAME_MODE_GARAGE.OpenGarageList(); break;   // Plakat: Fahrzeugliste (home.vmf garage "list")
+            case 22 when GAME_MODE_GOODIES.Open(): break;                         // Verkäuferin (Seller_area) im Kleidungsladen: shopsavatar.vmf "clothes_shop"
+            case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
+            case 29: GAME_MODE_HAIRDRESSER.Open(); break;                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
             default: Log.Info("Hotspot noch nicht portiert: " + Label(s) + " (Typ " + s.Type + ")"); break;
         }
     }
@@ -1220,6 +1232,10 @@ public abstract partial class InteriorUtils : GameModeHandler
             51 => "Büro",
             54 => Lang(351, "klub"),
             57 => "TDU " + Lang(4919, "media"),
+            22 => Lang(179, "Verkäufer"),          // Seller_area (Bekleidungsgeschäft)
+            28 => Lang(3288, "Autoaufklebergeschäft"),
+            29 => Lang(3631, "Frisuren"),           // Hairdresser_area
+            32 => Lang(1866, "Flughafen"),
             _ => n,
         };
     }
@@ -1288,6 +1304,22 @@ public abstract partial class InteriorUtils : GameModeHandler
             return Lang(1888, "Garage"); //Lang(3300, "Garage");
         if (kind == Kind.Living)
             return Lang(1887, "Wohnzimmer"); //"Wohnbereich";
+        if (_spotBanks != null && _spotBanks.Name == "Gebrauchtwagenhändler")
+            return _spotBanks.Name;
+        // Wie im Spiel (Unity TDU2Interiors.TitleFor): Name aus der Sprachdatenbank, DBCarShop._libelle_hc des Spots
+        // (Autohändler, Bekleidungsgeschäft, Friseur, Autoaufklebergeschäft …)
+        var db = Vm?.Database;
+        if (db != null && _spot != null)
+        {
+            var shop = db.ShopForSpot(_spot, _t.Streamer?.Index?.IslandName ?? "");
+            var dbName = shop != null ? FlashLocalization.Text(FlashHost.BnkDir, FlashHost.Language, shop.NameHash) : null;
+            Log.Info("Ladenname: Spot " + _spot.Code + " -> DBCarShop " + (shop?.SpotName ?? "-") + ", _libelle_hc " + (shop?.NameHash ?? 0) + " = '" + (dbName ?? "-") + "'");
+            if (!string.IsNullOrEmpty(dbName)) return dbName;
+            // Friseure stehen nicht in DBCarShop: Text der Flash-Lokalisierung wie die große Karte (SpotLocKeys "hair")
+            if ((_spot.Code ?? "").StartsWith("EHD", StringComparison.OrdinalIgnoreCase)
+                && FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language).TryGetValue("m_HairDresser", out var hd) && !string.IsNullOrEmpty(hd))
+                return hd;
+        }
         return _spotBanks?.Name ?? "";
     }
 
@@ -1375,7 +1407,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             // vom zuletzt anvisierten Auto stehen und der Film öffnete an der Tür wieder die Fahrzeugdaten.
             string sel = SelItemTypeOf(s);
             if (sel != null) _ui.SetVariable("/:SelItemType", sel);
-            _ui.SetVariable("/:t_wm_destination", s.Type == 28 ? "Sticker-Shop" : Label(s));
+            _ui.SetVariable("/:t_wm_destination", Label(s));
             _ui.GotoLabel("/cursor", "on", true);
             _ui.GotoLabel("/cursor/low_bar", "open", true);
             _ui.GotoLabel("/cursor/low_bar/ic", IconLabel(s), false);

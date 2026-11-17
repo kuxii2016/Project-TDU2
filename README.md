@@ -20,6 +20,7 @@ The goal is to regain full control over rendering, performance, resource managem
 
 <p align="center">
   <img src="./Screenshots/thunder.PNG" width="49%" alt="Project TDU2 - Custom Engine"/>
+  <img src="./Screenshots/avatare.PNG" width="49%" alt="Avatare & Shops"/>
 </p>
 
 ---

@@ -83,7 +83,7 @@ public static class TDU2Bookmarks
         }
     }
 
-    static int NextId() { int id = 1; foreach (var m in _list!) id = Math.Max(id, m.Id + 1); return id; }
+    static int NextId() { int id = 1; foreach (var m in _list!) id = System.Math.Max(id, m.Id + 1); return id; }
 
     static void Save_()
     {
