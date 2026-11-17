@@ -191,8 +191,8 @@ public class GAME_MODE_MAP : GameModeHandler
         ui.SetVariable("/:lockGotoStatus", "none");
         ui.SetVariable("/:money", TDU2Session.LoggedIn
             ? TDU2Session.Save.money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $" : "999 999 999 $");
-        ui.SetVariable("/:cur_upgrade", "level0");
         var car = veh?.Car;
+        ui.SetVariable("/:cur_upgrade", Paradise.Core.Vehicles.CarUpgrades.LevelLabel(Paradise.Core.Vehicles.CarUpgrades.Get(car?.FileName).Global));   // Tuningstufe (Tuner)
         ui.SetVariable("/:player_group", GroupLabel(car?.Raw != null ? car.Raw.I("_vehiclecategory") : 0));
         if (car != null)
         {
@@ -546,6 +546,9 @@ public class GAME_MODE_MAP : GameModeHandler
     void SetSpotVars(MapSpot ms)
     {
         var ui = _ui!; var db = Db;
+        // Tuner nur mit einem Auto seiner Marken: gesperrt -> SetMenu "spot_locked", Eintreten gesperrt, Text m_SpotLockedTuner_
+        var cur = _ctx.Vehicles?.Manager?.Current?.Car;
+        ui.SetValue("/:IsSpotLocked", ms.label == "tuning" && cur != null && !GAME_MODE_TUNER.Accepts(ms.spot, cur, db, IslandName()));
         if (ms.label == "carDealer" || ms.label == "bikeDealer" || ms.label == "carRental")
         {
             var shop = db?.ShopForSpot(ms.spot, IslandName());

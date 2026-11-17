@@ -48,6 +48,7 @@ namespace Paradise.Core.Vehicles
         public bool ShowDriver = true;
         /// <summary>Fahrer-Avatar des aktuellen Autos (null ohne Sitz-Dummy oder ohne Avatardaten).</summary>
         public Avatars.CarAvatar? Driver => _driver;
+        bool _liveryHooked;
         VehicleLights? _lights;
         CarDirt? _dirt;
         /// <summary>
@@ -131,12 +132,23 @@ namespace Paradise.Core.Vehicles
                 // Avatare (Kleidung aus DBClothe, Bänke unter avatar/, Animationen unter scenarics/avatars) – Unity TDU2VehicleManager
                 try { Avatars.AvatarLibrary.Init(bnk, db.Root, _r); }
                 catch (Exception ex) { Log.Warn("Avatare: " + ex.Message); }
+                CarUpgrades.Init(db.Root);   // Tuning: Zuwachs je Stufe (DBEnvironnement)
+                // Sticker-Planchen (DBStickersBanks) für die eigenen Lackierungen (Unity TDU2StickerLibrary.Ensure)
+                try { StickerLibrary.Init(bnk, db.Root, _r); }
+                catch (Exception ex) { Log.Warn("Sticker-Planchen: " + ex.Message); }
             });
         }
 
         /// <summary>Pro Frame (Main-Thread): Datenbank-Status, fertig geladene Autos aufbauen.</summary>
         public void Update()
         {
+            StickerLibrary.Update();   // fertig geladene Planchen übernehmen, Lackierungen neu zusammensetzen
+            if (!_liveryHooked)
+            {
+                _liveryHooked = true;
+                // Lackierung geändert (Sticker-Shop): am gefahrenen Auto sofort zeigen (Unity TDU2Liveries.Changed)
+                Liveries.Changed += f => { if (_model != null && _assets != null && string.Equals(_assets.Car.FileName, f, StringComparison.OrdinalIgnoreCase)) LiveryView.ApplyOwn(_model, _assets, f); };
+            }
             if (_dbTask != null && _dbTask.IsFaulted)
             {
                 _status = "Datenbank-Fehler: " + _dbTask.Exception?.GetBaseException().Message;
@@ -547,6 +559,7 @@ namespace Paradise.Core.Vehicles
             var veh = new Vehicle { Rigidbody = rb };
             veh.Car = car!; veh.Config = Physics!; veh.TorqueMax = a.TorqueMax!; veh.TorqueMin = a.TorqueMin!;
             veh.GripScale = GripScale; veh.Aids = Aids; veh.AutomaticGearbox = AutomaticGearbox;
+            CarUpgrades.ApplyTo(veh);   // Tuningstufen des Autos (Tuner)
             veh.OffRoadCar = car!.IsOffroad || car.OffroadReal;
             veh.GroundFallback = p => { var y = GroundHeight?.Invoke(ToGame(p)); return y.HasValue ? (true, y.Value - _world.Origin.Y) : (false, 0f); };
 
@@ -676,6 +689,8 @@ namespace Paradise.Core.Vehicles
             // Verschmutzung (dirt_scratch, DBCarDirtData)
             _dirt = new CarDirt();
             _dirt.Setup(veh, _model);
+            // eigene Lackierung/Beklebung (Sticker-Shop, lokal gespeichert)
+            LiveryView.ApplyOwn(_model, a, car.FileName);
 
             // Kamera
             Camera.Target = veh; Camera.Cameras = Cameras; Camera.CarId = car.CameraId != 0 ? car.CameraId : car.Id;
@@ -733,6 +748,7 @@ namespace Paradise.Core.Vehicles
             _lights = null;
             _rb?.Dispose(); _rb = null;
             _driver?.Dispose(); _driver = null;
+            LiveryView.Release(_model);
             _model?.Destroy(); _model = null; RimId = 0; InteriorId = 0;
             _assets?.DestroyTextures(); _assets = null;
         }

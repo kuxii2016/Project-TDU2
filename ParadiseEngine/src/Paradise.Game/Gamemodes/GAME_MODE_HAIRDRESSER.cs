@@ -291,13 +291,17 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         Log.Info("Friseur: neue Frisur gespeichert, bezahlt $" + price);
     }
 
+    /// <summary>Bestätigungsbox aus general.bnk wie im Spiel (FlashDialog), Antwort an _root.DialogBox.</summary>
     static void AnswerDialog()
     {
         var ui = _hui; if (ui == null) return;
-        ui.SetVariable("/:PlayerAnswer", "a");
-        var owners = ui.FunctionOwners("DialogBox");
-        string target = owners.Contains("/") ? "/" : owners.Count > 0 ? owners[^1] : "/";
-        ui.CallClip(target, "DialogBox");
+        FlashDialog.Open(ui, ans =>
+        {
+            ui.SetVariable("/:PlayerAnswer", ans);
+            var owners = ui.FunctionOwners("DialogBox");
+            string target = owners.Contains("/") ? "/" : owners.Count > 0 ? owners[^1] : "/";
+            ui.CallClip(target, "DialogBox");
+        });
     }
 
     // ================================================================== Ablauf je Bild
@@ -310,6 +314,7 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         if (ctx.Paused) return;
         if (_startAt > 0f && _clock >= _startAt) { _startAt = -1f; StartMenu(); }
         _preview?.Update(time.DeltaTime);
+        if (FlashDialog.Active) { UpdateCamera(time.DeltaTime); return; }   // Bestätigungsbox offen: Tasten gehören ihr
         // Menü-Tasten wie der Flash Player des Spiels (Tasten-Buttons der Auswahlboxen, sonst Move/A/B): Gamemodes/Utils/FlashNav
         if (FlashNav.Update(ui, out bool backHandled))
         {

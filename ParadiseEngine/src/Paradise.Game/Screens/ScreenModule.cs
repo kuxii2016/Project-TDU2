@@ -67,6 +67,8 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (TDU2Controls.Pressed("dev_login")) GameMode.Set(Gamemode.GAME_MODE_LOGIN);
         if (TDU2Controls.Pressed("dev_freeride")) GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
         if (TDU2Controls.Pressed("dev_map")) GameMode.Set(GameMode.Current == Gamemode.GAME_MODE_MAP ? Gamemode.GAME_MODE_FREERIDE : Gamemode.GAME_MODE_MAP);
+        // Bestätigungsbox (general.bnk /dialog_box) – unabhängig vom Modus, solange offen
+        Gamemodes.FlashDialog.Update();
         _active?.Run(this, in time);
         IslandTravel.Update(this, time.DeltaTime);   // Inselwechsel (Unity TDU2IslandTravel, Gamemodes/Utils)
         ImportProfile();

@@ -1,4 +1,5 @@
 using Paradise.Core.Math;
+using Paradise.Core.Online;
 using System.Numerics;
 
 namespace Paradise.Core.Vehicles
@@ -8,7 +9,8 @@ namespace Paradise.Core.Vehicles
     ///   abseits der Straße steigt die Schmutzstufe mit _bodydirtfactor je Sekunde (Sonne 0.003, Regen 0.02),
     ///   auf der Straße im Regen wäscht _watercleanfactor (0.003/s) sie wieder ab.
     /// Darstellung: common_car.bnk/dirt_scratch.2db (R) über die Lack-Materialien (TDU2/Car: _DirtLevel).
-    /// Stand je Fahrzeug (Datei) für die Sitzung gemerkt. Portiert aus TDU2CarDirt (Unity).
+    /// Stand je Fahrzeug (Datei) für die Sitzung gemerkt und im Spielstand gespeichert (SaveData.carDirt, Engine – Unity nur je
+    /// Sitzung); die Garage zeigt ihn an den abgestellten Autos (<see cref="ApplyTo"/>). Portiert aus TDU2CarDirt (Unity).
     /// </summary>
     public sealed class CarDirt
     {
@@ -31,14 +33,16 @@ namespace Paradise.Core.Vehicles
         Vehicle? _veh;
         CarModel? _model;
         string? _key;
-        float _shown = -1f, _shownScr = -1f;
+        float _shown = -1f, _shownScr = -1f, _written = -1f, _writtenScr = -1f;
         bool _wetShown;
 
         public void Setup(Vehicle veh, CarModel? model)
         {
             _veh = veh; _model = model;
             _key = KeyOf(veh?.Car);
-            if (_key != null && Saved.TryGetValue(_key, out var l)) Level = l;
+            if (_key != null && Saved.TryGetValue(_key, out var l)) { Level = l; Scratches = SavedScr.TryGetValue(_key, out var s) ? s : 0f; }
+            else if (FromSave(veh?.Car?.FileName, out var lv, out var sc)) { Level = lv; Scratches = sc; if (_key != null) { Saved[_key] = lv; SavedScr[_key] = sc; } }
+            _written = Level; _writtenScr = Scratches;
             Apply(true);
         }
 
@@ -49,26 +53,87 @@ namespace Paradise.Core.Vehicles
             Apply(false);
         }
 
+        static readonly Dictionary<string, float> SavedScr = new Dictionary<string, float>();
+
         static string? KeyOf(CarPhysics? car) => car != null ? car.FileName + "#" + car.Id : null;
 
-        /// <summary>Gemerkte Schmutzstufe eines Fahrzeugs (0 = sauber/unbekannt).</summary>
+        /// <summary>Gemerkte Schmutzstufe eines Fahrzeugs (0 = sauber/unbekannt) – Sitzung, sonst Spielstand.</summary>
         public static float GetSaved(CarPhysics? car)
         {
             var k = KeyOf(car);
-            return k != null && Saved.TryGetValue(k, out var l) ? l : 0f;
+            if (k != null && Saved.TryGetValue(k, out var l)) return l;
+            return FromSave(car?.FileName, out var lv, out _) ? lv : 0f;
         }
 
-        /// <summary>Schmutzstufe eines Fahrzeugs setzen (z.B. Waschanlage: 0).</summary>
+        /// <summary>Gemerkte Kratzer eines Fahrzeugs (0..1).</summary>
+        public static float GetSavedScratches(CarPhysics? car)
+        {
+            var k = KeyOf(car);
+            if (k != null && SavedScr.TryGetValue(k, out var s)) return s;
+            return FromSave(car?.FileName, out _, out var sc) ? sc : 0f;
+        }
+
+        /// <summary>Schmutzstufe eines Fahrzeugs setzen (z.B. Waschanlage: 0) – auch im Spielstand.</summary>
         public static void SetSaved(CarPhysics? car, float level)
         {
             var k = KeyOf(car);
-            if (k != null) Saved[k] = Mathf.Clamp01(level);
+            if (k == null) return;
+            Saved[k] = Mathf.Clamp01(level);
+            ToSave(car!.FileName, Saved[k], SavedScr.TryGetValue(k, out var s) ? s : 0f);
+        }
+
+        /// <summary>Spielstand (SaveData.carDirt) lesen.</summary>
+        static bool FromSave(string? file, out float level, out float scratches)
+        {
+            level = scratches = 0f;
+            var list = TDU2Session.Save?.carDirt;
+            if (string.IsNullOrEmpty(file) || list == null) return false;
+            foreach (var e in list)
+                if (e != null && string.Equals(e.car, file, StringComparison.OrdinalIgnoreCase)) { level = Mathf.Clamp01(e.level); scratches = Mathf.Clamp01(e.scratches); return true; }
+            return false;
+        }
+
+        /// <summary>Spielstand (SaveData.carDirt) schreiben; gespeichert wird mit dem übrigen Spielstand.</summary>
+        static void ToSave(string? file, float level, float scratches)
+        {
+            var sv = TDU2Session.Save;
+            if (string.IsNullOrEmpty(file) || sv == null) return;
+            sv.carDirt ??= new List<DirtEntry>();
+            foreach (var e in sv.carDirt)
+                if (e != null && string.Equals(e.car, file, StringComparison.OrdinalIgnoreCase)) { e.level = level; e.scratches = scratches; return; }
+            sv.carDirt.Add(new DirtEntry { car = file, level = level, scratches = scratches });
+        }
+
+        /// <summary>Gespeicherten Schmutz an einem abgestellten Auto zeigen (Garage), ohne eigene Berechnung.</summary>
+        public static void ApplyTo(CarModel? model, CarPhysics? car)
+        {
+            if (model == null || car == null) return;
+            float lvl = GetSaved(car), scr = GetSavedScratches(car);
+            var col = new CarDirt().DryColor;
+            foreach (var m in model.PaintMaterials)
+            {
+                if (m == null || !m.IsCarShader) continue;
+                m.Desc.DirtLevel = lvl;
+                m.Desc.ScratchLevel = scr;
+                m.Desc.DirtColor = col;
+                model.ApplyMaterial(m);
+            }
         }
 
         /// <summary>Auto waschen (Stufe 0).</summary>
-        public void Wash() { Level = 0f; Scratches = 0f; Apply(true); }
+        public void Wash() { Level = 0f; Scratches = 0f; Apply(true); Store(true); }
 
-        public void FullDirt() { Level = 1f; Apply(true); }
+        /// <summary>Stand merken (Sitzung) und bei Änderung in den Spielstand schreiben.</summary>
+        void Store(bool force)
+        {
+            if (_key == null) return;
+            Saved[_key] = Level; SavedScr[_key] = Scratches;
+            if (!force && System.Math.Abs(Level - _written) < 0.01f && System.Math.Abs(Scratches - _writtenScr) < 0.01f) return;
+            _written = Level; _writtenScr = Scratches;
+            ToSave(_veh?.Car?.FileName, Level, Scratches);
+        }
+
+        public void FullDirt() { Level = 1f; Apply(true); Store(true); }
 
         /// <summary>Unity Update.</summary>
         public void Update(float dt)
@@ -92,7 +157,7 @@ namespace Paradise.Core.Vehicles
                 Level = Mathf.Clamp01(Level);
             }
             Apply(false);
-            if (_key != null) Saved[_key] = Level;
+            Store(false);
         }
 
         /// <summary>Gelände = Terrain-Mesh des Streamers (Straßen liegen als eigene Sektor-Meshes darüber).</summary>

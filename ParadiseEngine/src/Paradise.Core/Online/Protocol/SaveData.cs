@@ -43,6 +43,10 @@ namespace Paradise.Core.Online
         public string interior = "";
         /// <summary>Ausstattung je Auto (Autohändler: Felgen, Lack, Innenraum).</summary>
         public List<CarConfigEntry> carConfigs = new List<CarConfigEntry>();
+        /// <summary>Verschmutzung je Auto (CarDirt: Schmutzstufe 0..1, Kratzer 0..1) – draußen und in der Garage.</summary>
+        public List<DirtEntry> carDirt = new List<DirtEntry>();
+        /// <summary>Tuningstufen je Auto (Tuner; CarUpgrades, gepackter int).</summary>
+        public List<UpgradeEntry> carUpgrades = new List<UpgradeEntry>();
         /// <summary>Schritt der Geschichte (TDU2StoryProgress, -1 = nie begonnen) – stellt den Fortschritt auf einem anderen PC
         /// bzw. nach gelöschten PlayerPrefs wieder her.</summary>
         public int story = -1;

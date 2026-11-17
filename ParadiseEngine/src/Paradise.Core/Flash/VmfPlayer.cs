@@ -954,20 +954,11 @@ namespace Paradise.Core.Flash
                     case VmfMovie.EditText t:
                         DrawText(t, mw, cw, inst, d.TextOverride ?? CaretText(t));
                         break;
-                    case VmfMovie.Button btn:
-                        {
-                            // sichtbarer Zustand: Up, unter der Maus Over, gedrückt Down
-                            int state = d == _hoverBtn ? (_mouseDown ? 0x04 : 0x02) : 0x01;
-                            bool any = false;
-                            foreach (var r in btn.Records) if ((r.States & state) != 0) { any = true; break; }
-                            if (!any) state = 0x01;
-                            foreach (var r in btn.Records)
-                            {
-                                if ((r.States & state) == 0 || !Movie.Chars.TryGetValue(r.CharId, out var rc)) continue;
-                                if (rc is VmfMovie.Shape rs) DrawShape(rs, mw * r.Matrix, cw * r.Cx);
-                            }
-                            break;
-                        }
+                    case VmfMovie.Button:
+                        // Knöpfe (DefineButton2) zeichnet edFlash nicht – sie sind nur Trefferflächen für Maus/Tasten. Belegt: in
+                        // shopscar/main/shopsavatar haben die Knöpfe keine sichtbaren Zustände, in general.bnk tragen 104 von 159 nur
+                        // die Platzhalterfarben des Flash-Editors (Up 0,204,255 @57, Over 153,0,0 @80) – im Spiel nicht zu sehen.
+                        break;
                 }
             }
             _clip = outerClip; _maskTex = outerMask; _maskRect = outerMaskRect;

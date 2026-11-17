@@ -144,6 +144,7 @@ public sealed class PauseMenu
         UpdatePlayerLists();
         if (UpdateBinder()) return;   // "Taste zuweisen" wartet auf eine Taste
         if (_pendingDialog) AnswerDialog();
+        if (Paradise.Game.Gamemodes.FlashDialog.Active) return;   // Bestätigungsbox offen: Tasten gehören ihr
 
         // Texteingabe (setInputFocus, z.B. "Spieler suchen"): Buchstaben gehören dem Feld, nur Enter bestätigt, ESC bricht ab
         bool typing = ui.InputFocus != null;
@@ -210,25 +211,30 @@ public sealed class PauseMenu
 
     // ------------------------------------------------------------------ Bestätigungsdialoge ("dbxo")
     // Der Film setzt _root.DgbxCase/Msg1Txt … und meldet "dbxo"; das Spiel zeigt eine Ja/Nein-Box und ruft danach
-    // DialogBox() mit _root.PlayerAnswer = "a" (Ja). Hier: Ja bestätigen.
+    // DialogBox() mit _root.PlayerAnswer ("a" Ja, "b" Nein). Box aus general.bnk (FlashDialog), wie im Spiel.
     void AnswerDialog()
     {
         _pendingDialog = false;
         var ui = _ui!;
+        Paradise.Game.Gamemodes.FlashDialog.Open(ui, ans => DeliverAnswer(ui, ans));
+    }
+
+    void DeliverAnswer(VmfPlayer ui, string ans)
+    {
         string kase = ui.GetVariable("/:DgbxCase") ?? "";
         var owners = ui.FunctionOwners("DialogBox");
         string? target = null;
         foreach (var o in owners) if (o.IndexOf("options", StringComparison.OrdinalIgnoreCase) >= 0) { target = o; break; }
         if (target == null && owners.Count > 0) target = owners[owners.Count - 1];
-        Log.Info($"Pausemenü: Dialog '{kase}' -> Ja ({target ?? "kein DialogBox"})");
-        ui.SetVariable("/:PlayerAnswer", "a");
+        Log.Info($"Pausemenü: Dialog '{kase}' -> {ans} ({target ?? "kein DialogBox"})");
+        ui.SetVariable("/:PlayerAnswer", ans);
         if (target == null || !ui.CallClip(target, "DialogBox"))
         {
             ui.SetValue("/:Input", true);
             ui.SetValue("/:_buttons", true);
         }
         //This is why the Windows was still Open.
-        if (kase == "confirm_exit_game")
+        if (kase == "confirm_exit_game" && ans == "a")
         {
             _ctx.Quit();
             ProcessEnd.Now();

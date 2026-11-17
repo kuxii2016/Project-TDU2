@@ -87,7 +87,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static float EnterMaxSpeedKmh = 40f;
     internal static float InteractDistance = 10f;
 
-    internal enum Kind { Dealer, Living, Garage, StickerShop, Other }
+    internal enum Kind { Dealer, Living, Garage, StickerShop, Tuner, Other }
     internal sealed class SpotBanks { public bool Valid, IsClub, IsCasino, CarWash; public Kind Kind; public string? Living, Garage, Name, TravelTo; }
 
     internal static TerrainModule _t = null!;
@@ -113,7 +113,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static bool SceneReady => Inside && _scene != null && _sceneTask == null;
     internal static Spot? CurrentSpot => _spot;
     /// <summary>Spielmodus für die Oberfläche des aktuellen Interieurs.</summary>
-    internal static Gamemode RoomMode => (_sceneTask != null ? _pendingKind : _kind) switch { Kind.Dealer => Gamemode.GAME_MODE_SHOP, Kind.Garage => Gamemode.GAME_MODE_GARAGE, Kind.StickerShop => Gamemode.GAME_MODE_STICKERS, _ => Gamemode.GAME_MODE_LIVING };
+    internal static Gamemode RoomMode => (_sceneTask != null ? _pendingKind : _kind) switch { Kind.Dealer => Gamemode.GAME_MODE_SHOP, Kind.Garage => Gamemode.GAME_MODE_GARAGE, Kind.StickerShop => Gamemode.GAME_MODE_STICKERS, Kind.Tuner => Gamemode.GAME_MODE_TUNER, _ => Gamemode.GAME_MODE_LIVING };
 
     internal static string? BnkDir => Paradise.Core.Config.GameData.BnkDir;
     internal static string InteriorDir => Path.Combine(BnkDir ?? "", "interior");
@@ -159,8 +159,11 @@ public abstract partial class InteriorUtils : GameModeHandler
                 if (d2 < best) { best = d2; _nearSpot = s; _nearBanks = b; }
             }
         }
-        Vm?.Minimap?.ShowEnter(_nearSpot != null && vm.Current != null ? _nearSpot.Code : null);
-        if (_nearSpot != null && _nearBanks != null && TDU2Controls.ConfirmPressed())
+        // Tuner: nur mit einem Auto seiner Marken (sonst Einfahrt gesperrt, "Falsches Fahrzeug/Marke")
+        string? lockText = _nearSpot != null && _nearBanks?.Kind == Kind.Tuner && vm.Current != null && !GAME_MODE_TUNER.Accepts(_nearSpot, vm.Current.Car)
+            ? GAME_MODE_TUNER.LockedText() : null;
+        Vm?.Minimap?.ShowEnter(_nearSpot != null && vm.Current != null ? _nearSpot.Code : null, lockText);
+        if (_nearSpot != null && _nearBanks != null && lockText == null && TDU2Controls.ConfirmPressed())
         {
             Vm?.Minimap?.ShowEnter(null);
             EnterInterior(_nearSpot, _nearBanks);
@@ -198,6 +201,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         var b = Resolve(s);
         if (!b.Valid || b.CarWash) { Log.Info($"Karte: Spot {s.Code} hat kein Interieur"); return false; }
         if (b.TravelTo != null) { Log.Info($"Karte: {s.Code} ({b.Name}) noch nicht portiert"); return false; }
+        if (b.Kind == Kind.Tuner && Vm?.Current != null && !GAME_MODE_TUNER.Accepts(s, Vm.Current.Car)) { Log.Info($"Karte: Tuner {s.Code} – falsche Marke"); return false; }
         if (Inside) ExitInterior();
         Vm?.Minimap?.ShowEnter(null);
         EnterInterior(s, b);
@@ -255,6 +259,11 @@ public abstract partial class InteriorUtils : GameModeHandler
             else if (code.StartsWith("estick"))
             {
                 b.Living = Bank("i" + code[1..]); b.Kind = Kind.StickerShop; b.Name = "Sticker-Shop";
+            }
+            else if (code.StartsWith("etun"))
+            {
+                // Tuner ETUN_A … ETUN_I: alle Gebäude teilen sich das eine Werkstatt-Interieur itun_a (einziges itun_* der Spieldaten)
+                b.Living = Bank("itun_a"); b.Kind = Kind.Tuner; b.Name = "Tuner";
             }
             else if (code.StartsWith("ecd") || code.StartsWith("ebd"))
             {
@@ -484,7 +493,7 @@ public abstract partial class InteriorUtils : GameModeHandler
                 foreach (int id in shop.CarIds)
                     if (id != 0 && db.ById.TryGetValue(id, out var c)) { var av = vm.FindCar(c.FileName); if (av != null && !cars.Contains(av)) cars.Add(av); }
         }
-        else if (_kind == Kind.StickerShop) { if (_lastCar != null) cars.Add(_lastCar); }
+        else if (_kind == Kind.StickerShop || _kind == Kind.Tuner) { if (_lastCar != null) cars.Add(_lastCar); }
         else if (_kind == Kind.Garage && _spotBanks != null && _spotBanks.IsClub) { }   // Club-Garage: Autos der Clubmitglieder (nicht portiert)
         else if (_kind == Kind.Garage)
         {
@@ -573,6 +582,10 @@ public abstract partial class InteriorUtils : GameModeHandler
         var fwd = Vector3.TransformNormal(slot.Forward, _holder); fwd.Y = 0f;
         if (fwd.LengthSquared() < 1e-4f) fwd = Vector3.UnitZ;
         var model = CarModel.Build(a, r);
+        // eigene Lackierung in Garage und Sticker-Shop (Unity BuildDisplayCar: TDU2LiveryView.ApplyOwn)
+        if (_kind == Kind.Garage || _kind == Kind.StickerShop || _kind == Kind.Tuner) LiveryView.ApplyOwn(model, a, a.Car.FileName);
+        // Garage: gespeicherte Verschmutzung der abgestellten Autos (SaveData.carDirt)
+        if (_kind == Kind.Garage) CarDirt.ApplyTo(model, a.Car);
         // Teile mit unbrauchbarer Geometrie ausblenden (Unity: Renderer größer 7 x 4 x 9 m)
         bool any = false, tires = false; Vector3 bmin = default, tmin = default;
         foreach (var n in model.Visual.SelfAndDescendants())
@@ -670,6 +683,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         foreach (var c in _cars)
         {
             CarAccessories.Forget(c.Model);
+            LiveryView.Release(c.Model);
             c.Model.Destroy();
             c.Assets.DestroyTextures();
             c.ShadowMesh?.Dispose(); c.ShadowMat?.Dispose(); c.ShadowBlob?.Dispose();
@@ -1039,16 +1053,18 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Fahrzeugmenü (Unity TDU2CarDealer): Maus frei für den Film, kein Laufen/Umsehen; im Auto Maus gefangen (Umsehen)
         // Fahrzeugliste der Garage (home.vmf garage/vehicule_list): wie ein Menü – Maus frei, kein Laufen/Umsehen
         bool carList = GAME_MODE_GARAGE.GarageListOpen;
-        _t.Input.CursorLocked = !paused && (!_dealerMenu || _carIn == CarIn.Inside) && !GAME_MODE_LIVING.HomeMenuFreesMouse && !carList;
-        _fp.LookEnabled = !paused && !_dealerMenu && GAME_MODE_LIVING.HomeAllowsLook && !carList;
-        if (_ui != null) _ui.MouseEnabled = (_dealerMenu && _carIn != CarIn.Inside) || GAME_MODE_LIVING.HomeMenuFreesMouse || carList;
+        // Sticker-Shop-Menü (Unity TDU2StickerShop: SetFirstPerson(false)): Maus frei, kein Laufen/Umsehen, Kamera vom Shop
+        bool stick = GAME_MODE_STICKERS.ShopOpen || GAME_MODE_TUNER.MenuOpen || FlashDialog.Active;
+        _t.Input.CursorLocked = !paused && (!_dealerMenu || _carIn == CarIn.Inside) && !GAME_MODE_LIVING.HomeMenuFreesMouse && !carList && !stick;
+        _fp.LookEnabled = !paused && !_dealerMenu && GAME_MODE_LIVING.HomeAllowsLook && !carList && !stick;
+        if (_ui != null) _ui.MouseEnabled = ((_dealerMenu && _carIn != CarIn.Inside) || GAME_MODE_LIVING.HomeMenuFreesMouse || carList || stick) && !FlashDialog.Active;
         PollFurniture();
         PollCars();
         GAME_MODE_SHOP.PollDealerPreview();                   // Händler: Ausstellungsauto mit der gewählten Ausstattung (auch nach dem Schließen)
         UpdateSpotExterior();                  // nachgeladene Exterior-Platzhalter (Unity UpdateInside)
         if (WorldHiddenWanted != (_t.Streamer?.HideWorld ?? false)) { HideWorld(); RenderFx.ProbeVersion++; }
         if (!paused) CarAccessories.UpdateAll(dt);   // Türen/Fenster der Ausstellungs-/Garagenautos (Unity: jedes Bild im Interieur)
-        if (!paused && _carIn != CarIn.Inside && !carList) _fp.Update(dt, _t.Input, Phys);
+        if (!paused && _carIn != CarIn.Inside && !carList && !stick) _fp.Update(dt, _t.Input, Phys);
         if (_t.Input.IsKeyDown(0x7A) && !_f11Was) Paradise.Core.Render.RenderFx.DebugPlanar = !Paradise.Core.Render.RenderFx.DebugPlanar;   // F11: Diagnose Spiegelbild (kann wieder raus)
         _f11Was = _t.Input.IsKeyDown(0x7A);
         // Fällt man trotzdem (Rampe/Loch), zurück an den Startpunkt (Unity CatchFall)
@@ -1059,6 +1075,13 @@ public abstract partial class InteriorUtils : GameModeHandler
             Log.Warn("Interieur: durch den Boden gefallen – zurück zum Startpunkt");
         }
         // Wohnbereich: Tagebuch, MyTDULife, My House, TDU Media (Unity UpdateInside: vor dem Händler, jeweils return)
+        // Bestätigungsbox offen (FlashDialog): Tasten/Maus gehören der Box, der Film darunter wartet auf die Antwort
+        if (stick)
+        {
+            if (!paused && GAME_MODE_STICKERS.ShopOpen) GAME_MODE_STICKERS.UpdateShop(dt);
+            else { if (!paused && GAME_MODE_TUNER.MenuOpen) GAME_MODE_TUNER.UpdateMenu(dt); ApplyCamera(); }
+            return Inside;
+        }   // Tasten, Platzieren, Kamera: der Shop
         if (!paused) UpdateBackWatch();   // Zurück-Überwachung (Unity TDU2MenuFlow), für alle Interieur-Menüs
         if (!paused && GAME_MODE_LIVING.UpdateHomeMenus(dt)) { ApplyCamera(); return Inside; }
         if (_dealerMenu && !paused)
@@ -1189,6 +1212,8 @@ public abstract partial class InteriorUtils : GameModeHandler
         {
             // Autohändler/Garage: Original-Menü des Films (Garage: Losfahren, Einsteigen, Daten, Vergleichen)
             if ((_kind == Kind.Dealer || _kind == Kind.Garage) && OpenDealerMenu(dc)) return;
+            if (_kind == Kind.StickerShop && GAME_MODE_STICKERS.OpenShop(dc)) return;   // Unity: Klick aufs Auto öffnet den Sticker-Shop
+            if (_kind == Kind.Tuner && GAME_MODE_TUNER.Open(dc)) return;               // Tuner: Klick aufs eigene Auto öffnet das Tuner-Menü
             if (_kind == Kind.Dealer || _kind == Kind.StickerShop) { Log.Info("Interieur: Menü für " + dc.Car.FileName + " in " + _kind + " noch nicht portiert"); return; }
             ExitInterior(dc.Car);
             return;
@@ -1208,8 +1233,11 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 12 or 14 when _kind == Kind.Garage: GAME_MODE_GARAGE.OpenGarageList(); break;   // Plakat: Fahrzeugliste (home.vmf garage "list")
             case 22 when GAME_MODE_GOODIES.Open(): break;                         // Verkäuferin (Seller_area) im Kleidungsladen: shopsavatar.vmf "clothes_shop"
             case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
+            case 28 when _kind == Kind.StickerShop: GAME_MODE_STICKERS.OpenShop(null); break;   // Verkäuferin (StickersShop_area)
             case 29: GAME_MODE_HAIRDRESSER.Open(); break;                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
-            default: Log.Info("Hotspot noch nicht portiert: " + Label(s) + " (Typ " + s.Type + ")"); break;
+            default:
+                if (_kind == Kind.Tuner && GAME_MODE_TUNER.Open()) break;          // Tuner (npc_tuner) angesprochen: Tuner-Menü
+                Log.Info("Hotspot noch nicht portiert: " + Label(s) + " (Typ " + s.Type + ")"); break;
         }
     }
 
@@ -1233,6 +1261,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             54 => Lang(351, "klub"),
             57 => "TDU " + Lang(4919, "media"),
             22 => Lang(179, "Verkäufer"),          // Seller_area (Bekleidungsgeschäft)
+            23 => Lang(483, "High-End-Tuner"),     // Tuner: Seller_area (npc_tuner) und Seller_area_01 (Hebebühne), m_AfterMarket
             28 => Lang(3288, "Autoaufklebergeschäft"),
             29 => Lang(3631, "Frisuren"),           // Hairdresser_area
             32 => Lang(1866, "Flughafen"),
@@ -1245,7 +1274,9 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         string n = s.Name ?? "";
         if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) return "exit";
-        return s.Type switch { 5 => "garage", 6 => "living", 9 => "diary", 10 => "dressing", 12 or 14 => "billboard", 54 => "club", 57 => "td_media", _ => null };
+        // 23: Tuner (shopscar.vmf ItemType "npc_tuner": Leiste/Hilfe des Tuners, "valid" öffnet OpenTuner) – ohne blieb "vehicle"
+        // vom Auto stehen und der Film zeigte zusätzlich das Fahrzeugmenü (Steuerkreuz)
+        return s.Type switch { 5 => "garage", 6 => "living", 9 => "diary", 10 => "dressing", 12 or 14 => "billboard", 23 => "npc_tuner", 54 => "club", 57 => "td_media", _ => null };
     }
 
     internal static string IconLabel(InteriorScene.Selectable s)
@@ -1272,6 +1303,8 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static void LoadUi()
     {
         if (_ui == null) return;
+        if (_kind == Kind.StickerShop) { GAME_MODE_STICKERS.LoadShopUi(); return; }   // shopscar.vmf "st_open" (Unity LoadShopUi)
+        if (_kind == Kind.Tuner) { GAME_MODE_TUNER.LoadTunerUi(); return; }          // shopscar.vmf "after_mkt" (Tuner, Laufmodus tuner_stop)
         try
         {
             string stop = _kind == Kind.Dealer ? "cd_stop" : _kind == Kind.Garage ? "garage_stop" : "living_stop";
@@ -1508,7 +1541,7 @@ public abstract partial class InteriorUtils : GameModeHandler
                     SetCommonData(c, r, vehicleEngine, isTuningable, isStickerable, isPaintable);
                     _ui.SetVariable("/:Comp_car", name);
                     _ui.SetVariable("/:comp_group", GroupLabel(cat));
-                    _ui.SetVariable("/:comp_upgrade", "level0");
+                    _ui.SetVariable("/:comp_upgrade", _kind == Kind.Dealer ? "level0" : CarUpgrades.LevelLabel(CarUpgrades.Get(c.FileName).Global));
                     _ui.SetValue("/:comp_speed", Math.Clamp(aSpd, 1, 101));
                     _ui.SetValue("/:comp_accel", Math.Clamp(aAcc, 1, 101));
                     _ui.SetValue("/:comp_braking", Math.Clamp(aBrk, 1, 101));
@@ -1532,7 +1565,7 @@ public abstract partial class InteriorUtils : GameModeHandler
                 _ui.SetValue("/:state_metric", c.Kmh ? 1 : 0);
                 _ui.SetVariable("/:Current_car", name);
                 _ui.SetVariable("/:cur_group", GroupLabel(cat));
-                _ui.SetVariable("/:cur_upgrade", "level0");
+                _ui.SetVariable("/:cur_upgrade", _kind == Kind.Dealer ? "level0" : CarUpgrades.LevelLabel(CarUpgrades.Get(c.FileName).Global));   // Tuning (Händlerautos: Serie)
                 _ui.SetValue("/:cur_speed", Math.Clamp(aSpd, 1, 101));
                 _ui.SetValue("/:cur_accel", Math.Clamp(aAcc, 1, 101));
                 _ui.SetValue("/:cur_braking", Math.Clamp(aBrk, 1, 101));

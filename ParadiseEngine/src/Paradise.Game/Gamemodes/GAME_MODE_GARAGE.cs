@@ -222,7 +222,7 @@ public class GAME_MODE_GARAGE : InteriorUtils
             var c = _listCars[r];
             int cat = c.Raw != null ? c.Raw.I("_vehiclecategory") : 0;
             _ui.GotoLabel(lp + "/ic", GroupLabel(cat), false);
-            _ui.GotoLabel(lp + "/upg", "level0", false);   // Tuningstufe: Tuning gibt es noch nicht
+            _ui.GotoLabel(lp + "/upg", CarUpgrades.LevelLabel(CarUpgrades.Get(c.FileName).Global), false);   // Tuningstufe (Tuner, CarUpgrades)
             string area = HouseArea(r < _listHouses.Count ? _listHouses[r] : null);
             if (area.Length > 0) _ui.GotoLabel(lp + "/area", area, false);
         }
@@ -651,24 +651,29 @@ public class GAME_MODE_GARAGE : InteriorUtils
     {
         string kase = _ui!.GetVariable("/:DgbxCase") ?? "";
         if (kase == "vehicle_full") { EndDealerCar(); _ui.SetValue("/:Input", true); return; }
-        Log.Info("Garage: Dialog '" + kase + "' -> Ja");
-        _ui.SetVariable("/:PlayerAnswer", "a");
-        if (!_ui.CallClip("/", "DialogBox"))
+        // Bestätigungsbox aus general.bnk wie im Spiel; Losfahren nur bei "Ja"
+        var ui = _ui!;
+        FlashDialog.Open(ui, ans =>
         {
-            if (kase == "drive_out" && _ui.HasLabel("/", "garage_out")) _ui.GotoLabel("/", "garage_out", true);
-            _ui.SetValue("/:Input", true);
-        }
-        if ((kase == "drive_out" || kase == "drive_out_list") && _dealerCar != null)
-        {
-            _driveOutCar = _dealerCar.Car;
-            _driveOutAt = _time + 0.9f;
-        }
-        else if (kase == "confirm_change_vehicule" && _listChosen != null)
-        {
-            // aus der Fahrzeugliste: mit dem gewählten Auto hinaus (Film: seca, garage_quit, dann gofr)
-            _driveOutCar = _listChosen;
-            _driveOutAt = _time + 0.9f;
-        }
+            Log.Info("Garage: Dialog '" + kase + "' -> " + ans);
+            ui.SetVariable("/:PlayerAnswer", ans);
+            if (!ui.CallClip("/", "DialogBox"))
+            {
+                if (ans == "a" && kase == "drive_out" && ui.HasLabel("/", "garage_out")) ui.GotoLabel("/", "garage_out", true);
+                ui.SetValue("/:Input", true);
+            }
+            if (ans == "a" && (kase == "drive_out" || kase == "drive_out_list") && _dealerCar != null)
+            {
+                _driveOutCar = _dealerCar.Car;
+                _driveOutAt = _time + 0.9f;
+            }
+            else if (ans == "a" && kase == "confirm_change_vehicule" && _listChosen != null)
+            {
+                // aus der Fahrzeugliste: mit dem gewählten Auto hinaus (Film: seca, garage_quit, dann gofr)
+                _driveOutCar = _listChosen;
+                _driveOutAt = _time + 0.9f;
+            }
+        });
     }
 
     // ================================================================== Jedes Bild

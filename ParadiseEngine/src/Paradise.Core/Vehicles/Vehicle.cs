@@ -53,6 +53,8 @@ namespace Paradise.Core.Vehicles
         public bool AutoHold = true;
         public float AutoHoldSpeed = 0.6f;
         public float GripScale = 0.62f;
+        /// <summary>Tuning (CarUpgrades, exe: Motor x A, Achsübersetzung / T, Bremsen x B); 1 = Serie.</summary>
+        public float UpgradeTorque = 1f, UpgradeTopSpeed = 1f, UpgradeBraking = 1f;
         public int GroundMask = ~(1 << 2);
         public Func<Vector3, (bool ok, float y)> GroundFallback;
         public float AccelPedal, BrakePedal, Steer, HandBrake;
@@ -636,7 +638,7 @@ namespace Paradise.Core.Vehicles
             for (int i = 0; i < Wheels.Length; i++)
             {
                 var w = Wheels[i];
-                float bt = Mathf.Max(brakeIn, HoldAmount * 0.6f) * (w.Front ? _brakeTorqueFront : _brakeTorqueRear);
+                float bt = Mathf.Max(brakeIn, HoldAmount * 0.6f) * (w.Front ? _brakeTorqueFront : _brakeTorqueRear) * UpgradeBraking;
                 if (!w.Front) bt += Mathf.Clamp01(HandBrake) * _handBrakeTorque;
                 // ABS: Bremse lösen, wenn Längsschlupf unter die Grenze fällt
                 bool isBikeB = Car != null && Car.IsBike;
@@ -670,7 +672,7 @@ namespace Paradise.Core.Vehicles
 
         float EngineTorqueAt(float rpm, float throttle)
         {
-            float tMax = TorqueMax != null ? TorqueMax.Evaluate(rpm) : Car.TorqueNm;
+            float tMax = (TorqueMax != null ? TorqueMax.Evaluate(rpm) : Car.TorqueNm) * UpgradeTorque;
             float tMin = TorqueMin != null ? TorqueMin.Evaluate(rpm) : -Car.TorqueNm * 0.1f;
             if (rpm < Car.RpmMin * 0.9f) tMin = 0f;
             return Mathf.Lerp(tMin, tMax, throttle);
@@ -680,7 +682,7 @@ namespace Paradise.Core.Vehicles
         {
             if (Gear == 0) return 0f;
             float r = Gear < 0 ? (_gearRatios.Length > 0 ? _gearRatios[0] * 1.1f : 3.2f) : _gearRatios[Mathf.Clamp(Gear - 1, 0, _gearRatios.Length - 1)];
-            return r * Mathf.Max(1f, Car.FinalDrive);
+            return r * Mathf.Max(1f, Car.FinalDrive) / Mathf.Max(0.01f, UpgradeTopSpeed);
         }
 
         /// <summary>Offenes/Sperr-Differential: Grundaufteilung 50/50, Sperrmoment ~ Drehzahldifferenz, begrenzt durch Sperrwert (%).</summary>
@@ -1008,7 +1010,7 @@ namespace Paradise.Core.Vehicles
             }
             if (Gear > 1 && _shiftCooldown <= 0f)
             {
-                float lowerRatio = _gearRatios[Gear - 2] * c.FinalDrive;
+                float lowerRatio = _gearRatios[Gear - 2] * c.FinalDrive / Mathf.Max(0.01f, UpgradeTopSpeed);
                 float rpmLower = rpm * lowerRatio / Mathf.Max(0.01f, CurrentRatio());
                 // Runterschalten erst, wenn der Motor wirklich abwürgt (deutlich unter der Hochschaltschwelle,
                 // Hysterese ~45 %) – verhindert das Hoch/Runter-Pendeln kurz nach dem Hochschalten.

@@ -329,13 +329,18 @@ public abstract class AvatarShop : InteriorUtils
 
     protected static string Money(long v) => "   " + v.ToString("N0", CultureInfo.GetCultureInfo("de-DE")) + "     ";
 
+    /// <summary>Bestätigungsbox aus general.bnk wie im Spiel (FlashDialog), Antwort an _root.DialogBox.</summary>
     void AnswerDialog()
     {
         var ui = _ui2; if (ui == null) return;
-        Log.Debug(Mode + ": Dialog '" + (ui.GetVariable("/:DgbxCase") ?? "") + "' -> ja");
-        ui.SetVariable("/:PlayerAnswer", "a");
-        var owners = ui.FunctionOwners("DialogBox");
-        ui.CallClip(owners.Count > 0 ? owners[^1] : "/", "DialogBox");
+        string kase = ui.GetVariable("/:DgbxCase") ?? "";
+        FlashDialog.Open(ui, ans =>
+        {
+            Log.Debug(Mode + ": Dialog '" + kase + "' -> " + ans);
+            ui.SetVariable("/:PlayerAnswer", ans);
+            var owners = ui.FunctionOwners("DialogBox");
+            ui.CallClip(owners.Count > 0 ? owners[^1] : "/", "DialogBox");
+        });
     }
 
     /// <summary>
@@ -419,7 +424,7 @@ public abstract class AvatarShop : InteriorUtils
         if (_inputAt > 0f && _clock >= _inputAt) { _inputAt = -1f; if (_inItems) ui.SetValue("/:Input", true); }
         if (_reopenAt > 0f && _clock >= _reopenAt) { _reopenAt = -1f; CloseItemsAfterBuy(); }
         if (_catInputAt > 0f && _clock >= _catInputAt) { _catInputAt = -1f; if (!_inItems) ui.SetValue("/:Input", true); }
-        HandleInput(ui, time.DeltaTime);
+        if (!FlashDialog.Active) HandleInput(ui, time.DeltaTime);   // Bestätigungsbox offen: Tasten gehören ihr
         if (!_open) return;
         // Avatar drehen: Q/E, rechte Maustaste, rechter Stick (Unity)
         var input = _t.Input;

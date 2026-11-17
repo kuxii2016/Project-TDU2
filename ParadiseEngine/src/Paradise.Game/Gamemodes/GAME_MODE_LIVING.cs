@@ -228,16 +228,21 @@ public class GAME_MODE_LIVING : InteriorUtils
         Log.Info("Tagebuch FSCommand: " + c);
     }
 
-    /// <summary>Bestätigungsdialog des Films (DBXO -> "dbxo") mit Ja beantworten.</summary>
+    /// <summary>Bestätigungsdialog des Films (DBXO -> "dbxo"): Box aus general.bnk wie im Spiel, Antwort an _root.DialogBox.</summary>
     internal static void AnswerUiDialog()
     {
-        if (_ui == null) return;
-        Log.Info("Interieur-Dialog '" + (_ui.GetVariable("/:DgbxCase") ?? "") + "' -> Ja");
-        _ui.SetVariable("/:PlayerAnswer", "a");
-        // home.vmf: die echte DialogBox steht in _root (Unter-Clips haben nur leere Platzhalter gleichen Namens)
-        var owners = _ui.FunctionOwners("DialogBox");
-        string? owner = owners.Contains("/") && _ui.Find("/myhs_editor") != null ? "/" : (owners.Count > 0 ? owners[^1] : null);
-        if (owner == null || !_ui.CallClip(owner, "DialogBox")) _ui.SetValue("/:Input", true);
+        var ui = _ui;
+        if (ui == null) return;
+        string kase = ui.GetVariable("/:DgbxCase") ?? "";
+        FlashDialog.Open(ui, ans =>
+        {
+            Log.Info("Interieur-Dialog '" + kase + "' -> " + ans);
+            ui.SetVariable("/:PlayerAnswer", ans);
+            // home.vmf: die echte DialogBox steht in _root (Unter-Clips haben nur leere Platzhalter gleichen Namens)
+            var owners = ui.FunctionOwners("DialogBox");
+            string? owner = owners.Contains("/") && ui.Find("/myhs_editor") != null ? "/" : (owners.Count > 0 ? owners[^1] : null);
+            if (owner == null || !ui.CallClip(owner, "DialogBox")) ui.SetValue("/:Input", true);
+        });
     }
 
     // ================================================================== MyTDULife (Unity TDU2MyLife)

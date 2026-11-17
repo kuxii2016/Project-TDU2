@@ -169,6 +169,74 @@ public sealed class TextureDef
         _ => TextureWrap.Repeat,
     };
 
+    /// <summary>
+    /// Mip 0 als RGBA8 auf der CPU (Zeile 0 = erste Zeile der Datei), für DXT1/DXT3/DXT5 – z.B. Sticker und Werks-Beklebung, deren
+    /// Stickermap auf der CPU zusammengesetzt wird (Core/Vehicles/Livery.cs). Cubemaps/unbekannt: null.
+    /// </summary>
+    public byte[]? DecodeRgba()
+    {
+        if (IsCube || Data == null || Width <= 0 || Height <= 0) return null;
+        return BaseFormat switch
+        {
+            0x84 => DecodeBc(Data, DataOffset, Width, Height, false),
+            0x88 => DecodeBc(Data, DataOffset, Width, Height, true),
+            0x86 => DecodeDxt3(Data, DataOffset, Width, Height),
+            _ => null,
+        };
+    }
+
+    /// <summary>DXT1 (BC1, mit 1-Bit-Alpha) bzw. DXT5 (BC3: interpolierter Alpha-Block + Farbblock).</summary>
+    private static byte[]? DecodeBc(byte[] d, int off, int w, int h, bool bc3)
+    {
+        int bw = System.Math.Max(1, (w + 3) / 4), bh = System.Math.Max(1, (h + 3) / 4), bb = bc3 ? 16 : 8;
+        if (off + bw * bh * bb > d.Length) return null;
+        var px = new byte[w * h * 4];
+        Span<byte> pal = stackalloc byte[16];
+        Span<byte> al = stackalloc byte[8];
+        for (int by = 0; by < bh; by++)
+            for (int bx = 0; bx < bw; bx++)
+            {
+                int b = off + (by * bw + bx) * bb;
+                ulong abits = 0;
+                if (bc3)
+                {
+                    al[0] = d[b]; al[1] = d[b + 1];
+                    if (al[0] > al[1]) for (int i = 1; i < 7; i++) al[i + 1] = (byte)(((7 - i) * al[0] + i * al[1]) / 7);
+                    else { for (int i = 1; i < 5; i++) al[i + 1] = (byte)(((5 - i) * al[0] + i * al[1]) / 5); al[6] = 0; al[7] = 255; }
+                    for (int i = 0; i < 6; i++) abits |= (ulong)d[b + 2 + i] << (8 * i);
+                }
+                int cb = bc3 ? b + 8 : b;
+                ushort c0 = Bin.U16(d, cb), c1 = Bin.U16(d, cb + 2);
+                C565(c0, pal, 0); C565(c1, pal, 4);
+                bool four = bc3 || c0 > c1;
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    if (four)
+                    {
+                        pal[8 + ch] = (byte)((pal[ch] * 2 + pal[4 + ch]) / 3);
+                        pal[12 + ch] = (byte)((pal[ch] + pal[4 + ch] * 2) / 3);
+                    }
+                    else
+                    {
+                        pal[8 + ch] = (byte)((pal[ch] + pal[4 + ch]) / 2);
+                        pal[12 + ch] = 0;
+                    }
+                }
+                pal[11] = 255; pal[15] = (byte)(four ? 255 : 0);
+                uint bits = Bin.U32(d, cb + 4);
+                for (int i = 0; i < 16; i++)
+                {
+                    int x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+                    if (x >= w || y >= h) continue;
+                    int pi = (int)((bits >> (2 * i)) & 3) * 4;
+                    int o = (y * w + x) * 4;
+                    px[o] = pal[pi]; px[o + 1] = pal[pi + 1]; px[o + 2] = pal[pi + 2];
+                    px[o + 3] = bc3 ? al[(int)((abits >> (3 * i)) & 7)] : pal[pi + 3];
+                }
+            }
+        return px;
+    }
+
     private static byte[]? DecodeDxt3(byte[] d, int off, int w, int h)
     {
         int bw = System.Math.Max(1, w / 4), bh = System.Math.Max(1, h / 4);
@@ -209,7 +277,7 @@ public sealed class TextureDef
     }
 
     /// <summary>RGBA8-Mip-Kette per 2x2-Box-Filter (wie Texture2D.Apply(updateMipmaps: true)).</summary>
-    private static byte[] BuildRgbaMips(byte[] mip0, int w, int h, out int mips)
+    public static byte[] BuildRgbaMips(byte[] mip0, int w, int h, out int mips)
     {
         var levels = new List<byte[]> { mip0 };
         int cw = w, chh = h;

@@ -55,6 +55,7 @@ namespace Paradise.Core.Vehicles
         public CarDatabase? Database;
         bool _enterShown;
         string? _enterLabel;
+        bool _enterLocked;
         /// <summary>HUD-Film ohne Minimap zeigen (Fahrzeugmenü im Auto beim Händler, /HUD/ig_menu) – Unity TDU2Minimap.HudOverlay.</summary>
         public static bool HudOverlay;
         bool _overlayActive;
@@ -1069,7 +1070,8 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>Original-Einfahrtsanzeige (/HUD/enter) mit Spot-Icon; null = ausblenden.</summary>
-        public void ShowEnter(string? spotCode)
+        /// <param name="lockedText">gesperrt (z.B. Tuner mit falscher Marke): Text unter dem Schloss (/:SpotLockedText), Einfahrt nicht möglich</param>
+        public void ShowEnter(string? spotCode, string? lockedText = null)
         {
             if (_hud == null) return;
             if (spotCode == null)
@@ -1078,7 +1080,8 @@ namespace Paradise.Core.Vehicles
                 return;
             }
             string label = SpotLabel(spotCode) ?? "default";
-            if (!_enterShown || _enterLabel != label)
+            bool locked = lockedText != null;
+            if (!_enterShown || _enterLabel != label || _enterLocked != locked)
             {
                 // Texte aus der Sprachdatenbank (DBLoc m_Enter = 273, m_Locked = 559) in der eingestellten Sprache – alle Filme einheitlich
                 var texts = FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language);
@@ -1088,15 +1091,16 @@ namespace Paradise.Core.Vehicles
                 // Spot-Art fürs Icon, nicht gesperrt -> enter_txt "ok" statt "locked"
                 _hud.SetVariable("/:WhatSpot", label);
                 _hud.SetVariable("/:WhatSpotType", "spot");
-                _hud.SetVariable("/:IsSpotLocked", "0");
+                _hud.SetVariable("/:IsSpotLocked", locked ? "1" : "0");
+                _hud.SetVariable("/:SpotLockedText", lockedText ?? "");
                 _hud.SetVariable("/:IsChaLocked", "0");
                 _hud.SetVariable("/:reward_type", "0");
                 _hud.SetVariable("/:IsCarOK", "1");
                 _hud.GotoLabel("/HUD/enter", "on", true);
-                _hud.GotoLabel("/HUD/enter/enter_txt", "ok", false);
+                _hud.GotoLabel("/HUD/enter/enter_txt", locked ? "locked" : "ok", false);
                 _hud.GotoLabel("/HUD/enter/Spot", label, false);
                 if (label == "carDealer" || label == "bikeDealer") ApplyDealerLogo("/HUD/enter/Spot", spotCode);
-                _enterShown = true; _enterLabel = label;
+                _enterShown = true; _enterLabel = label; _enterLocked = locked;
             }
         }
 
