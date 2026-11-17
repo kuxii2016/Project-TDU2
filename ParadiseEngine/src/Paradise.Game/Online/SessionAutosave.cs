@@ -37,6 +37,8 @@ public static class SessionAutosave
         if (save == null || vm == null || s == null) return;
         // Login/Start läuft noch: Spielstand nicht mit der Kameraposition überschreiben
         if (GameMode.Current == Gamemode.GAME_MODE_LOGIN) return;
+        // Inselwechsel läuft: Zielinsel steht schon im Spielstand (IslandTravel.Go), nicht mit der alten Insel überschreiben
+        if (IslandTravel.Pending) return;
         // Autoradio: Sender und Lautstärke (Original-DATA RadioOptions)
         var radio = Paradise.Core.Audio.TDU2Radio.Instance;
         if (radio != null)
@@ -48,6 +50,21 @@ public static class SessionAutosave
         if (Options.Instance != null) Options.Saved = Options.Instance.Export();
         save.options = Options.Saved ?? "";
         save.keys = Paradise.Game.Input.TDU2Controls.Export();
+        save.island = s.Index?.IslandName ?? save.island;
+        // Im Interieur (Haus, Garage, Händler …): wie das Original (Driver.LastSpotWorld) den Spot merken – beim Start geht es dort
+        // wieder hinein (InteriorUtils.RestoreOnStart); Position = Ein-/Ausfahrt des Spots, Auto = das vor der Tür.
+        var inSpot = InteriorUtils.CurrentSpot;
+        if (inSpot != null)
+        {
+            if (InteriorUtils._lastCar != null) save.currentCar = InteriorUtils._lastCar.FileName;
+            var e = inSpot.Position2.LengthSquared() > 1f ? inSpot.Position2 : inSpot.Position;
+            save.px = e.X; save.py = e.Y; save.pz = e.Z;
+            save.heading = inSpot.Heading2 * (180f / MathF.PI);
+            save.hasPosition = true;
+            save.interior = inSpot.Code + "||" + (vm.Database != null ? Paradise.Core.Savegame.TDU2SaveGame.HouseOfSpot(vm.Database, inSpot) ?? "" : "");
+            CollectOdometers(save, vm);
+            return;
+        }
         var car = vm.CurrentCar;
         if (vm.Current == null || car == null) return;
         save.currentCar = car.FileName;
@@ -56,8 +73,7 @@ public static class SessionAutosave
         save.px = g.X; save.py = g.Y; save.pz = g.Z;
         save.heading = d.LengthSquared() > 1e-6f ? MathF.Atan2(d.X, d.Z) * (180f / MathF.PI) : 0f;
         save.hasPosition = true;
-        save.island = s.Index?.IslandName ?? save.island;
-        save.interior = "";   // Interieurs folgen (TDU2Interiors)
+        save.interior = "";   // draußen
         CollectOdometers(save, vm);
     }
 

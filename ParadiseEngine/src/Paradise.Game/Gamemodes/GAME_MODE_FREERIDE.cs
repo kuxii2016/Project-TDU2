@@ -36,6 +36,14 @@ namespace Paradise.Game.Gamemodes
             // Spots betreten (Unity TDU2Interiors.UpdateOutside): Einfahrt eines Händlers/Hauses/Shops + Bestätigen,
             // bzw. nach dem Teleport der Karte ("goin") hinein, sobald die Welt dort steht
             if (ctx.Terrain != null && veh != null) InteriorUtils.UpdateOutside(ctx, time.DeltaTime);
+            // schwebende Spot-Hologramme an den Einfahrten (pack_spots.bnk)
+            if (GameMode.Current == Gamemode.GAME_MODE_FREERIDE && !InteriorUtils.Inside) SpotHolograms.Update(ctx);
+            else SpotHolograms.Hide();
+        }
+
+        public override void Exit(IGameModeContext ctx, Gamemode to)
+        {
+            if (to != Gamemode.GAME_MODE_PAUSE) SpotHolograms.Hide();   // Interieur, Karte, Kinos: aus; Pausemenü: Welt bleibt stehen
         }
 
         // ------------------------------------------------------------------ Autoradio (Unity TDU2Radio, Anzeige in hud.bnk der Minimap)

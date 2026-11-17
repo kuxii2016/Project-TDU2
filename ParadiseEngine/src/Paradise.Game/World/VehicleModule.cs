@@ -24,6 +24,10 @@ public sealed class VehicleModule : GameModule
     private readonly IGameWindow _window;
     private readonly DebugOverlay? _overlay;
     private VehicleManager? _vm;
+    private Paradise.Game.Gameplay.Traffic? _traffic;
+
+    /// <summary>Verkehr (Gameplay/Traffic, Werte Game/Config/TrafficConfig.cs).</summary>
+    public Paradise.Game.Gameplay.Traffic? Traffic => _traffic;
 
     public VehicleManager? Manager => _vm;
     /// <summary>Renderer (Zeichnen in den Spielmodi, z.B. Straßennetz der großen Karte).</summary>
@@ -58,15 +62,28 @@ public sealed class VehicleModule : GameModule
         _vm.GroundHeight = p => _terrain.Streamer != null && _terrain.Streamer.TryGetGroundHeight(p, out float y) ? y : null;
         new VehicleConfig().ApplyTo(_vm);   // Werte: Game/Config/VehicleConfig.cs
         _vm.EnsureDatabase(GameData.BnkDir);
+        _traffic = new Paradise.Game.Gameplay.Traffic(_renderer, _terrain, () => _vm);
         _overlay?.AddSection("Fahrzeug (Tasten: Game/Config/KeyConfig.cs – F2 ein-/aussteigen, F3/F4 Auto, F8 Farbe, F9 neu)", () => _vm.DebugLines());
     }
 
-    public override void FixedUpdate(in GameTime time) { if (!Frozen) _vm?.FixedUpdate(time.FixedDeltaTime); }
+    public override void FixedUpdate(in GameTime time)
+    {
+        if (Frozen) return;
+        _traffic?.FixedUpdate(time.FixedDeltaTime);   // KI + kinematische Körper vor dem Physikschritt
+        _vm?.FixedUpdate(time.FixedDeltaTime);
+    }
 
     public override void Update(in GameTime time)
     {
+        DebugLines.Clear();   // Debug-Linien/Beschriftungen dieses Bildes (Verkehr, Entwicklermenü) neu sammeln
         if (_vm == null) return;
         _vm.Update();
+        // Verkehr: neue Autos nur in der Freifahrt, wenn gefahren wird (nicht im Interieur, auf der Karte, in Kinos)
+        bool trafficSpawn = !Suspended && !Frozen && Paradise.Game.Screens.GameMode.Current == Paradise.Game.Screens.Gamemode.GAME_MODE_FREERIDE
+                            && !Paradise.Game.Gamemodes.InteriorUtils.Inside && !_terrain.MapView;
+        if (!Frozen) _traffic?.Update(time.DeltaTime, trafficSpawn);
+        if (_traffic != null) _traffic.Alpha = time.FixedAlpha;   // Darstellung zwischen den Physikschritten
+        if (!_terrain.MapView) _traffic?.DrawDebug();   // TrafficConfig.ShowDebug (F1 > Traffic)
         TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs, Unity TDU2Controls)
         if (Suspended || Frozen)
         {
@@ -150,6 +167,7 @@ public sealed class VehicleModule : GameModule
             _terrain.FieldOfView = _vm.Camera.fieldOfView;
             _terrain.NearClip = _vm.Camera.nearClipPlane;
             _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);   // Scheinwerferkegel, Brems-/Rückfahrlicht
+            _traffic?.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
         }
     }
 
@@ -159,10 +177,17 @@ public sealed class VehicleModule : GameModule
         if (_vm == null || s == null) return;
         if (_terrain.MapTerrainShown) return;   // Unity: Kartenkamera zeichnet dann nur die Kartenebene
         _vm.Render(s.RootMatrix);
+        if (!s.HideWorld) _traffic?.Render(_vm, s.RootMatrix);
+        // Debug-Linien (Core/Render/DebugLines, Unity TDU2DebugLines): Verkehr, Radstrahlen des Autos (F1)
+        var cam = _terrain.Camera;
+        if (cam != null && _renderer.Height > 0)
+            DebugLines.Flush(_renderer, s.RootMatrix, cam.Position, 2f * MathF.Tan(_terrain.FieldOfView * (MathF.PI / 360f)) / _renderer.Height);
     }
 
     public override void Unload()
     {
+        _traffic?.Dispose();
+        _traffic = null;
         _vm?.Dispose();
         _vm = null;
     }

@@ -1,5 +1,4 @@
-﻿using Paradise.Core.Audio;
-using Paradise.Core.Avatars;
+﻿using Paradise.Core.Avatars;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Flash;
 using Paradise.Core.Online;
@@ -77,7 +76,13 @@ public class GAME_MODE_GOODIES : AvatarShop
         switch (lc)
         {
             case "buit": Buy(); return true;
-            case "csou": case "mcou": case "wmon": case "gofr": case "shko": case "avou": case "liin":
+            case "csou":
+            case "mcou":
+            case "wmon":
+            case "gofr":
+            case "shko":
+            case "avou":
+            case "liin":
                 Close(); return true;
         }
         return false;
@@ -98,7 +103,12 @@ public class GAME_MODE_GOODIES : AvatarShop
     /// <summary>Ersatz ohne Verkäuferin: Spot-Kategorie 15 Highlife, 16 Streetwear, 17 Sportswear, 18 Fashion, 19 Eden.</summary>
     static int BrandFor(int cat) => cat switch
     {
-        15 => BrandHighlife, 16 => BrandStreetwear, 17 => BrandSportswear, 18 => BrandFashion, 19 => BrandEden, _ => 0,
+        15 => BrandHighlife,
+        16 => BrandStreetwear,
+        17 => BrandSportswear,
+        18 => BrandFashion,
+        19 => BrandEden,
+        _ => 0,
     };
 
     bool Sells(ClotheInfo c, int sex, bool anyBrand)

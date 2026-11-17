@@ -10,7 +10,7 @@ public sealed class BootConfig
     /// <summary>Intros aus Euro\Bnk\Video, in dieser Reihenfolge.</summary>
     public string[] Videos { get; set; } = { "Bumper_ATARI.mkv", "Bumper_EDEN_TDU.mkv" };
     /// <summary>Lautstärke der Intros (0..1).</summary>
-    public float VideoVolume { get; set; } = .65f;
+    public float VideoVolume { get; set; } = .5f;
     /// <summary>Taste oder Mausklick überspringt Logo/Video.</summary>
     public bool Skippable { get; set; } = true;
 }

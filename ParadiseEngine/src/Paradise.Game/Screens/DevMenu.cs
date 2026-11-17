@@ -22,6 +22,8 @@ public sealed partial class DevMenu : GameModule
     static readonly uint CWhite = ObjectVertex.PackColor(235, 235, 235, 255);
     static readonly uint CGray = ObjectVertex.PackColor(150, 150, 150, 255);
     static readonly uint CBack = ObjectVertex.PackColor(0, 0, 0, 128);
+    static readonly uint CPanel = ObjectVertex.PackColor(0, 0, 0, 184);
+    static readonly uint COrange = ObjectVertex.PackColor(255, 170, 60, 255);
 
     sealed class Item
     {
@@ -51,6 +53,8 @@ public sealed partial class DevMenu : GameModule
     readonly List<Page> _stack = new();
     List<Item> _items = new();
     bool _open, _blockedByMe;
+    /// <summary>Toggle Control: Menü bleibt sichtbar, Tastatur geht ans Spiel (Auto fahren). Umschalten mit Taste "dev_menuctrl" (Tab).</summary>
+    bool _drive;
     double _time, _repeatAt;
     int _repeatKey;
     string? _toast;
@@ -78,6 +82,8 @@ public sealed partial class DevMenu : GameModule
     {
         _time = time.TotalTime;
         SampleFrame(time.DeltaTime);
+        CollectCarDebug();   // Radstrahlen/Kräfte am Auto (Car > Physics debug), auch bei geschlossenem Menü
+        UpdateTools(time.DeltaTime);   // Cutscene Tester / Animation Viewer
 
         if (TDU2Controls.RawKeyPressed(VK_F1))
         {
@@ -86,6 +92,14 @@ public sealed partial class DevMenu : GameModule
         }
         if (!_open) return;
 
+        if (ToggleKeyPressed()) SetDrive(!_drive);
+        if (_drive)
+        {
+            // Steuerung beim Spiel: Menü nur anzeigen, keine Navigation
+            if (_blockedByMe) { TDU2Controls.Blocked = false; _blockedByMe = false; }
+            Rebuild();
+            return;
+        }
         if (!TDU2Controls.Blocked) { TDU2Controls.Blocked = true; _blockedByMe = true; }
 
         Rebuild();
@@ -116,6 +130,27 @@ public sealed partial class DevMenu : GameModule
         }
     }
 
+    /// <summary>Taste der Aktion "dev_menuctrl" (Game/Config/KeyConfig.cs, Standard Tab) – auch während das Menü sperrt.</summary>
+    static bool ToggleKeyPressed()
+    {
+        var a = TDU2Controls.Get("dev_menuctrl");
+        return a != null && (TDU2Controls.RawKeyPressed(a.Key1) || TDU2Controls.RawKeyPressed(a.Key2));
+    }
+
+    static string ToggleKeyName()
+    {
+        var a = TDU2Controls.Get("dev_menuctrl");
+        return a != null && a.Key1 > 0 ? TDU2Controls.KeyName(a.Key1) : "-";
+    }
+
+    void SetDrive(bool on)
+    {
+        _drive = on;
+        if (on) { if (_blockedByMe) { TDU2Controls.Blocked = false; _blockedByMe = false; } }
+        else if (_open && !TDU2Controls.Blocked) { TDU2Controls.Blocked = true; _blockedByMe = true; }
+        Toast(on ? "Toggle Control: driving (menu stays open, " + ToggleKeyName() + " = back to the menu)" : "Toggle Control: menu navigation");
+    }
+
     bool KeyRepeat(int vk)
     {
         if (TDU2Controls.RawKeyPressed(vk)) { _repeatKey = vk; _repeatAt = _time + 0.4; return true; }
@@ -138,7 +173,7 @@ public sealed partial class DevMenu : GameModule
         _open = true;
         _stack.Clear();
         _stack.Add(new Page { Title = "DEVELOPER MENU", Build = MainMenu });
-        if (!TDU2Controls.Blocked) { TDU2Controls.Blocked = true; _blockedByMe = true; }
+        if (!_drive && !TDU2Controls.Blocked) { TDU2Controls.Blocked = true; _blockedByMe = true; }
         Rebuild(); Move(_stack[0], 0);
     }
 
@@ -165,6 +200,8 @@ public sealed partial class DevMenu : GameModule
 
     public override void Unload()
     {
+        CutsceneTester.Instance?.Unload(true);
+        AnimViewer.Instance?.Close();
         Close();
         _font?.Dispose(); _font = null;
     }
@@ -282,7 +319,9 @@ public sealed partial class DevMenu : GameModule
 
     public override void Render(in GameTime time)
     {
-        if (!_open && (_toast == null || _time > _toastUntil)) return;
+        RenderTools();   // Darsteller/Bodenplatte von Cutscene Tester und Animation Viewer (Welt)
+        bool worldDebug = DebugLines.Labels.Count > 0 || Paradise.Game.Config.TrafficConfig.ShowDebug;
+        if (!_open && !worldDebug && (_toast == null || _time > _toastUntil)) return;
         var f = Font();
         if (f == null || f.Material == null || _r.Width <= 0 || _r.Height <= 0) return;
 
@@ -294,8 +333,12 @@ public sealed partial class DevMenu : GameModule
 
         _v.Clear(); _i.Clear();
 
+        // Debug-Beschriftungen in der Welt / Verkehrstafel (unter dem Menü)
+        RenderWorldDebug(f, cw, ch, lh, k);
+
         if (!_open)
         {
+            if (_toast == null || _time > _toastUntil) goto draw;
             float tw = MathF.Min(_r.Width - 40f * k, _toast!.Length * cw + 20f);
             float tx = 20f * k, ty = _r.Height - lh - 28f * k;
             Quad(tx, ty, tx + tw, ty + lh + 8f, 0f, 0f, 0f, 0f, CBack);
@@ -318,6 +361,11 @@ public sealed partial class DevMenu : GameModule
             var path = new StringBuilder("TDU2 | ");
             for (int i = 0; i < _stack.Count; i++) { if (i > 0) path.Append(" > "); path.Append(_stack[i].Title); }
             Text(f, x, y, path.ToString().ToUpperInvariant(), CPurple, rx + w - 10f, cw, ch);
+            if (_drive)
+            {
+                string dm = "[DRIVING - " + ToggleKeyName() + " = MENU]";
+                Text(f, rx + w - 10f - dm.Length * cw, y, dm, COrange, rx + w - 10f, cw, ch);
+            }
             y += lh * 1.4f;
 
             for (int i = p.Top; i < p.Top + shown; i++)
@@ -331,7 +379,8 @@ public sealed partial class DevMenu : GameModule
                 }
                 else
                 {
-                    Text(f, x, y, (sel ? "-> " : "   ") + it.Label, sel ? CCyan : CWhite, valX - 2f, cw, ch);
+                    bool mark = sel && !_drive;
+                    Text(f, x, y, (mark ? "-> " : "   ") + it.Label, mark ? CCyan : CWhite, valX - 2f, cw, ch);
                     if (it.Value != null)
                     {
                         uint col = it.Placeholder ? CGray : sel ? CYellow : CGreen;
@@ -342,7 +391,7 @@ public sealed partial class DevMenu : GameModule
             }
 
             Text(f, x, ry + lh * (shown + 3) + 12f - lh - 6f,
-                 "Grey values: not available in the engine yet", CGray, rx + w - 10f, cw, ch);
+                 "Grey values: not available in the engine yet  |  " + ToggleKeyName() + ": Toggle Control (menu / drive)", CGray, rx + w - 10f, cw, ch);
 
             if (_toast != null && _time <= _toastUntil)
             {
@@ -353,7 +402,9 @@ public sealed partial class DevMenu : GameModule
             }
         }
 
-        if (_i.Count > 0) _r.DrawOverlay(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_v), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_i), f.Material);
+    draw:
+        // über allem, auch über HUD/Minimap (Flash): eigener Overlay-Durchgang nach der Flash-Oberfläche
+        if (_i.Count > 0) _r.DrawOverlayTop(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_v), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_i), f.Material);
     }
 
     static string Safe(Func<string> f)

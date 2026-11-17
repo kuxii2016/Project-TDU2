@@ -29,6 +29,8 @@ int h = opts.Height > 0 ? opts.Height : 720;
 IGameWindow window = new Win32Window("Test Drive Unlimited 2", w, h);
 // Grafik (Sichtweite/LOD, Kantenglättung, VSync, Texturen, Effekte): Game/Config/GraphicsConfig.cs – vor dem Renderer
 new Paradise.Game.Config.GraphicsConfig().Apply();
+// Bloom / Ambient Occlusion (Zusatz, nicht im Original): Stärken in Game/Config/PostFxConfig.cs
+new Paradise.Game.Config.PostFxConfig().Apply();
 
 // Vulkan-Renderer; fällt bei Init-Fehler NICHT automatisch zurück – ein
 // Fehler landet im Crash-Report, damit man die Ursache sieht. Zum Testen ohne

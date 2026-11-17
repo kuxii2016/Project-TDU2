@@ -21,6 +21,8 @@ public static class ScreenDefs
     public static readonly ScreenDef Home = new("home.bnk", -1, true);
     public static readonly ScreenDef Casino = new("casino.bnk", -1, true);
     public static readonly ScreenDef Avatar = new("shopsavatar.bnk", -1, true);
+    /// <summary>Flughafen (GAME_MODE_AIRPORT, exe Oberfläche "AIRPORT").</summary>
+    public static readonly ScreenDef Airport = new("airport.bnk", -1, true);
     /// <summary>TDU Media (Fernseher im Haus, Unity TDU2TDUMedia: GuiDepth -2), wird von GAME_MODE_LIVING geöffnet/geschlossen.</summary>
     public static readonly ScreenDef TdMedia = new("tdmedia.bnk", -2, true);
 }

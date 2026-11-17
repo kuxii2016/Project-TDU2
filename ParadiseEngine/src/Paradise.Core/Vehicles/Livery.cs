@@ -498,9 +498,20 @@ public sealed class LiveryView
             var d = m.Desc;
             _orig.Add(new Orig
             {
-                M = m, Second = CarModel.IsPaint2(m), Color = d.Color, Color2 = d.Color2, Bicolour = d.Bicolour,
-                Metal = d.Metallic, Gloss = d.Glossiness, Coat = d.ClearCoat, Flake = d.Flake,
-                UseSticker = d.UseSticker, AlphaOnly = d.StickerAlphaOnly, TdPaint = d.TdPaint, TdFlake = d.TdFlake, Sticker = d.StickerTex,
+                M = m,
+                Second = CarModel.IsPaint2(m),
+                Color = d.Color,
+                Color2 = d.Color2,
+                Bicolour = d.Bicolour,
+                Metal = d.Metallic,
+                Gloss = d.Glossiness,
+                Coat = d.ClearCoat,
+                Flake = d.Flake,
+                UseSticker = d.UseSticker,
+                AlphaOnly = d.StickerAlphaOnly,
+                TdPaint = d.TdPaint,
+                TdFlake = d.TdFlake,
+                Sticker = d.StickerTex,
             });
         }
         bool usesFactory = false;
@@ -622,8 +633,14 @@ public sealed class LiveryView
         var old = _map;
         _map = _r.CreateTexture(new TextureUpload
         {
-            Width = S, Height = S, Mips = mips, Format = GpuTextureFormat.Rgba8, Blocks = chain,
-            WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "TDU2 Stickermap",
+            Width = S,
+            Height = S,
+            Mips = mips,
+            Format = GpuTextureFormat.Rgba8,
+            Blocks = chain,
+            WrapU = TextureWrap.Clamp,
+            WrapV = TextureWrap.Clamp,
+            Name = "TDU2 Stickermap",
         });
         foreach (var o in _orig)
         {

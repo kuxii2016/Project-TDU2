@@ -23,8 +23,13 @@ public static class FlashNav
     {
         int code = key switch
         {
-            FlashKey.Up => KeyUp, FlashKey.Down => KeyDown, FlashKey.Left => KeyLeft, FlashKey.Right => KeyRight,
-            FlashKey.Confirm => KeyEnter, FlashKey.Back => KeyEscape, _ => 0,
+            FlashKey.Up => KeyUp,
+            FlashKey.Down => KeyDown,
+            FlashKey.Left => KeyLeft,
+            FlashKey.Right => KeyRight,
+            FlashKey.Confirm => KeyEnter,
+            FlashKey.Back => KeyEscape,
+            _ => 0,
         };
         if (code > 0 && ui.SendKey(code)) return true;
         return key switch

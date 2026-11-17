@@ -104,7 +104,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private VulkanMesh? _rMesh;
     private VulkanMaterial? _rMat;
     private PipeId _rPipe;
-    private bool _rShadow;
+    private bool _rShadow, _rFlip;
     private Matrix4x4 _rFirst, _rVP;
     private int _rBase, _rCount;
     // Opake Objekte: nach Pipeline/Material/Mesh sortiert (wie Unitys Opaque-Sortierung nach Material), damit Läufe entstehen
@@ -153,8 +153,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _shadowOnly = new();
     private int _cShadow;
 
-    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning, Avatar, AvatarBlend, ShadowAvatar }
-    private const int PipeCount = 36;
+    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning, Avatar, AvatarBlend, ShadowAvatar, OverlayUi, TransparentAlphaGlow }
+    private const int PipeCount = 38;
 
     // ------------------------------------------------------------------ Zustand
     private readonly bool _validation;
@@ -192,6 +192,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private DescriptorSetLayout _simpleSetLayout, _terrainSetLayout, _objectSetLayout, _frameSetLayout;
     private readonly PipelineLayout[] _layouts = new PipelineLayout[PipeCount];
     private readonly Pipeline[] _pipelines = new Pipeline[PipeCount];
+    // Varianten mit Rückseiten-Culling (Original: D3DRS_CULLMODE je Material, 0xf871e0): [0] normal, [1] gespiegelter Durchgang
+    // bzw. gespiegeltes Objekt (Wicklung umgekehrt, wie das Invert-Argument im Exe). Handle 0 = Pipeline zeichnet immer beidseitig.
+    private readonly Pipeline[] _cullPipes = new Pipeline[PipeCount], _cullPipesInv = new Pipeline[PipeCount];
     private DescriptorPool _descriptorPool;
     private readonly Dictionary<(TextureWrap, TextureWrap), Sampler> _samplers = new();
 
@@ -211,6 +214,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private Vector3 _viewRight = Vector3.UnitX, _viewUp = Vector3.UnitY;
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat)> _overlay = new();
+    /// <summary>Overlay über allem (auch über Flash/HUD): Entwicklermenü (DrawOverlayTop).</summary>
+    private readonly List<(VulkanMesh mesh, VulkanMaterial mat)> _overlayTop = new();
     // Flash-Oberfläche (TDU2/FlashQuad): alle Quads eines Bildes in einem Puffer, Stapel in Aufrufreihenfolge
     private readonly List<ObjectVertex> _flashV = new();
     private readonly List<uint> _flashI = new();
@@ -223,6 +228,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private int _cDraw, _cTris, _cBinds, _cTransp, _cOverlay;
     private FrameGlobals _globals = FrameGlobals.Default;
     private PipeId? _boundPipeline;
+    private int _boundCull;   // 0 beidseitig, 1 Culling, 2 Culling gespiegelt (gilt zusammen mit _boundPipeline)
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, float dist)> _transparent = new();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _background = new();
 
@@ -332,6 +338,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _boundPipeline = null;
         _transparent.Clear();
         _overlay.Clear();
+        foreach (var (om, _) in _overlayTop) om.Dispose();
+        _overlayTop.Clear();
         _flashV.Clear(); _flashI.Clear(); _flashDraws.Clear(); _cFlash = 0;
         _opaque.Clear();
         _shadowOnly.Clear();
@@ -462,6 +470,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _overlay.Add((mesh, vm));
     }
 
+    public void DrawOverlayTop(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices, IGpuMaterial material)
+    {
+        if (_skipFrame || !_inFrame || indices.Length == 0 || material is not VulkanMaterial vm || vm.Kind != MaterialKind.Overlay) return;
+        var mesh = UploadMesh(MemoryMarshal.AsBytes(vertices), indices, true);
+        _overlayTop.Add((mesh, vm));
+    }
+
     public void DrawFlash(ReadOnlySpan<ObjectVertex> quadVertices, IGpuTexture texture, IGpuTexture? mask, in FlashQuadParams p)
     {
         if (_skipFrame || !_inFrame || quadVertices.Length < 4 || _extent.Width == 0 || _extent.Height == 0) return;
@@ -503,6 +518,24 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             }
         }
         _flashDraws.Add((e.mat, vp, prm, first, quads * 6));
+    }
+
+    /// <summary>Overlay über allem (DrawOverlayTop): nach Flash, im UI-Durchgang mit eigener Pipeline (UNORM-Ziel, sRGB im Shader).</summary>
+    private void DrawOverlayTopList(PipeId id)
+    {
+        if (_overlayTop.Count == 0) return;
+        if (_extent.Width == 0 || _extent.Height == 0 || _pipelines[(int)id].Handle == 0)
+        {
+            foreach (var (om, _) in _overlayTop) om.Dispose();
+            _overlayTop.Clear();
+            return;
+        }
+        var vp = new Matrix4x4(2f / _extent.Width, 0, 0, 0, 0, 2f / _extent.Height, 0, 0, 0, 0, 1, 0, -1, -1, 0, 1);
+        _boundPipeline = null;
+        foreach (var (mesh, mat) in _overlayTop) { Emit(mesh, mat, Matrix4x4.Identity, id, false, vp, 0, 1); mesh.Dispose(); }
+        _cOverlay += _overlayTop.Count;
+        _overlayTop.Clear();
+        _boundPipeline = null;
     }
 
     private void DrawFlashBatches()
@@ -942,7 +975,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         MaterialKind.Terrain => PipeId.Terrain,
         MaterialKind.Object => PipeId.Object,
-        MaterialKind.Transparent => mat.Additive ? PipeId.TransparentAdd : PipeId.TransparentAlpha,
+        MaterialKind.Transparent => mat.Additive ? PipeId.TransparentAdd : mat.Glow ? PipeId.TransparentAlphaGlow : PipeId.TransparentAlpha,
         MaterialKind.Foliage => PipeId.Foliage,
         MaterialKind.Sprite => PipeId.Sprite,
         MaterialKind.SpriteGlow => mat.Additive ? PipeId.GlowAdd : PipeId.GlowAlpha,
@@ -969,13 +1002,19 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         => Emit(vm, mat, model, PipeFor(mat), false, _viewProj, 0, 1);
 
     /// <summary>Ein Zeichenaufruf (count Instanzen ab firstInstance im Instanzpuffer, sonst die Modellmatrix als Push-Constant).</summary>
-    private void Emit(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj, int firstInstance, int count)
+    private void Emit(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj, int firstInstance, int count, bool? modelFlip = null)
     {
         var cmd = _commandBuffers[_currentFrame];
         var layout = _layouts[(int)id];
-        if (_boundPipeline != id)
+        // Cull-Modus wie im Original: Material nicht beidseitig -> Rückseiten weg; gespiegelter Durchgang (Bodenspiegel, Sonde)
+        // oder gespiegelte Modellmatrix kehrt die Wicklung um (Exe-Tabelle {2,3,2,1 | 3,2,3,1}, Index Modus + Invert*4).
+        int cull = 0;
+        if (!shadow && !mat.TwoSided && _cullPipes[(int)id].Handle != 0)
+            cull = (Det3(viewProj) > 0f) ^ (modelFlip ?? (count == 1 && Det3(model) < 0f)) ? 2 : 1;
+        if (_boundPipeline != id || _boundCull != cull)
         {
-            _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, _pipelines[(int)id]);
+            _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, cull == 0 ? _pipelines[(int)id] : cull == 1 ? _cullPipes[(int)id] : _cullPipesInv[(int)id]);
+            _boundCull = cull;
             var fs = shadow ? _frameSets[_currentFrame] : _activeFrameSet;   // Schatten- bzw. Bild-/Spiegel-Durchgang
             _vk.CmdBindDescriptorSets(cmd, PipelineBindPoint.Graphics, layout, 1, 1, &fs, 0, null);
             _boundPipeline = id;
@@ -1004,12 +1043,17 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     // ------------------------------------------------------------------ Instancing
     // Aufeinanderfolgende Aufrufe mit gleichem Mesh, Material und Pipeline (Objekte, Vegetation, Sprites und ihre Schatten)
     // werden zu einem Instanz-Aufruf zusammengefasst; die Modellmatrizen liegen im Instanzpuffer des Bildes.
+    /// <summary>Determinante des 3x3-Anteils (Vorzeichen = Händigkeit; Hauptbild: View x Projektion &lt; 0, gespiegelt &gt; 0).</summary>
+    private static float Det3(in Matrix4x4 m)
+        => m.M11 * (m.M22 * m.M33 - m.M23 * m.M32) - m.M12 * (m.M21 * m.M33 - m.M23 * m.M31) + m.M13 * (m.M21 * m.M32 - m.M22 * m.M31);
+
     private static bool Instanceable(PipeId id) => id is PipeId.Object or PipeId.Foliage or PipeId.Sprite
         or PipeId.ShadowObject or PipeId.ShadowFoliage or PipeId.ShadowSprite;
 
     private void Batch(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj)
     {
-        bool same = _rCount > 0 && ReferenceEquals(vm, _rMesh) && ReferenceEquals(mat, _rMat) && id == _rPipe && shadow == _rShadow && viewProj == _rVP;
+        bool flip = !mat.TwoSided && Det3(model) < 0f;   // gespiegelte Instanz: eigener Lauf (andere Cull-Richtung)
+        bool same = _rCount > 0 && ReferenceEquals(vm, _rMesh) && ReferenceEquals(mat, _rMat) && id == _rPipe && shadow == _rShadow && viewProj == _rVP && flip == _rFlip;
         var inst = (Matrix4x4*)_instMem[_currentFrame].Mapped;
         if (same && inst != null)
         {
@@ -1030,7 +1074,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
         FlushBatch();
         if (!Instanceable(id)) { Emit(vm, mat, model, id, shadow, viewProj, 0, 1); return; }
-        _rMesh = vm; _rMat = mat; _rPipe = id; _rShadow = shadow; _rVP = viewProj; _rFirst = model; _rCount = 1;
+        _rMesh = vm; _rMat = mat; _rPipe = id; _rShadow = shadow; _rVP = viewProj; _rFirst = model; _rCount = 1; _rFlip = flip;
     }
 
     /// <summary>Offenen Lauf zeichnen (vor jedem anderen Aufruf, Durchgangsende oder Pipeline-Wechsel von außen).</summary>
@@ -1041,7 +1085,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         else
         {
             // Modellmatrix nur Null: [3][3] == 0 -> Shader liest inst.m[gl_InstanceIndex]
-            Emit(_rMesh!, _rMat!, default, _rPipe, _rShadow, _rVP, _rBase, _rCount);
+            Emit(_rMesh!, _rMat!, default, _rPipe, _rShadow, _rVP, _rBase, _rCount, _rFlip);
             _cInst += _rCount;
         }
         _rCount = 0; _rMesh = null; _rMat = null;
@@ -1076,8 +1120,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         WriteFrameUbo();           // Kennungen Planar/Probe für den Bild-Durchgang
         var clears = stackalloc ClearValue[3];
         clears[0] = _globals.NoSky
-            ? new ClearValue(new ClearColorValue(ToLin(_globals.BackgroundColor.X), ToLin(_globals.BackgroundColor.Y), ToLin(_globals.BackgroundColor.Z), 1f))   // Unity SolidColor (große Karte: Meer)
-            : new ClearValue(new ClearColorValue(ToLin(ClearColor[0]), ToLin(ClearColor[1]), ToLin(ClearColor[2]), ClearColor[3]));   // Kamera-Hintergrund (Unity: linear)
+            ? new ClearValue(new ClearColorValue(ToLin(_globals.BackgroundColor.X), ToLin(_globals.BackgroundColor.Y), ToLin(_globals.BackgroundColor.Z), 0f))   // Unity SolidColor (große Karte: Meer)
+            : new ClearValue(new ClearColorValue(ToLin(ClearColor[0]), ToLin(ClearColor[1]), ToLin(ClearColor[2]), 0f));   // Alpha 0 = Bloom-Maske leer   // Kamera-Hintergrund (Unity: linear)
         clears[1] = new ClearValue { DepthStencil = new ClearDepthStencilValue(0f, 0) };   // Reversed-Z
         var rpBegin = new RenderPassBeginInfo
         {
@@ -1146,6 +1190,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _boundPipeline = null;
             _uiActive = true;
             DrawFlashBatches();
+            DrawOverlayTopList(PipeId.OverlayUi);   // Entwicklermenü über HUD/Minimap
             _uiActive = false;
         }
         else
@@ -1153,6 +1198,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             // Flash-Oberfläche (Menüs/HUD) über der Welt, unter dem Debug-Overlay
             DrawFlashBatches();
             DrawOverlay();
+            DrawOverlayTopList(PipeId.Overlay);
         }
         foreach (var m in _dynamicMeshes) m.Dispose();   // wie Overlay: Freigabe verzögert bis die GPU fertig ist
         _dynamicMeshes.Clear();
@@ -1581,7 +1627,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void CreateDepthResources()
     {
         _depthFormat = Format.D32Sfloat;
-        CreateImage(_extent.Width, _extent.Height, 1, _depthFormat, ImageUsageFlags.DepthStencilAttachmentBit, out _depthImage, out _depthMem, _msaa);
+        // SampledBit: Tiefe wird nach dem Weltdurchgang von der AO-Nachbearbeitung gelesen (VulkanRendererPostFx, PostFx.AoEnabled)
+        CreateImage(_extent.Width, _extent.Height, 1, _depthFormat, ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit, out _depthImage, out _depthMem, _msaa);
         _depthView = CreateImageView(_depthImage, _depthFormat, ImageAspectFlags.DepthBit, 1);
         if (Msaa)
         {
@@ -2206,7 +2253,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         mat.Set = set;
         mat.Additive = (d.Kind == MaterialKind.Transparent || d.Kind == MaterialKind.SpriteGlow || d.Kind == MaterialKind.Particle) && d.Additive;
+        mat.Glow = d.Glow;
         mat.Blend = d.Kind == MaterialKind.Avatar && d.AvBlend;
+        mat.TwoSided = d.TwoSided;
         mat.WaterSort = d.Kind == MaterialKind.Water && d.Ocean ? (d.OceanLevel >= 2 ? float.MaxValue : d.OceanLevel == 1 ? 3e38f : 2e38f) : float.MaxValue;
     }
 
@@ -2310,6 +2359,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public Silk.NET.Vulkan.Buffer Ubo;
         public GpuAllocator.Allocation UboMem;
         public bool Additive;
+        public bool Glow;   // Bloom-Maske (MaterialDesc.Glow)
+        /// <summary>MaterialDesc.TwoSided (Cull-Modus des .2DM-Materials).</summary>
+        public bool TwoSided = true;
         /// <summary>TDU2/AvatarBlend (Alpha-Blend, ZWrite Off) statt TDU2/Avatar.</summary>
         public bool Blend;
         /// <summary>Sortierwert in der Transparent-Liste für Wasser (Meer: Insel vor Area vor Sektor).</summary>
@@ -2571,10 +2623,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreatePipeline(c, PipeId.Terrain, GameShaders.TerrainVert, GameShaders.TerrainFrag, _terrainSetLayout, false, blend: 0);
         CreatePipeline(c, PipeId.MapTerrain, GameShaders.SimpleVert, GameShaders.MapTerrainFrag, _simpleSetLayout, false, blend: 0);
         CreatePipeline(c, PipeId.MapRoad, GameShaders.FxVert, GameShaders.ParticleFrag, _objectSetLayout, true, blend: 1, depthTest: false);
-        CreatePipeline(c, PipeId.Object, GameShaders.ObjectVert, GameShaders.ObjectFrag, _objectSetLayout, true, blend: 0);
-        CreatePipeline(c, PipeId.TransparentAlpha, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 1);
-        CreatePipeline(c, PipeId.TransparentAdd, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 2);
-        CreatePipeline(c, PipeId.Foliage, GameShaders.FoliageVert, GameShaders.FoliageFrag, _objectSetLayout, true, blend: 0);
+        // Welt-/Interieur-Materialien aus .2DM: zusätzlich Varianten mit Rückseiten-Culling (MaterialDesc.TwoSided)
+        CreatePipeline(c, PipeId.Object, GameShaders.ObjectVert, GameShaders.ObjectFrag, _objectSetLayout, true, blend: 0, cullVariants: true);
+        CreatePipeline(c, PipeId.TransparentAlpha, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 1, cullVariants: true);
+        CreatePipeline(c, PipeId.TransparentAdd, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 2, cullVariants: true);
+        CreatePipeline(c, PipeId.TransparentAlphaGlow, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 1, cullVariants: true);
+        CreatePipeline(c, PipeId.Foliage, GameShaders.FoliageVert, GameShaders.FoliageFrag, _objectSetLayout, true, blend: 0, cullVariants: true);
         CreatePipeline(c, PipeId.Sprite, GameShaders.SpriteVert, GameShaders.SpriteFrag, _objectSetLayout, true, blend: 0);
         CreatePipeline(c, PipeId.GlowAlpha, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.GlowAdd, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 2);
@@ -2588,7 +2642,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreatePipeline(c, PipeId.Overlay, GameShaders.OverlayVert, GameShaders.OverlayFrag, _simpleSetLayout, true, blend: 1, depthTest: false);
         CreatePipeline(c, PipeId.Flash, GameShaders.FlashVert, GameShaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false);
         if (_uiPass.Handle != 0)
+        {
             CreatePipeline(c, PipeId.FlashUi, GameShaders.FlashVert, GameShaders.FlashFrag, _objectSetLayout, true, blend: 1, depthTest: false, ui: true);
+            CreatePipeline(c, PipeId.OverlayUi, GameShaders.OverlayVert, GameShaders.OverlayUiFrag, _simpleSetLayout, true, blend: 1, depthTest: false, ui: true);
+        }
         CreatePipeline(c, PipeId.Car, GameShaders.CarVert, GameShaders.CarFrag, _objectSetLayout, true, blend: 0);
         CreatePipeline(c, PipeId.CarGlass, GameShaders.CarVert, GameShaders.CarGlassFrag, _objectSetLayout, true, blend: 4);
         CreatePipeline(c, PipeId.CarShadow, GameShaders.CarVert, GameShaders.CarShadowFrag, _objectSetLayout, true, blend: 5);
@@ -2607,7 +2664,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     }
 
     /// <param name="blend">0 = opak (Tiefe schreiben), 1 = SrcAlpha/OneMinusSrcAlpha, 2 = SrcAlpha/One (beide ohne Tiefenschreiben, Offset)</param>
-    private void CreatePipeline(ShaderCompiler compiler, PipeId id, string vertSrc, string fragSrc, DescriptorSetLayout setLayout, bool objectVertex, int blend, bool depthTest = true, bool shadow = false, bool noVertices = false, bool ui = false)
+    private void CreatePipeline(ShaderCompiler compiler, PipeId id, string vertSrc, string fragSrc, DescriptorSetLayout setLayout, bool objectVertex, int blend, bool depthTest = true, bool shadow = false, bool noVertices = false, bool ui = false, bool cullVariants = false)
     {
         string name = id.ToString();
         ShaderModule vertModule = CreateShaderModule(compiler.Compile(vertSrc, ShaderKind.VertexShader, name + ".vert"));
@@ -2680,6 +2737,29 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 DstAlphaBlendFactor = BlendFactor.OneMinusSrcAlpha,
                 AlphaBlendOp = BlendOp.Add
             };
+            // Bloom-Maske (Zusatz PostFx): Alpha-Kanal des Weltbilds = "leuchtet" (Löschwert 0). Leuchtende Pipelines schreiben ihr
+            // Alpha (opak direkt, transparent aufaddiert), opake andere setzen 0 (verdecken), transparente andere lassen es stehen.
+            if (!shadow && !ui)
+            {
+                bool glow = id is PipeId.Object or PipeId.Car or PipeId.GlowAlpha or PipeId.GlowAdd or PipeId.TransparentAdd
+                    or PipeId.TransparentAlphaGlow or PipeId.Flare or PipeId.Lightning;
+                if (blend == 0)
+                {
+                    if (!glow)
+                    {
+                        colorBlendAttachment.BlendEnable = true;   // Farbe wie ohne Mischen (One/Zero), Alpha = 0
+                        colorBlendAttachment.SrcColorBlendFactor = BlendFactor.One;
+                        colorBlendAttachment.DstColorBlendFactor = BlendFactor.Zero;
+                        colorBlendAttachment.SrcAlphaBlendFactor = BlendFactor.Zero;
+                        colorBlendAttachment.DstAlphaBlendFactor = BlendFactor.Zero;
+                    }
+                }
+                else
+                {
+                    colorBlendAttachment.SrcAlphaBlendFactor = glow ? BlendFactor.One : BlendFactor.Zero;
+                    colorBlendAttachment.DstAlphaBlendFactor = BlendFactor.One;
+                }
+            }
             var colorBlend = new PipelineColorBlendStateCreateInfo { SType = StructureType.PipelineColorBlendStateCreateInfo, AttachmentCount = shadow ? 0u : 1u, PAttachments = &colorBlendAttachment };
             var dynStates = stackalloc DynamicState[] { DynamicState.Viewport, DynamicState.Scissor };
             var dynamic = new PipelineDynamicStateCreateInfo { SType = StructureType.PipelineDynamicStateCreateInfo, DynamicStateCount = 2, PDynamicStates = dynStates };
@@ -2724,6 +2804,18 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             };
             if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _pipelines[(int)id]) != Result.Success)
                 throw new Exception($"GraphicsPipeline '{name}' fehlgeschlagen.");
+            if (cullVariants)
+            {
+                // Geprüft an itun_a: nach StripToList zeigt das Kreuzprodukt (b-a)x(c-a) zu 98 % in Richtung der Vertexnormalen.
+                // Mit RH-LookAt und Projektion (Y gespiegelt) liegt die Vorderseite damit bei Vulkan gegen den Uhrzeigersinn.
+                // FrontFace bleibt Clockwise (gl_FrontFacing wie bisher), daher wird hier FrontBit (= Vorderseite der Daten von hinten) entfernt.
+                raster.CullMode = CullModeFlags.FrontBit;
+                if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _cullPipes[(int)id]) != Result.Success)
+                    throw new Exception($"GraphicsPipeline '{name}' (Cull) fehlgeschlagen.");
+                raster.CullMode = CullModeFlags.BackBit;
+                if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _cullPipesInv[(int)id]) != Result.Success)
+                    throw new Exception($"GraphicsPipeline '{name}' (Cull gespiegelt) fehlgeschlagen.");
+            }
         }
         finally
         {
@@ -2779,11 +2871,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Format = _depthFormat,
             Samples = _msaa,
             LoadOp = AttachmentLoadOp.Clear,
-            StoreOp = AttachmentStoreOp.DontCare,
+            StoreOp = AttachmentStoreOp.Store,                       // AO liest die Tiefe danach (PostFx)
             StencilLoadOp = AttachmentLoadOp.DontCare,
             StencilStoreOp = AttachmentStoreOp.DontCare,
             InitialLayout = ImageLayout.Undefined,
-            FinalLayout = ImageLayout.DepthStencilAttachmentOptimal
+            FinalLayout = ImageLayout.DepthStencilReadOnlyOptimal   // im Fragment-Shader lesbar
         };
         var depthRef = new AttachmentReference { Attachment = 1, Layout = ImageLayout.DepthStencilAttachmentOptimal };
         var subpass = new SubpassDescription
@@ -2799,7 +2891,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             SrcSubpass = Vk.SubpassExternal,
             DstSubpass = 0,
             // Transfer: das Auflösebild (MSAA) wurde im Vorbild noch kopiert
-            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.TransferBit,
+            // FragmentShader: die Tiefe wurde im Vorbild noch von der AO-Nachbearbeitung gelesen
+            SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.TransferBit | PipelineStageFlags.FragmentShaderBit,
             SrcAccessMask = 0,
             DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
             DstAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit
@@ -2967,6 +3060,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         for (int i = 0; i < _pipelines.Length; i++)
         {
             _vk.DestroyPipeline(_device, _pipelines[i], null);
+            if (_cullPipes[i].Handle != 0) { _vk.DestroyPipeline(_device, _cullPipes[i], null); _cullPipes[i] = default; }
+            if (_cullPipesInv[i].Handle != 0) { _vk.DestroyPipeline(_device, _cullPipesInv[i], null); _cullPipesInv[i] = default; }
             _vk.DestroyPipelineLayout(_device, _layouts[i], null);
         }
         _vk.DestroyRenderPass(_device, _renderPass, null);

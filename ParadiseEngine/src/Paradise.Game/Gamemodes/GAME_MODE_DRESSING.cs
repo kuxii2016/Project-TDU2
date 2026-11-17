@@ -51,7 +51,12 @@ public class GAME_MODE_DRESSING : AvatarShop
         switch (lc)
         {
             case "mcou": return true;   // dressing_in meldet mcou beim Öffnen
-            case "csou": case "wmon": case "gofr": case "shko": case "avou": case "liin":
+            case "csou":
+            case "wmon":
+            case "gofr":
+            case "shko":
+            case "avou":
+            case "liin":
                 Close(); return true;
         }
         return false;

@@ -445,8 +445,12 @@ public class GAME_MODE_STICKERS : InteriorUtils
         float h6 = (h % 1f) * 6f; int i = (int)MathF.Floor(h6); float f = h6 - i;
         return i switch
         {
-            0 => new V3(1f, f, 0f), 1 => new V3(1f - f, 1f, 0f), 2 => new V3(0f, 1f, f),
-            3 => new V3(0f, 1f - f, 1f), 4 => new V3(f, 0f, 1f), _ => new V3(1f, 0f, 1f - f),
+            0 => new V3(1f, f, 0f),
+            1 => new V3(1f - f, 1f, 0f),
+            2 => new V3(0f, 1f, f),
+            3 => new V3(0f, 1f - f, 1f),
+            4 => new V3(f, 0f, 1f),
+            _ => new V3(1f, 0f, 1f - f),
         };
     }
 

@@ -419,10 +419,15 @@ public sealed partial class DevMenu
             Head("RACE DEBUG VIEW"),
             PhMenu("Race route / gates / opponents", "Racing is not ported yet"),
             Head("TRAFFIC DEBUG VIEW"),
-            PhMenu("Traffic routes / arrows / labels", "Traffic is not ported yet"),
-            Head("CAMERA"),
-            Bool("Free-fly camera", () => _terrain.FreeFly, v => SetFreeFly(v), false),
         };
+        AddTrafficDebugToggles(l);
+        l.Add(Head("CAR PHYSICS DEBUG VIEW"));
+        l.Add(Bool("Suspension rays", () => _dbgRays, v => _dbgRays = v, false));
+        l.Add(Bool("Tire forces", () => _dbgForces, v => _dbgForces = v, false));
+        l.Add(Bool("Velocity / forward arrows", () => _dbgVelocity, v => _dbgVelocity = v, false));
+        l.Add(Bool("Wheel labels", () => _dbgWheelLabels, v => _dbgWheelLabels = v, false));
+        l.Add(Head("CAMERA"));
+        l.Add(Bool("Free-fly camera", () => _terrain.FreeFly, v => SetFreeFly(v), false));
         var cam = _terrain.Camera;
         if (cam != null)
         {
@@ -440,7 +445,8 @@ public sealed partial class DevMenu
             Toast("Car moved to the camera");
         }));
         l.Add(Head(""));
-        l.Add(Info("Debug overlay: F12 · object under the crosshair: F10"));
+        l.Add(Info("Debug overlay: F12 · object under the crosshair: F10 · Toggle Control: " + ToggleKeyName()));
+        l.Add(Info("Lines are drawn without depth test (like Unity TDU2DebugLines)"));
         l.Add(Info("Free camera: RMB look · WASD move · Space/Ctrl up/down · Shift fast"));
         return l;
     }

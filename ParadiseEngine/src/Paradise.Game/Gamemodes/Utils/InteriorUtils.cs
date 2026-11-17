@@ -87,7 +87,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static float EnterMaxSpeedKmh = 40f;
     internal static float InteractDistance = 10f;
 
-    internal enum Kind { Dealer, Living, Garage, StickerShop, Tuner, Other }
+    internal enum Kind { Dealer, Living, Garage, StickerShop, Tuner, Airport, Other }
     internal sealed class SpotBanks { public bool Valid, IsClub, IsCasino, CarWash; public Kind Kind; public string? Living, Garage, Name, TravelTo; }
 
     internal static TerrainModule _t = null!;
@@ -113,7 +113,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static bool SceneReady => Inside && _scene != null && _sceneTask == null;
     internal static Spot? CurrentSpot => _spot;
     /// <summary>Spielmodus für die Oberfläche des aktuellen Interieurs.</summary>
-    internal static Gamemode RoomMode => (_sceneTask != null ? _pendingKind : _kind) switch { Kind.Dealer => Gamemode.GAME_MODE_SHOP, Kind.Garage => Gamemode.GAME_MODE_GARAGE, Kind.StickerShop => Gamemode.GAME_MODE_STICKERS, Kind.Tuner => Gamemode.GAME_MODE_TUNER, _ => Gamemode.GAME_MODE_LIVING };
+    internal static Gamemode RoomMode => (_sceneTask != null ? _pendingKind : _kind) switch { Kind.Dealer => Gamemode.GAME_MODE_SHOP, Kind.Garage => Gamemode.GAME_MODE_GARAGE, Kind.StickerShop => Gamemode.GAME_MODE_STICKERS, Kind.Tuner => Gamemode.GAME_MODE_TUNER, Kind.Airport => Gamemode.GAME_MODE_AIRPORT, _ => Gamemode.GAME_MODE_LIVING };
 
     internal static string? BnkDir => Paradise.Core.Config.GameData.BnkDir;
     internal static string InteriorDir => Path.Combine(BnkDir ?? "", "interior");
@@ -125,7 +125,9 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         _time += dt;
         GAME_MODE_TESTCAR.UpdateTestDrive();   // Händler-Testfahrt: Restzeit im HUD, danach zurück zum Händler
+        if (GAME_MODE_CAR_WASH.Active) return false;
         if (_waitSpot != null) return PollWaitEnter();
+        if (_restore != null && PollRestore()) return false;
         var st = _t.Streamer; var vm = Vm;
         if (st?.Spots == null || vm == null || _v.Suspended || BnkDir == null) { _nearSpot = null; Vm?.Minimap?.ShowEnter(null); return false; }
         if (_time >= _nextScan)
@@ -154,8 +156,8 @@ public abstract partial class InteriorUtils : GameModeHandler
                     if (_loggedInvalid.Add(s.Code ?? "")) Log.Warn($"Spot ohne Interieur: '{s.Code}' Kategorie {s.TypeA & 0xFF} ({s.TypeA}/{s.TypeB}) bei {s.Position}");
                     continue;
                 }
-                // noch nicht portiert: Waschanlage, Landeplatz (Flug)
-                if (b.CarWash || b.TravelTo != null) continue;
+                // noch nicht portiert: Landeplatz (Flug); Waschanlage: GAME_MODE_CAR_WASH
+                if (b.TravelTo != null) continue;
                 if (d2 < best) { best = d2; _nearSpot = s; _nearBanks = b; }
             }
         }
@@ -166,10 +168,43 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (_nearSpot != null && _nearBanks != null && lockText == null && TDU2Controls.ConfirmPressed())
         {
             Vm?.Minimap?.ShowEnter(null);
+            // Waschanlage: eigener Spielmodus mit den Kinos der Exterior-Bank (kein Interieur)
+            if (_nearBanks.CarWash) { if (_ctx != null) GAME_MODE_CAR_WASH.Begin(_ctx, _nearSpot); return false; }
             EnterInterior(_nearSpot, _nearBanks);
             return true;
         }
         return false;
+    }
+
+    // ------------------------------------------------------------------ Start im zuletzt besuchten Interieur (Original Driver.LastSpotWorld)
+    internal static string? _restore; internal static float _restoreUntil = -1f;
+
+    /// <summary>Login: Spielstand-Interieur ("Code||Spotname") merken; nach dem Spawnen in der Freifahrt geht es hinein.</summary>
+    internal static void RestoreOnStart(string? interior)
+    {
+        string code = (interior ?? "").Split('|')[0];
+        _restore = code.Length > 0 ? code : null;
+        _restoreUntil = -1f;
+        if (_restore != null) Log.Info("Spielstand: zuletzt im Interieur " + _restore + " – Start dort");
+    }
+
+    /// <summary>true = noch nicht so weit (Freifahrt wartet), false = erledigt/aufgegeben.</summary>
+    static bool PollRestore()
+    {
+        if (IslandTravel.Pending) return true;
+        var st = _t.Streamer; var vm = Vm;
+        if (_restoreUntil < 0f) _restoreUntil = _time + 30f;
+        if (st?.Spots == null || vm?.Current == null || Inside)
+        {
+            if (Inside || _time > _restoreUntil) _restore = null;
+            return _restore != null;
+        }
+        Spot? spot = null;
+        foreach (var s in st.Spots.Spots) if (string.Equals(s.Code, _restore, StringComparison.OrdinalIgnoreCase)) { spot = s; break; }
+        if (spot == null) Log.Warn("Spielstand: Interieur " + _restore + " nicht auf " + (st.Index?.IslandName ?? "?") + " – Start draußen");
+        _restore = null;
+        if (spot != null) EnterWhenReady(spot);
+        return spot != null;
     }
 
     // ------------------------------------------------------------------ Von der Karte hinein (Unity TDU2BigMap.EnterWhenReady/EnterSpot)
@@ -199,7 +234,8 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         if (Vm == null || BnkDir == null) return false;
         var b = Resolve(s);
-        if (!b.Valid || b.CarWash) { Log.Info($"Karte: Spot {s.Code} hat kein Interieur"); return false; }
+        if (b.Valid && b.CarWash) { Vm?.Minimap?.ShowEnter(null); if (_ctx != null) GAME_MODE_CAR_WASH.Begin(_ctx, s); return false; }   // Waschanlage (Karte "goin")
+        if (!b.Valid) { Log.Info($"Karte: Spot {s.Code} hat kein Interieur"); return false; }
         if (b.TravelTo != null) { Log.Info($"Karte: {s.Code} ({b.Name}) noch nicht portiert"); return false; }
         if (b.Kind == Kind.Tuner && Vm?.Current != null && !GAME_MODE_TUNER.Accepts(s, Vm.Current.Car)) { Log.Info($"Karte: Tuner {s.Code} – falsche Marke"); return false; }
         if (Inside) ExitInterior();
@@ -265,13 +301,18 @@ public abstract partial class InteriorUtils : GameModeHandler
                 // Tuner ETUN_A … ETUN_I: alle Gebäude teilen sich das eine Werkstatt-Interieur itun_a (einziges itun_* der Spieldaten)
                 b.Living = Bank("itun_a"); b.Kind = Kind.Tuner; b.Name = "Tuner";
             }
+            else if (code.StartsWith("eair"))
+            {
+                // Flughafen EAIR_A/EAIR_B: Interieur iair_a/iair_b, Spielmodus GAME_MODE_AIRPORT (Film airport.bnk)
+                b.Living = Bank("i" + code[1..]); b.Kind = Kind.Airport; b.Name = "Flughafen";
+            }
             else if (code.StartsWith("ecd") || code.StartsWith("ebd"))
             {
                 b.Living = Bank("i" + code[1..]); b.Kind = Kind.Dealer; b.Name = code.StartsWith("ebd") ? "Motorradhändler" : "Autohändler";
             }
             else if (code.StartsWith("ecw"))
             {
-                b.CarWash = true; b.Kind = Kind.Other; b.Name = "Waschanlage";   // TDU2CarWash (noch nicht portiert)
+                b.CarWash = true; b.Kind = Kind.Other; b.Name = "Waschanlage";   // GAME_MODE_CAR_WASH (Exterior-Bank ecw_*)
             }
             else if (code.Length > 1 && code[0] == 'e')
             {
@@ -588,6 +629,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (_kind == Kind.Garage) CarDirt.ApplyTo(model, a.Car);
         // Teile mit unbrauchbarer Geometrie ausblenden (Unity: Renderer größer 7 x 4 x 9 m)
         bool any = false, tires = false; Vector3 bmin = default, tmin = default;
+        var tireCenters = new List<Vector3>();
         foreach (var n in model.Visual.SelfAndDescendants())
         {
             if (!n.HasMesh || !n.RendererEnabled || !n.ActiveInHierarchy) continue;
@@ -601,14 +643,22 @@ public abstract partial class InteriorUtils : GameModeHandler
             var s = mx - mn;
             if (s.X > 7f || s.Y > 4f || s.Z > 9f) { n.RendererEnabled = false; Log.Warn($"Auto {car.ModelName}: Teil '{n.Name}' ausgeblendet (Größe {s})"); continue; }
             if (!any) { bmin = mn; any = true; } else bmin = Vector3.Min(bmin, mn);
-            if (IsTirePart(n, model.Visual)) { if (!tires) { tmin = mn; tires = true; } else tmin = Vector3.Min(tmin, mn); }
+            if (IsTirePart(n, model.Visual)) { if (!tires) { tmin = mn; tires = true; } else tmin = Vector3.Min(tmin, mn); tireCenters.Add((mn + mx) * 0.5f); }
         }
-        // auf den Boden stellen: Aufstandspunkt = Unterkante der Reifen
-        float floor = FloorBelow(pos);
-        float bottom = tires ? tmin.Y : any ? bmin.Y : 0f;
-        pos.Y = floor - bottom;
         // Lage im Spielraum (Unity LookRotation im gespiegelten Fahrzeugraum, wie VehicleManager.Render)
         var q0 = U.Mirror(U.LookRotation(Vector3.Normalize(U.Mirror(fwd)), Paradise.Core.Math.Vec.Up));
+        // auf den Boden stellen: Aufstandspunkt = Unterkante der Reifen. Auflage = höchster Boden unter Mitte und Reifen
+        // (Tuner: Hebebühne mit Plattform unter den Rädern, in der Mitte offen – nur die Mitte traf den Hallenboden, das Auto
+        // stand dann in der Bühne)
+        float floor = FloorBelow(pos);
+        var rot = Matrix4x4.CreateFromQuaternion(q0);
+        foreach (var tc in tireCenters)
+        {
+            var w = pos + Vector3.Transform(new Vector3(tc.X, 0f, tc.Z), rot); w.Y = pos.Y;
+            floor = MathF.Max(floor, FloorBelow(w));
+        }
+        float bottom = tires ? tmin.Y : any ? bmin.Y : 0f;
+        pos.Y = floor - bottom;
         var pose = Matrix4x4.CreateFromQuaternion(q0) * Matrix4x4.CreateTranslation(pos);
         // Kollision: Karosserie, Unterkante etwas angehoben (Unity BoxCollider)
         var (cmin, cmax) = model.RecomputeBodyBounds();
@@ -950,7 +1000,9 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (!_extActive || _time < _extNext) return;
         bool early = _time < _extUntil;
         _extNext = _time + (early ? 1f : 3f);
-        HideSpotExterior(!early);
+        // jedes Mal vollständig prüfen: nach dem Teleport über die Karte tauscht der Streamer Kacheln/LODs bei gleicher Knotenzahl aus
+        // (vorher nur bei geänderter Anzahl -> Exterior-Attrappe, z.B. das Garagentor, blieb sichtbar und flackerte mit dem Interieur)
+        HideSpotExterior();
     }
 
     internal static void HideSpotExterior(bool onlyIfChanged = false)
@@ -964,12 +1016,14 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (onlyIfChanged && nodes.Count == _extNodeCount) return;
         _extNodeCount = nodes.Count;
         var center = _spot.Position;
+        int before = _hiddenExterior.Count;
         foreach (var node in nodes)
         {
             if (!node.HasBounds) continue;
-            var nc = (node.BoundsMin + node.BoundsMax) * 0.5f;
-            // Unity: Wurzel des Spots (Spot-Position) im Umkreis 50 m
-            if (HorizDist(nc, center) > 50f && HorizDist(node.BoundsMin, center) > 50f && HorizDist(node.BoundsMax, center) > 50f) continue;
+            // Knoten dieses Spots: Spot-Position innerhalb der Knoten-Ausdehnung (+50 m). Vorher nur Mitte/Ecken im Umkreis 50 m – große
+            // Exteriors (Flughafen mit Vorfeld) fielen heraus, ihr Interieur-Platzhalter "INTERIOR" (IAIR_A_H/LOD_INT) blieb sichtbar
+            // und lag deckungsgleich im Interieur ("Exterior 0 Teile aus", doppeltes Mesh, Streifen am Boden).
+            if (center.X < node.BoundsMin.X - 50f || center.X > node.BoundsMax.X + 50f || center.Z < node.BoundsMin.Z - 50f || center.Z > node.BoundsMax.Z + 50f) continue;
             foreach (var o in node.Objects)
             {
                 if (!o.Active) continue;
@@ -988,6 +1042,7 @@ public abstract partial class InteriorUtils : GameModeHandler
                 _hiddenBoxes.Add((o.BoundsMin - new Vector3(0.05f), o.BoundsMax + new Vector3(0.05f)));
             }
         }
+        if (_hiddenExterior.Count > before) Log.Info($"Exterior {_spot.Code}: {_hiddenExterior.Count - before} Teil(e) ausgeblendet ({nodes.Count} Knoten)");
     }
 
     internal static void ClearScene()
@@ -1042,6 +1097,25 @@ public abstract partial class InteriorUtils : GameModeHandler
         _nextScan = _time + 2f;
     }
 
+    /// <summary>
+    /// Interieur verlassen, ohne das Auto am Spot zu setzen (Flug: IslandTravel setzt es erst auf der Zielinsel – sonst endete der
+    /// Ladebildschirm "Welt" sofort am Abflugort und der des Inselwechsels kam nicht mehr).
+    /// </summary>
+    internal static void LeaveForTravel()
+    {
+        var s = _spot;
+        ClearScene();
+        _fp = null;
+        _t.Input.CursorLocked = false;
+        _t.NearClip = 1f;
+        _spot = null; _spotBanks = null; _sceneTask = null; _afterBuild = null;
+        Paradise.Core.World.WorldWeather.Inside = false;
+        Paradise.Core.Audio.SpotMusic.Exit();
+        _v.Suspended = false;
+        _nextScan = _time + 2f;
+        Log.Info($"Interieur verlassen {s?.Code} (Flug), Auto beim Inselwechsel: {_lastCar?.FileName ?? "-"}");
+    }
+
     // ------------------------------------------------------------------ Drinnen (Unity UpdateInside)
     /// <summary>Jedes Bild im Interieur. false = verlassen (zurück in die Freifahrt).</summary>
     internal static bool UpdateInside(float dt, bool paused)
@@ -1054,7 +1128,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Fahrzeugliste der Garage (home.vmf garage/vehicule_list): wie ein Menü – Maus frei, kein Laufen/Umsehen
         bool carList = GAME_MODE_GARAGE.GarageListOpen;
         // Sticker-Shop-Menü (Unity TDU2StickerShop: SetFirstPerson(false)): Maus frei, kein Laufen/Umsehen, Kamera vom Shop
-        bool stick = GAME_MODE_STICKERS.ShopOpen || GAME_MODE_TUNER.MenuOpen || FlashDialog.Active;
+        bool stick = GAME_MODE_STICKERS.ShopOpen || GAME_MODE_TUNER.MenuOpen || GAME_MODE_AIRPORT.MenuOpen || GAME_MODE_AIRPORT.CinematicActive || FlashDialog.Active;
         _t.Input.CursorLocked = !paused && (!_dealerMenu || _carIn == CarIn.Inside) && !GAME_MODE_LIVING.HomeMenuFreesMouse && !carList && !stick;
         _fp.LookEnabled = !paused && !_dealerMenu && GAME_MODE_LIVING.HomeAllowsLook && !carList && !stick;
         if (_ui != null) _ui.MouseEnabled = ((_dealerMenu && _carIn != CarIn.Inside) || GAME_MODE_LIVING.HomeMenuFreesMouse || carList || stick) && !FlashDialog.Active;
@@ -1234,7 +1308,8 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 22 when GAME_MODE_GOODIES.Open(): break;                         // Verkäuferin (Seller_area) im Kleidungsladen: shopsavatar.vmf "clothes_shop"
             case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
             case 28 when _kind == Kind.StickerShop: GAME_MODE_STICKERS.OpenShop(null); break;   // Verkäuferin (StickersShop_area)
-            case 29: GAME_MODE_HAIRDRESSER.Open(); break;                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
+            case 29: GAME_MODE_HAIRDRESSER.Open(); break;
+            case 32 when _kind == Kind.Airport: GAME_MODE_AIRPORT.TalkToHostess(); break;   // Hostess: airport.vmf ItemType -> camn, "ai_open"                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
             default:
                 if (_kind == Kind.Tuner && GAME_MODE_TUNER.Open()) break;          // Tuner (npc_tuner) angesprochen: Tuner-Menü
                 Log.Info("Hotspot noch nicht portiert: " + Label(s) + " (Typ " + s.Type + ")"); break;
@@ -1276,7 +1351,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) return "exit";
         // 23: Tuner (shopscar.vmf ItemType "npc_tuner": Leiste/Hilfe des Tuners, "valid" öffnet OpenTuner) – ohne blieb "vehicle"
         // vom Auto stehen und der Film zeigte zusätzlich das Fahrzeugmenü (Steuerkreuz)
-        return s.Type switch { 5 => "garage", 6 => "living", 9 => "diary", 10 => "dressing", 12 or 14 => "billboard", 23 => "npc_tuner", 54 => "club", 57 => "td_media", _ => null };
+        return s.Type switch { 5 => "garage", 6 => "living", 9 => "diary", 10 => "dressing", 12 or 14 => "billboard", 23 => "npc_tuner", 32 => "npc_airport_hostess", 54 => "club", 57 => "td_media", _ => null };
     }
 
     internal static string IconLabel(InteriorScene.Selectable s)
@@ -1304,7 +1379,8 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         if (_ui == null) return;
         if (_kind == Kind.StickerShop) { GAME_MODE_STICKERS.LoadShopUi(); return; }   // shopscar.vmf "st_open" (Unity LoadShopUi)
-        if (_kind == Kind.Tuner) { GAME_MODE_TUNER.LoadTunerUi(); return; }          // shopscar.vmf "after_mkt" (Tuner, Laufmodus tuner_stop)
+        if (_kind == Kind.Tuner) { GAME_MODE_TUNER.LoadTunerUi(); return; }
+        if (_kind == Kind.Airport) { GAME_MODE_AIRPORT.LoadAirportUi(); return; }        // airport.bnk "airport" -> "airport_wm" (exe 0xBF30FC)          // shopscar.vmf "after_mkt" (Tuner, Laufmodus tuner_stop)
         try
         {
             string stop = _kind == Kind.Dealer ? "cd_stop" : _kind == Kind.Garage ? "garage_stop" : "living_stop";
@@ -1376,7 +1452,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         : t is InteriorScene.Selectable s ? "Hotspot " + Label(s) : t.ToString() ?? "?";
 
     /// <summary>Wohnbereich/Garage: Oberfläche ist home.vmf – Cursor/Leiste steuert der Film selbst (wie im Original).</summary>
-    internal static bool HomeFilm => _kind == Kind.Living || _kind == Kind.Garage;
+    internal static bool HomeFilm => _kind == Kind.Living || _kind == Kind.Garage || _kind == Kind.Airport;   // Flughafen: airport.vmf steuert Leiste/Text selbst (ItemType, LowBarText)
 
     internal static void UpdateUiAim(object? target)
     {

@@ -24,6 +24,9 @@ public static class MaterialFactory
     public static float ShadowMapStrength = 0.6f;
     public static bool ShowGlowMaterials = true;
     public static bool Interior;
+    /// <summary>Spot-Hologramme (pack_spots.bnk, SpotHolograms): TD_Gouraud-Tafeln/Rahmen wie im Original unbeleuchtet (Textur), auch am Tag.</summary>
+    public static bool Hologram;
+    public static float HologramIntensity = 1f;
     /// <summary>Möbel/Szenen ohne Interieur-Bank (Unity InteriorFx.Apply(null, …)): nur Glas transparent.</summary>
     public static bool InteriorGlass;
     public static float GlowIntensity = 1f;
@@ -299,8 +302,6 @@ public static class MaterialFactory
             marks = getTexture(mk.TextureKey, TextureDef.WrapFromEden(mk.AddressU), TextureDef.WrapFromEden(mk.AddressV));
         if (def.IsRoad && fourUv && def.TryGetLayer(SemMarks2, out var mk2))
             marks2 = getTexture(mk2.TextureKey, TextureDef.WrapFromEden(mk2.AddressU), TextureDef.WrapFromEden(mk2.AddressV));
-        if (blend == EdenBlend.Cutout || blend == EdenBlend.AlphaBlend) twoSided = true;
-
         if (sprite && (blend == EdenBlend.Additive || blend == EdenBlend.AlphaBlend))
         {
             // Halos (SF_TLight_Halo ...): additives Billboard statt beleuchteter Cutout-Karte (die wäre schwarz)
@@ -311,7 +312,8 @@ public static class MaterialFactory
                 Main = color,
                 Intensity = blend == EdenBlend.Additive ? HaloIntensity : 1f,
                 Additive = blend == EdenBlend.Additive,
-                NightOnly = IsNightGlow(def.Name),
+                // im Interieur und bei den Spot-Hologrammen auch am Tag (z.B. T_Sprite_Diary2 = MyTDULife-Symbol im Haus)
+                NightOnly = IsNightGlow(def.Name) && !Interior && !Hologram,
             };
             info = new MaterialInfo { Def = def, Desc = gd, Blend = blend, Sprite = sprite, MainTexture = color?.Name };
             return gd;
@@ -347,6 +349,7 @@ public static class MaterialFactory
         {
             Kind = transparent ? MaterialKind.Transparent : foliage ? MaterialKind.Foliage : MaterialKind.Object,
             Name = def.Name,
+            TwoSided = twoSided,   // Original: nur Flag 3 = beidseitig (unabhängig von Blend/Alpha-Test)
             Main = color,
             Brightness = ObjectBrightness,
             Wrap = WrapLighting,
@@ -446,6 +449,8 @@ public static class MaterialFactory
             d.Intensity = blend == EdenBlend.Additive ? GlowIntensity : 1f;
             if (blend == EdenBlend.Additive) d.Lit = 0f;
             if (blend == EdenBlend.Additive && IsNightGlow(def.Name) && !Interior) d.NightOnly = true;
+            // TD_Gouraud-Pixelshader (TD_Gouraud.sob ps 580/584: Textur x Interpolante): keine Sonnenbeleuchtung, keine Nachtsperre
+            if (Hologram) { d.Lit = 0f; d.NightOnly = false; d.Intensity = HologramIntensity; d.VcMul = false; d.Glow = true; }
             if (glass)
             {
                 // Unity MakeGlass: _Lit 1, _Intensity 1; deckende Textur (DXT1) -> feste Durchsicht 0,3
@@ -560,7 +565,9 @@ public static class MaterialFactory
         }
         if (ss == ShaderGouraud && Interior)
         {
-            if (transparent) { m.Lit = 0f; m.VcMul = true; return; }
+            // transparente TD_Gouraud-Teile (Hotspot-Ringe Pulse_*, Symbole T_Sprite_*): Pixelshader = Textur x Interpolante,
+            // unbeleuchtet wie die Spot-Hologramme (vorher x Vertexfarbe -> blass)
+            if (transparent) { m.Lit = 0f; m.VcMul = false; m.NightOnly = false; m.Glow = true; return; }
             m.Unlit = 1f; m.VertexColorStrength = 1f; m.VcScale = 1f; m.Brightness = 1f; m.DetailMode = false;
             return;
         }

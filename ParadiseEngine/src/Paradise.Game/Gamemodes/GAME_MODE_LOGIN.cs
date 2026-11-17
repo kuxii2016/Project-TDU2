@@ -759,13 +759,20 @@ public class GAME_MODE_LOGIN : GameModeHandler
         if (string.IsNullOrEmpty(save.island)) save.island = island;
         Log.Info($"Angemeldet als {r.nick} ({(_offline ? "offline" : r.online + " online")}) – {save.ownedCars.Count} Autos, Startauto gewählt: {save.starterChosen}, Insel {save.island}, Position={save.hasPosition}, Auto {save.currentCar}");
 
-        // Inselwechsel (TDU2IslandTravel) folgt: Spielstand auf einer anderen Insel -> am Spot dieser Insel beginnen
-        if (save.hasPosition && !string.Equals(save.island, island, StringComparison.OrdinalIgnoreCase))
+        // Spielstand auf einer anderen Insel: dorthin wechseln (IslandTravel, mit gespeicherter Position bzw. am Flughafen-Spot)
+        bool travel = false;
+        if (!string.IsNullOrEmpty(save.island) && !string.Equals(save.island, island, StringComparison.OrdinalIgnoreCase))
         {
-            Log.Warn($"Spielstand liegt auf {save.island}, geladen ist {island} – Inselwechsel noch nicht portiert, Start am Spot");
-            save.hasPosition = false;
+            if (IslandTravel.CanTravelTo(save.island, vm.BnkDir)) travel = true;
+            else
+            {
+                Log.Warn($"Spielstand liegt auf {save.island}, Insel nicht vorhanden – Start auf {island} am Spot");
+                save.hasPosition = false; save.interior = ""; save.island = island;
+            }
         }
-        if (save.hasPosition && !PositionOnIsland(new Vector3(save.px, save.py, save.pz)))
+        // zuletzt im Interieur: nach dem Spawnen (und ggf. dem Inselwechsel) wieder hinein
+        InteriorUtils.RestoreOnStart(save.interior);
+        if (!travel && save.hasPosition && !PositionOnIsland(new Vector3(save.px, save.py, save.pz)))
         {
             Log.Warn($"Spielstand: Position ({save.px:F0}, {save.pz:F0}) liegt nicht auf {island} – Start am Spot");
             save.hasPosition = false;
@@ -789,6 +796,13 @@ public class GAME_MODE_LOGIN : GameModeHandler
         var dealer = FindSpot(string.IsNullOrEmpty(r.startSpot) ? "ESTOL_B" : r.startSpot);
         var spot = home ?? dealer;
 
+        if (car != null && travel)
+        {
+            Log.Info($"Spielstand liegt auf {save.island} – Inselwechsel beim Start");
+            _st = St.Done;
+            IslandTravel.Go(save.island, false, car.FileName);
+            return;
+        }
         if (car != null)
         {
             if (save.hasPosition)

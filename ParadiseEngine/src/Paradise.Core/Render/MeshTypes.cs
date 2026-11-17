@@ -128,6 +128,18 @@ public sealed class MaterialDesc
 {
     public MaterialKind Kind = MaterialKind.Simple;
     public string? Name;
+    /// <summary>
+    /// Cull-Modus des Originals (.2DM MAT. +0x43, im Exe D3DRS_CULLMODE 0x16 über Tabelle {2,3,2,1}: 3 = D3DCULL_NONE).
+    /// true = beidseitig, false = Rückseiten (Seite gegen die Normalen) werden nicht gezeichnet. Default beidseitig für
+    /// alle Materialien ohne .2DM-Flag (Autos, Avatare, Effekte, Himmel ...).
+    /// </summary>
+    public bool TwoSided = true;
+    /// <summary>
+    /// Leuchtet (Bloom-Maske, Zusatz PostFx): Material schreibt seinen Alpha-Wert in den Alpha-Kanal des Weltbilds. Additive
+    /// Transparente, Glow-Sprites, Flares, Blitze und Auto-/Objekt-Licht tun das ohnehin; hier für alpha-gemischte Transparente
+    /// (Spot-Hologramme, transparente TD_Gouraud-Symbole im Interieur).
+    /// </summary>
+    public bool Glow;
 
     // gemeinsam
     public IGpuTexture? Main;                      // _MainTex (Objekt: COLOR, Terrain: Colormap)

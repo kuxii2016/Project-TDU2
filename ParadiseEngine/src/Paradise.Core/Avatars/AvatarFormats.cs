@@ -356,10 +356,14 @@ public static class SkinnedGeometry
             if (nw == 1) w1 = rest; else if (nw == 2) w2 = rest; else if (nw >= 3) w3 = rest;
             pr.Weights[i] = Normalize(new BoneWeight4
             {
-                B0 = Map(palette, i0), W0 = w0,
-                B1 = Map(palette, i1), W1 = w1,
-                B2 = Map(palette, i2), W2 = w2,
-                B3 = Map(palette, i3), W3 = w3,
+                B0 = Map(palette, i0),
+                W0 = w0,
+                B1 = Map(palette, i1),
+                W1 = w1,
+                B2 = Map(palette, i2),
+                W2 = w2,
+                B3 = Map(palette, i3),
+                W3 = w3,
             });
             if (hasNormal)
             {

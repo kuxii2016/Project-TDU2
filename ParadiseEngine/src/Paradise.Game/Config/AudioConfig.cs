@@ -9,21 +9,21 @@ namespace Paradise.Game.Config;
 public sealed class AudioConfig
 {
     /// <summary>Gesamtlautstärke aller Sounds (AudioEngine.MasterVolume).</summary>
-    public float Master { get; set; } = 0.85f;
+    public float Master { get; set; } = 1f;
     /// <summary>Menümusik (frontend/…/music: LOGIN, MAP, LOBBY …).</summary>
-    public float Music { get; set; } = 0.35f;
+    public float Music { get; set; } = 0.5f;
     /// <summary>Musik in Interieurs (Händler, Haus, Läden …: sound/musics, Unity TDU2SpotAudio.Volume).</summary>
-    public float SpotMusic { get; set; } = 0.6f;
+    public float SpotMusic { get; set; } = 0.5f;
     /// <summary>Oberflächen-Sounds der Flash-Menüs (fe_snd.bnk).</summary>
-    public float Interface { get; set; } = 0.4f;
+    public float Interface { get; set; } = 0.5f;
     /// <summary>Fahrzeug (Motor, Reifen, Hupe …) – Unity TDU2VehicleManager.Volume.</summary>
-    public float Vehicle { get; set; } = 0.34f;
+    public float Vehicle { get; set; } = 0.5f;
     /// <summary>Reifenquietschen (Faktor auf den Fahrzeugsound).</summary>
-    public float TireSqueal { get; set; } = 0.3f;
+    public float TireSqueal { get; set; } = 0.5f;
     /// <summary>Schaltgeräusche (Faktor auf den Fahrzeugsound).</summary>
-    public float GearShift { get; set; } = 0.3f;
+    public float GearShift { get; set; } = 0.5f;
     /// <summary>Umgebungsgeräusche der Insel (ambiences.xmb: Stadt, Meer, Wald …, Regen) – Core/Audio/TDU2Ambience.</summary>
-    public float Ambience { get; set; } = 0.1f;
+    public float Ambience { get; set; } = 0.5f;
 
     // ---------------- Autoradio (Unity TDU2Radio: Inspektor-Werte; Sender/Lautstärke gelten nur für die Sitzung)
     /// <summary>Sender beim Start: off, hariba, kalua (eigene MP3 in SharedAssets/Radio), roadtrack.</summary>

@@ -318,6 +318,28 @@ namespace Paradise.Core.Savegame
             Set(c, "InteriorIndice", System.Math.Min(interior, 254));
             Set(c, "OdometerKms", km);
             Set(c, "HasSticker", sticker);
+
+            // Tuning wie im Spiel: Car/Car Upgrades { Acceleration, Top Speed, Braking } (je 0..4; CarUpgrades)
+            if (c["Car Upgrades"] is XObject cu)
+            {
+                var lv = default(UpgradeLevels);
+                if (s.carUpgrades != null)
+                    foreach (var u in s.carUpgrades)
+                        if (u != null && string.Equals(u.car, car.FileName, StringComparison.OrdinalIgnoreCase)) lv = UpgradeLevels.Unpack(u.upgrades);
+                Set(cu, "Acceleration", (int)lv.Acceleration);
+                Set(cu, "Top Speed", (int)lv.TopSpeed);
+                Set(cu, "Braking", (int)lv.Braking);
+            }
+            // Schmutz wie im Spiel: Car/Car Dirt/Dirt Data (48 Werte 0..255; CarDirt-Stand gleichmäßig, Kratzer haben dort kein Feld)
+            if (c["Car Dirt"] is XObject cd && cd["Dirt Data"] is XArray dd)
+            {
+                float level = 0f;
+                if (s.carDirt != null)
+                    foreach (var e in s.carDirt)
+                        if (e != null && string.Equals(e.car, car.FileName, StringComparison.OrdinalIgnoreCase)) level = e.level;
+                ulong b = (ulong)System.Math.Clamp((int)MathF.Round(level * 255f), 0, 255);
+                foreach (var it in dd.Items) if (it is XPrim p) p.Value = b;
+            }
         }
 
         /// <summary>Avatar: bleibt wie in der Vorlage, bis AvatarConfig/AvatarLibrary portiert sind (Unity WriteAvatar).</summary>
@@ -386,6 +408,21 @@ namespace Paradise.Core.Savegame
                     if (cfg.color != 0 || cfg.rim != 0 || cfg.interior != 0) s.carConfigs.Add(cfg);
                     double km = Double(c, "OdometerKms");
                     if (km > 0) s.odometers.Add(new OdoEntry { carId = arch, meters = km * 1000.0 });
+                    // Tuning (Car Upgrades) und Schmutz (Car Dirt) wie im Spiel
+                    if (c["Car Upgrades"] is XObject cu)
+                    {
+                        var lv = new UpgradeLevels();
+                        lv.Set(CarUpgrades.Acceleration, (int)Long(cu, "Acceleration"));
+                        lv.Set(CarUpgrades.TopSpeed, (int)Long(cu, "Top Speed"));
+                        lv.Set(CarUpgrades.Braking, (int)Long(cu, "Braking"));
+                        if (lv.Any) (s.carUpgrades ??= new List<UpgradeEntry>()).Add(new UpgradeEntry { car = car.FileName, upgrades = lv.Pack() });
+                    }
+                    if (c["Car Dirt"] is XObject cd && cd["Dirt Data"] is XArray dd && dd.Items.Count > 0)
+                    {
+                        double sum = 0; foreach (var it in dd.Items) sum += (it as XPrim)?.AsDouble() ?? 0;
+                        float level = (float)(sum / dd.Items.Count / 255.0);
+                        if (level > 0.001f) (s.carDirt ??= new List<DirtEntry>()).Add(new DirtEntry { car = car.FileName, level = level });
+                    }
                 }
             if (vars.TryGetValue("U3D_Car", out string vc) && s.ownedCars.Exists(f => string.Equals(f, vc, StringComparison.OrdinalIgnoreCase))) s.currentCar = vc;
             if (string.IsNullOrEmpty(s.currentCar) && s.ownedCars.Count > 0) s.currentCar = s.ownedCars[0];

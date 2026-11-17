@@ -5,7 +5,7 @@ using System.Numerics;
 namespace Paradise.Core.World;
 
 /// <summary>
-/// World Actors der Insel (islands/&lt;insel&gt;/scenarics/packs/worldactors.bnk): Ampeln (SF_Xin_*), Schilder (RS_*),
+/// World Actors der Insel (islands/insel/scenarics/packs/worldactors.bnk): Ampeln (SF_Xin_*), Schilder (RS_*),
 /// Bänke, Mülleimer, Absperrungen. Portiert aus dem Unity-Projekt (WorldActorLib).
 /// Die "A"-Platzierungen der Sektoren (-A.pmi) nennen als Schlüssel den __Hc eines Entity__Actor aus entities.xmb;
 /// dessen "mesh" verweist über hashcodes.xmb auf .3dd/.3dg/.2dm der Bank (Rückfall: Dateistamm = __Name ohne "_act").

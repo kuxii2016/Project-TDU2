@@ -14,7 +14,7 @@ public sealed class GraphicsConfig
     /// <summary>Grundwert des LOD-Bias (Unity QualitySettings.lodBias der Grafikoption "LOD"), 1 = Werte aus den Dateien.</summary>
     public float LodBias { get; set; } = 1f;
     /// <summary>Kantenglättung (Optionsmenü "Anti-Aliasing", Unity-Standard 4x): 0/1 aus, 2, 4, 8.</summary>
-    public int AntiAliasing { get; set; } = 4;
+    public int AntiAliasing { get; set; } = 0;
     /// <summary>Vertikale Synchronisation (Unity-Standard an). Aus = Mailbox/Immediate (Messung ohne Bildschirmtakt).</summary>
     public bool VSync { get; set; } = false;
     /// <summary>Texturqualität 0 niedrig (Viertel), 1 mittel (halb), 2 hoch (volle Auflösung) – Unity-Standard hoch.</summary>

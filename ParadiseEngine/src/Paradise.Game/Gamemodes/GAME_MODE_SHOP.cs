@@ -531,14 +531,20 @@ public class GAME_MODE_SHOP : InteriorUtils
             else Log.Info("Autohändler: nicht genug Geld: " + Money(Total) + " (du hast " + Money(MyMoney) + ")");
         }
         if (kase == "vehicle_full") { EndDealerCar(); _ui.SetValue("/:Input", true); return; }   // Einsteigen-Zeitüberschreitung
-        // Bestätigungsbox aus general.bnk wie im Spiel (Kauf bestätigen, kein Geld …); die Antwort entscheidet der Spieler,
-        // _root.DialogBox des Films (shopscar.vmf) wertet PlayerAnswer je DgbxCase aus
-        var ui = _ui!;
-        FlashDialog.Open(ui, ans =>
-        {
-            ui.SetVariable("/:PlayerAnswer", ans);
-            if (!ui.CallClip("/", "DialogBox")) ui.SetValue("/:Input", true);
-        });
+                                                                                                 // Bestätigungsbox aus general.bnk wie im Spiel (Kauf bestätigen, kein Geld …); die Antwort entscheidet der Spieler,
+                                                                                                 // _root.DialogBox des Films (shopscar.vmf) wertet PlayerAnswer je DgbxCase aus
+
+        string answer = kase == "em_0" || kase == "em_2" ? "b" : "a";
+        _ui.SetVariable("/:PlayerAnswer", answer);
+        if (!_ui.CallClip("/", "DialogBox")) _ui.SetValue("/:Input", true);
+
+        //BREAKS CAR BUY MENUE should be in End the Confirm?!
+        //var ui = _ui!;
+        //FlashDialog.Open(ui, ans =>
+        //{
+        //    ui.SetVariable("/:PlayerAnswer", ans);
+        //    if (!ui.CallClip("/", "DialogBox")) ui.SetValue("/:Input", true);
+        //});
     }
 
     internal static void BuyDealerCar()

@@ -75,6 +75,12 @@ public interface IRenderer : IDisposable
     void DrawOverlay(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices, IGpuMaterial material);
 
     /// <summary>
+    /// Wie <see cref="DrawOverlay"/>, aber über allem – auch über der Flash-Oberfläche (HUD, Minimap, Menüs): Entwicklermenü (F1).
+    /// Ohne eigenen Durchgang des Backends wie DrawOverlay.
+    /// </summary>
+    void DrawOverlayTop(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices, IGpuMaterial material) => DrawOverlay(vertices, indices, material);
+
+    /// <summary>
     /// Flash-Quads (VMF-Player, Shader TDU2/FlashQuad): je 4 Vertices ein Viereck (Position.xy in Pixeln, 0,0 = links oben;
     /// Uv0). Gezeichnet nach der Welt und vor dem Debug-Overlay, in Aufrufreihenfolge. mask = Maskenform (optional).
     /// </summary>

@@ -368,7 +368,7 @@ public class GAME_MODE_TUNER : InteriorUtils
 
     // ================================================================== Hilfen
     /// <summary>Entdeckungslevel (DBAreaLevel 1..6) des Gebiets, in dem der Tuner steht. Noch ohne Entdeckungsfortschritt: Stufe 1.</summary>
-    static int AreaLevel()
+    internal static int AreaLevel()
     {
         // exe 0xa2f720: Gebiet der Spielerposition -> Entdeckungslevel; Stufe n frei, wenn Level >= n.
         // Entdeckungspunkte (_alpneeded) gibt es in der Engine noch nicht -> jedes Gebiet steht auf Level 1.

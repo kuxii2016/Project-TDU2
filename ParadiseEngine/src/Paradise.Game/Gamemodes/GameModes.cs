@@ -31,6 +31,8 @@ public static class GameModes
         Gamemode.GAME_MODE_SHOP => new GAME_MODE_SHOP(),
         Gamemode.GAME_MODE_STICKERS => new GAME_MODE_STICKERS(),
         Gamemode.GAME_MODE_TUNER => new GAME_MODE_TUNER(),
+        Gamemode.GAME_MODE_AIRPORT => new GAME_MODE_AIRPORT(),
+        Gamemode.GAME_MODE_CAR_WASH => new GAME_MODE_CAR_WASH(),
         Gamemode.GAME_MODE_LIVING => new GAME_MODE_LIVING(),
         Gamemode.GAME_MODE_GARAGE => new GAME_MODE_GARAGE(),
         Gamemode.GAME_MODE_CASINO => new GAME_MODE_CASINO(),

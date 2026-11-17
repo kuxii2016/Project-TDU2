@@ -406,6 +406,7 @@ void main() {
     vec3 emission = albedo * m.p4.y;                       // _Unlit (Lightmap mit eingebackenem Licht)
     albedo *= (1.0 - m.p4.y);
     emission += c.rgb * m.p5.y * fr.misc.x;                // _NightEmit x _TDU2NightK
+    vec3 glowC = c.rgb * m.p5.y * fr.misc.x;               // Bloom-Maske (Zusatz PostFx): selbstleuchtende Teile (Neon, Fenster)
     if (m.p5.z > 0.5 && fr.env.x > 0.01)
     {
         // Original TD_Building (gWindowMapTexSampler): Licht = Fensterrauschen(Fensterkachel) x Helligkeit(COLOR) x
@@ -418,7 +419,9 @@ void main() {
         vec3 win = texture(marks2Tex, nuv).rgb;                // _WinTex
         float lum = dot(texture(mainTex, uvM).rgb, vec3(0.3, 0.59, 0.11));
         emission += win * lum * m.p10.x * mask * fr.env.x * 0.5;
+        glowC += win * lum * m.p10.x * mask * fr.env.x * 0.5;
     }
+    float glowA = clamp(max(glowC.r, max(glowC.g, glowC.b)) * 2.0, 0.0, 1.0);
     if (m.p5.w > 0.5)
     {
         // Original TD_Building (NIGHTLIGHTMAP s8):
@@ -430,7 +433,7 @@ void main() {
             // Interieur (Unity TDU2Object _NightMode mit InteriorFx): Licht ist eingebacken, keine Sonne/Ambient
             //   Emission = Albedo x lerp(night.rgb, _NightAmbient 0.9, nightlmap.x) + night.rgb x night.a x nightlmap.y
             //   Albedo  *= nightlmap.x x _NightLitScale (0)
-            outColor = vec4(TDU2Fog(TDU2Planar(emission + albedo * mix(nl.rgb, vec3(0.25), m.p7.y) + nl.rgb * nl.a * m.p7.z, vWorld), vWorld), 1.0);
+            outColor = vec4(TDU2Fog(TDU2Planar(emission + albedo * mix(nl.rgb, vec3(0.25), m.p7.y) + nl.rgb * nl.a * m.p7.z, vWorld), vWorld), glowA);
             return;
         }
         float k = fr.misc.x;
@@ -456,7 +459,7 @@ void main() {
         vec3 litG = TDU2LinToSrgb(max(lit, vec3(0.0))) + TDU2LinToSrgb(max(env, vec3(0.0))) * (fres * rainWet);
         lit = pow(litG, vec3(2.2));
     }
-    outColor = vec4(TDU2Fog(TDU2Planar(lit, vWorld), vWorld), 1.0);
+    outColor = vec4(TDU2Fog(TDU2Planar(lit, vWorld), vWorld), glowA);
 }";
 
     // ------------------------------------------------------------------ TDU2/ObjectTransparent (TDU2ObjectTransparent.shader)
@@ -649,6 +652,22 @@ layout(location = 1) in vec4 vColor;
 layout(location = 0) out vec4 outColor;
 void main() {
     outColor = texture(mainTex, vUv) * vColor;
+}";
+
+    // Overlay über allem (IRenderer.DrawOverlayTop, Entwicklermenü) im UI-Durchgang: Ziel ist die UNORM-Sicht, die sRGB-Kodierung
+    // des Weltdurchgangs (sRGB-Ziel) wird hier von Hand gemacht -> gleiche Farben wie OverlayFrag.
+    public const string OverlayUiFrag = Common + @"
+layout(set = 0, binding = 0) uniform sampler2D mainTex;
+layout(location = 0) in vec2 vUv;
+layout(location = 1) in vec4 vColor;
+layout(location = 0) out vec4 outColor;
+vec3 ToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+void main() {
+    vec4 c = texture(mainTex, vUv) * vColor;
+    outColor = vec4(ToSrgb(c.rgb), c.a);
 }";
 
     // ------------------------------------------------------------------ TDU2/FlashQuad (TDU2FlashQuad.shader)
@@ -1158,6 +1177,7 @@ void main() {
     vec3 emission = c.rgb * cm.c[6].z;
 
     float lampKill = 1.0;
+    float glowA = 0.0;   // Bloom-Maske (Zusatz PostFx): leuchtende Lampen
     vec3 lensTex = vec3(0.0); float lensK = 0.0;   // Original-Lichtglas im Gamma-Raum (nur Lack-Pfad mit Autolicht des Originals)
     if (cm.c[8].x > 0.5) {
         // Original TD_CarPaint_NM ps96 (docs re/car_lights_spec 1): m = GlossLight * (1,1,1,-1) + (0,0,0,1);
@@ -1172,24 +1192,26 @@ void main() {
         else emission += texture(emissionTex, vUv0).rgb * dot(mm * gf, w);
         vec4 kk = vec4(1.0) - gf * mm;
         lampKill = kk.x * kk.y * kk.z * kk.w;
+        glowA = clamp(1.0 - lampKill, 0.0, 1.0);
     } else if (cm.c[6].x > 0.001) {
         // Unity TDU2/Car: nur wo die An-Textur heller ist als die Aus-Farbe (sonst leuchtet das ganze Glas mit)
         vec3 on = texture(emissionTex, vUv0).rgb;
         float gain = clamp(dot(clamp(on - c.rgb * 0.9, 0.0, 1.0), vec3(0.3, 0.59, 0.11)) * 3.0, 0.0, 1.0);
         vec3 glow = cm.c[6].y > 0.5 ? on * gain * 1.5 : on;
         emission += glow * cm.c[5].rgb * cm.c[6].x * 2.0;   // x2: Engine ohne Bloom
+        glowA = clamp(max(glow.r, max(glow.g, glow.b)) * cm.c[6].x, 0.0, 1.0);
     }
     vec3 l = normalize(fr.sunDir.xyz);
     if (td) {
         float heatT = cm.c[3].x;
-        if (heatT > 0.001) { float hh = clamp(heatT, 0.0, 1.0); emission += cm.c[4].rgb * mix(vec3(0.6, 0.12, 0.02), vec3(1.6, 0.7, 0.2), hh * hh) * hh * 2.0; }
+        if (heatT > 0.001) { float hh = clamp(heatT, 0.0, 1.0); emission += cm.c[4].rgb * mix(vec3(0.6, 0.12, 0.02), vec3(1.6, 0.7, 0.2), hh * hh) * hh * 2.0; glowA = max(glowA, hh); }
         vec3 lightT;
         vec3 paint = cm.c[21].x > 1.5 ? CarTdPaint2(TdG(albedo), n, v, vWorld, lightT) : CarTdPaint(TdG(albedo), n, v, vWorld, lightT);
         // Schmutz wie im Original: über dem Ergebnis, mit dem Licht beleuchtet, ohne Glanz/Spiegelung
         paint = mix(paint, albedo * lightT, dirtK);
         // Original ps96: Farbe = Lack · prod(1 − GLOSSFCT·Maske) + TEXLIGHT · dot(Maske · GLOSSFCT, 1), im Gamma-Raum addiert
         vec3 litT = CarOrigLight() ? TdL(TdG(paint) * lampKill + TdG(lensTex) * lensK) : paint * lampKill;
-        outColor = vec4(TDU2Fog(litT + emission, vWorld), 1.0);
+        outColor = vec4(TDU2Fog(litT + emission, vWorld), glowA);
         return;
     }
     float clearCoat = cm.c[7].x;
@@ -1217,9 +1239,10 @@ void main() {
     if (heat > 0.001) {
         float hh = clamp(heat, 0.0, 1.0);
         emission += cm.c[4].rgb * mix(vec3(0.6, 0.12, 0.02), vec3(1.6, 0.7, 0.2), hh * hh) * hh * 2.0;
+        glowA = max(glowA, hh);
     }
     vec3 lit = CarStandard(albedo, metallic, smoothness, occlusion, n, v, vWorld) * lampKill + emission;
-    outColor = vec4(TDU2Fog(lit, vWorld), 1.0);
+    outColor = vec4(TDU2Fog(lit, vWorld), glowA);
 }";
 
     // TDU2/CarGlass: Surface Standard alpha:premul (Diffus x Alpha, Spiegelung bleibt)
@@ -1739,7 +1762,7 @@ void main() {
         float d = length(vWorld - fr.camPos.xyz);
         c *= clamp((fr.env.z - d) / max(fr.env.z - fr.env.y, 1.0), 0.0, 1.0);
     }
-    outColor = vec4(c, 1.0);
+    outColor = vec4(c, clamp(max(c.r, max(c.g, c.b)), 0.0, 1.0));   // Alpha = Bloom-Maske (Blend One/One: Farbe unabhängig vom Alpha)
 }";
 
     // ------------------------------------------------------------------ Blitz (Original TD_Lightning, selbst disassembliert)

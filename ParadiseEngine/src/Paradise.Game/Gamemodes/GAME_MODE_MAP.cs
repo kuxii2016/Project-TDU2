@@ -18,9 +18,9 @@ using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
 using FVec = Paradise.Core.Flash.Vector2;
 using Gps = Paradise.Core.Vehicles.Gps;
 using Minimap = Paradise.Core.Vehicles.Minimap;
-using TDU2Bookmarks = Paradise.Core.Vehicles.TDU2Bookmarks;
 using Spot = Paradise.Core.Formats.Spot;
 using SpotsFile = Paradise.Core.Formats.SpotsFile;
+using TDU2Bookmarks = Paradise.Core.Vehicles.TDU2Bookmarks;
 using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
 
 namespace Paradise.Game.Gamemodes;
@@ -327,34 +327,34 @@ public class GAME_MODE_MAP : GameModeHandler
                 _ui!.SetValue("/:IsTeleportOK", OnRoad(out _)); break;
             case "fiou": case "fiin": case "fity": case "stof": case "ston": case "mnok": break;   // Animationsmeldungen der Filterleiste
             case "bmrk:enbl":                         // Lesezeichen an der Cursorposition (Unity TDU2BigMap)
-            {
-                var g = MenuPoint(); var sm = _ctx.Terrain?.Streamer;
-                if (g.HasValue && TDU2Bookmarks.CanAdd)
                 {
-                    // Höhe vom Gelände (Cursor liegt auf Meereshöhe), damit das Symbol beim Kippen der Karte an der Stelle bleibt
-                    var p = g.Value;
-                    if (sm != null && sm.RaycastDown(new Vector3(p.X, p.Y + 3000f, p.Z), 0f, 6000f, out float gy)) p.Y = gy;
-                    TDU2Bookmarks.Add(IslandName(), p); BuildSpots();
-                    _ui!.CallClip("/presets/ttip", "Open");   // Meldung "Lesezeichen hinzugefügt" (schließt sich selbst)
+                    var g = MenuPoint(); var sm = _ctx.Terrain?.Streamer;
+                    if (g.HasValue && TDU2Bookmarks.CanAdd)
+                    {
+                        // Höhe vom Gelände (Cursor liegt auf Meereshöhe), damit das Symbol beim Kippen der Karte an der Stelle bleibt
+                        var p = g.Value;
+                        if (sm != null && sm.RaycastDown(new Vector3(p.X, p.Y + 3000f, p.Z), 0f, 6000f, out float gy)) p.Y = gy;
+                        TDU2Bookmarks.Add(IslandName(), p); BuildSpots();
+                        _ui!.CallClip("/presets/ttip", "Open");   // Meldung "Lesezeichen hinzugefügt" (schließt sich selbst)
+                    }
+                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                    break;
                 }
-                _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
-                break;
-            }
             case "bmrk:dsbl":                         // Lesezeichen entfernen
-            {
-                var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
-                if (ms != null && ms.bookmark >= 0) { TDU2Bookmarks.Remove(ms.bookmark); _selected = -1; HideTooltip(); BuildSpots(); }
-                _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
-                break;
-            }
+                {
+                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
+                    if (ms != null && ms.bookmark >= 0) { TDU2Bookmarks.Remove(ms.bookmark); _selected = -1; HideTooltip(); BuildSpots(); }
+                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                    break;
+                }
             case "mysp:enbl":                         // Spot als Favorit
             case "mysp:dsbl":
-            {
-                var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : null;
-                if (ms != null && ms.bookmark < 0) TDU2Bookmarks.SetFavorite(ms.spot.Code, c == "mysp:enbl");
-                _ui!.SetValue("/:IsSpotFavorite", ms != null && TDU2Bookmarks.IsFavorite(ms.spot.Code));
-                break;
-            }
+                {
+                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : null;
+                    if (ms != null && ms.bookmark < 0) TDU2Bookmarks.SetFavorite(ms.spot.Code, c == "mysp:enbl");
+                    _ui!.SetValue("/:IsSpotFavorite", ms != null && TDU2Bookmarks.IsFavorite(ms.spot.Code));
+                    break;
+                }
             default: break;
         }
     }
@@ -549,6 +549,12 @@ public class GAME_MODE_MAP : GameModeHandler
         // Tuner nur mit einem Auto seiner Marken: gesperrt -> SetMenu "spot_locked", Eintreten gesperrt, Text m_SpotLockedTuner_
         var cur = _ctx.Vehicles?.Manager?.Current?.Car;
         ui.SetValue("/:IsSpotLocked", ms.label == "tuning" && cur != null && !GAME_MODE_TUNER.Accepts(ms.spot, cur, db, IslandName()));
+        if (ms.label == "tuning")
+        {
+            // Tooltip des Tuners (infos.setTuner): Anzahl Marken (Seiten zu 8) und beste freie Tuningstufe (txt.upg level0..5)
+            ui.SetValue("/:NbBrands", TunerLogos(ms.spot).Count);
+            ui.SetVariable("/:MaxUpgLevel", "level" + System.Math.Clamp(GAME_MODE_TUNER.AreaLevel(), 0, 5));
+        }
         if (ms.label == "carDealer" || ms.label == "bikeDealer" || ms.label == "carRental")
         {
             var shop = db?.ShopForSpot(ms.spot, IslandName());
@@ -709,6 +715,14 @@ public class GAME_MODE_MAP : GameModeHandler
         var ms = _spots[_selected];
         var s = ms.spot; var label = ms.label;
         ui.SetClipTexture("/tool_tip/infos/picture/lure_map", SpotPicture(s));
+        if (label == "tuning")
+        {
+            // Marken des Tuners: Logos in txt/list/br0..15/l (logotexturepage.bnk wie die Händler-Symbole)
+            var logos = TunerLogos(s);
+            for (int i = 0; i < 16; i++)
+                ui.SetClipTexture("/tool_tip/infos/txt/list/br" + i + "/l", i < logos.Count ? FlashTextures.BrandLogo(FlashHost.BnkDir, logos[i]) : null);
+            return;
+        }
         if (label != "carDealer" && label != "bikeDealer" && label != "home") return;
         var db = Db; var shop = label == "home" ? null : db?.ShopForSpot(s, IslandName());
         var cars = label == "home" ? HouseCars(s.Code) : new List<CarPhysics>();
@@ -737,6 +751,17 @@ public class GAME_MODE_MAP : GameModeHandler
             ui.GotoLabel(li + "/disp/chck", "off", false);
             ui.GotoLabel(li + "/disp/car", "set", false);
         }
+    }
+
+    /// <summary>Logos (DBBrands._logo_global_index) der Marken eines Tuners: je Marke der Autos in DBCarShop._slot_1..9, in dieser Reihenfolge.</summary>
+    List<int> TunerLogos(Spot s)
+    {
+        var r = new List<int>();
+        var db = Db; var shop = db?.ShopForSpot(s, IslandName());
+        if (shop == null || db == null) return r;
+        foreach (int id in shop.CarIds)
+            if (id != 0 && db.ById.TryGetValue(id, out var c) && c.LogoIndex >= 0 && !r.Contains(c.LogoIndex)) r.Add(c.LogoIndex);
+        return r;
     }
 
     void HideTooltip()

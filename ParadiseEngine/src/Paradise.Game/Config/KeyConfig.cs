@@ -13,7 +13,7 @@ public sealed class KeyConfig
     public sealed record Binding(string Id, string Name, string NameEn, int Key1, int Key2, Category Cat);
 
     // Windows-Tastencodes
-    public const int None = 0, Backspace = 0x08, Return = 0x0D, Shift = 0x10, Control = 0x11, Alt = 0x12, Escape = 0x1B, Space = 0x20,
+    public const int None = 0, Backspace = 0x08, Tab = 0x09, Return = 0x0D, Shift = 0x10, Control = 0x11, Alt = 0x12, Escape = 0x1B, Space = 0x20,
         Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
         D0 = 0x30, D1 = 0x31, D2 = 0x32, D3 = 0x33, D4 = 0x34, D5 = 0x35, D6 = 0x36, D7 = 0x37,
         A = 0x41, B = 0x42, C = 0x43, D = 0x44, E = 0x45, F = 0x46, G = 0x47, H = 0x48, I = 0x49, J = 0x4A, K = 0x4B, L = 0x4C,
@@ -76,19 +76,20 @@ public sealed class KeyConfig
         new("menu_opt1",  "Option 1",                    "Option 1",             X, None,    Category.Menu),
         new("menu_opt2",  "Option 2",                    "Option 2",             Y, None,    Category.Menu),
         // ---- Autoradio (Unity TDU2Radio: Inspektor-Tasten Keypad5/4/6/8/2)
-        new("radio_open", "Radio-Anzeige",               "Radio display",        Num5, None, Category.Radio),
-        new("radio_prev", "Sender zurück",               "Previous station",     Num4, None, Category.Radio),
-        new("radio_next", "Sender vor",                  "Next station",         Num6, None, Category.Radio),
-        new("radio_volup",   "Radio lauter",             "Radio volume up",      Num8, None, Category.Radio),
-        new("radio_voldown", "Radio leiser",             "Radio volume down",    Num2, None, Category.Radio),
+        new("radio_open", "Radio-Anzeige",               "Radio display",        Num5, None, Category.Driving),
+        new("radio_prev", "Sender zurück",               "Previous station",     Num4, None, Category.Driving),
+        new("radio_next", "Sender vor",                  "Next station",         Num6, None, Category.Driving),
+        new("radio_volup",   "Radio lauter",             "Radio volume up",      Num8, None, Category.Driving),
+        new("radio_voldown", "Radio leiser",             "Radio volume down",    Num2, None, Category.Driving),
         // ---- Entwickler (Testumschalter bis die Abläufe portiert sind)
-        new("dev_car",     "Ein-/Aussteigen (Test)",     "Enter/exit car",       F2, None,   Category.Debug),
-        new("dev_carnext", "Nächstes Auto (Test)",       "Next car",             F3, None,   Category.Debug),
-        new("dev_carprev", "Voriges Auto (Test)",        "Previous car",         F4, None,   Category.Debug),
-        new("dev_color",   "Nächste Farbe (Test)",       "Next color",           F8, None,   Category.Debug),
-        new("dev_reload",  "Auto neu laden (Test)",      "Reload car",           F9, None,   Category.Debug),
-        new("dev_login",   "Modus Login (Test)",         "Login mode",           F5, None,   Category.Debug),
-        new("dev_freeride","Modus Freifahrt (Test)",     "Freeride mode",        F6, None,   Category.Debug),
-        new("dev_map",     "Modus Karte (Test)",         "Map mode",             F7, None,   Category.Debug),
+        new("dev_menuctrl","Entwicklermenü: Steuerung umschalten (Menü/Fahren)", "Dev menu: toggle control (menu/drive)", Tab, None, Category.Menu),
+        new("dev_car",     "Ein-/Aussteigen (Test)",     "Enter/exit car",       F2, None,   Category.Menu),
+        new("dev_carnext", "Nächstes Auto (Test)",       "Next car",             F3, None,   Category.Menu),
+        new("dev_carprev", "Voriges Auto (Test)",        "Previous car",         F4, None,   Category.Menu),
+        new("dev_color",   "Nächste Farbe (Test)",       "Next color",           F8, None,   Category.Menu),
+        new("dev_reload",  "Auto neu laden (Test)",      "Reload car",           F9, None,   Category.Menu),
+        new("dev_login",   "Modus Login (Test)",         "Login mode",           F5, None,   Category.Menu),
+        new("dev_freeride","Modus Freifahrt (Test)",     "Freeride mode",        F6, None,   Category.Menu),
+        new("dev_map",     "Modus Karte (Test)",         "Map mode",             F7, None,   Category.Menu),
     };
 }

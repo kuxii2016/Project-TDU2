@@ -32,6 +32,7 @@ public static class IslandTravel
     static float _t;
     static string? _car;
     static Vector3 _game, _dir;
+    static Spot? _arrival;   // Ankunfts-Spot (Flug)
     static bool _keep;   // ohne Flug: Auto an der bisherigen Stelle (gleiche Insel neu laden / Spielstand mit Position)
     const float SpawnTimeout = 30f;
 
@@ -82,80 +83,89 @@ public static class IslandTravel
         switch (_st)
         {
             case St.Fade:
-            {
-                if (_t < 1.2f) return;   // Unity Reload: 1,2 s Überblendung, Speichern anstoßen
-                _car ??= vm?.CurrentCar?.FileName ?? TDU2Session.Save?.currentCar;
-                _keep = false;
-                var save0 = TDU2Session.Save;
-                if (!Arriving && vm?.Current != null && string.Equals(terrain.Streamer?.Island, Target, StringComparison.OrdinalIgnoreCase))
                 {
-                    _game = vm.PositionGame; _dir = vm.ForwardGame; _dir.Y = 0f; _keep = true;
+                    if (_t < 1.2f) return;   // Unity Reload: 1,2 s Überblendung, Speichern anstoßen
+                    _car ??= vm?.CurrentCar?.FileName ?? TDU2Session.Save?.currentCar;
+                    _keep = false;
+                    var save0 = TDU2Session.Save;
+                    if (!Arriving && vm?.Current != null && string.Equals(terrain.Streamer?.Island, Target, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _game = vm.PositionGame; _dir = vm.ForwardGame; _dir.Y = 0f; _keep = true;
+                    }
+                    else if (!Arriving && save0 != null && save0.hasPosition)
+                    {
+                        _game = new Vector3(save0.px, save0.py, save0.pz);
+                        float h = save0.heading * (MathF.PI / 180f);
+                        _dir = new Vector3(MathF.Sin(h), 0f, MathF.Cos(h)); _keep = true;
+                    }
+                    if (_keep) _dir = _dir.LengthSquared() > 1e-4f ? Vector3.Normalize(_dir) : Vector3.UnitZ;
+                    if (vm != null && (vm.Current != null || vm.Model != null)) vm.Despawn();
+                    if (vehicles != null) vehicles.Suspended = true;
+                    if (!terrain.ChangeIsland(Target!))
+                    {
+                        Log.Warn("Inselwechsel: Insel " + Target + " nicht ladbar");
+                        if (vehicles != null) vehicles.Suspended = false;
+                        Done();
+                        return;
+                    }
+                    _st = St.Load; _t = 0f;
+                    return;
                 }
-                else if (!Arriving && save0 != null && save0.hasPosition)
+            case St.Load:
                 {
-                    _game = new Vector3(save0.px, save0.py, save0.pz);
-                    float h = save0.heading * (MathF.PI / 180f);
-                    _dir = new Vector3(MathF.Sin(h), 0f, MathF.Cos(h)); _keep = true;
+                    var s = terrain.Streamer;
+                    if (s == null) { Done(); return; }
+                    if (_keep) { _st = St.Spawn; _t = 0f; PlaceCamera(terrain); return; }
+                    if (s.Spots == null && _t < SpawnTimeout) return;
+                    Spot? arrival = null;
+                    if (s.Spots != null)
+                        foreach (var sp in s.Spots.Spots)
+                            if (sp.Code.StartsWith(ArrivalPrefix, StringComparison.OrdinalIgnoreCase)) { arrival = sp; break; }
+                    _arrival = arrival;
+                    if (arrival != null) { _game = SpotPos(arrival); _dir = SpotDir(arrival); }
+                    else
+                    {
+                        _game = s.RenderToGame(s.StartPosition); _dir = Vector3.UnitZ;
+                        Log.Warn("Inselwechsel: kein Ankunfts-Spot " + ArrivalPrefix + "* auf " + Target + " – Start an der Inselmitte");
+                    }
+                    _st = St.Spawn; _t = 0f;
+                    PlaceCamera(terrain);
+                    return;
                 }
-                if (_keep) _dir = _dir.LengthSquared() > 1e-4f ? Vector3.Normalize(_dir) : Vector3.UnitZ;
-                if (vm != null && (vm.Current != null || vm.Model != null)) vm.Despawn();
-                if (vehicles != null) vehicles.Suspended = true;
-                if (!terrain.ChangeIsland(Target!))
+            case St.Spawn:
                 {
-                    Log.Warn("Inselwechsel: Insel " + Target + " nicht ladbar");
+                    PlaceCamera(terrain);
+                    var s = terrain.Streamer;
+                    if (s == null) { Done(); return; }
+                    bool ground = s.RaycastDown(_game + Vector3.UnitY * 60f, 0f, 200f, out _);
+                    if ((!ground || _t < 0.5f) && _t < SpawnTimeout) return;
+                    if (!ground) Log.Warn($"Inselwechsel: Boden an der Ankunft nach {SpawnTimeout:0} s nicht geladen – setze trotzdem");
+                    var save = TDU2Session.Save;
+                    int color = -1;
+                    if (save?.carConfigs != null && _car != null)
+                        foreach (var e in save.carConfigs) if (e != null && string.Equals(e.car, _car, StringComparison.OrdinalIgnoreCase)) color = Math.Max(0, e.color);
+                    // Flug zum Flughafen: Landung C_LANDED des Ankunfts-Flughafens, das Auto setzt GAME_MODE_AIRPORT danach
+                    if (Arriving && _arrival != null && ArrivalPrefix == "EAIR" && GAME_MODE_AIRPORT.BeginLanded(ctx, _arrival, _car, _game, _dir, color))
+                    {
+                        if (save != null && _car != null) TDU2Session.SetCurrentCar(_car);
+                        SessionAutosave.Schedule(5f);
+                        Done();
+                        return;
+                    }
+                    if (vm != null && _car != null && vm.SpawnCar(_car, _game, _dir, color)) { if (save != null) TDU2Session.SetCurrentCar(_car); }
+                    else Log.Warn("Inselwechsel: Auto " + (_car ?? "-") + " nicht spawnbar");
                     if (vehicles != null) vehicles.Suspended = false;
+                    SessionAutosave.Schedule(5f);
+                    GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
                     Done();
                     return;
                 }
-                _st = St.Load; _t = 0f;
-                return;
-            }
-            case St.Load:
-            {
-                var s = terrain.Streamer;
-                if (s == null) { Done(); return; }
-                if (_keep) { _st = St.Spawn; _t = 0f; PlaceCamera(terrain); return; }
-                if (s.Spots == null && _t < SpawnTimeout) return;
-                Spot? arrival = null;
-                if (s.Spots != null)
-                    foreach (var sp in s.Spots.Spots)
-                        if (sp.Code.StartsWith(ArrivalPrefix, StringComparison.OrdinalIgnoreCase)) { arrival = sp; break; }
-                if (arrival != null) { _game = SpotPos(arrival); _dir = SpotDir(arrival); }
-                else
-                {
-                    _game = s.RenderToGame(s.StartPosition); _dir = Vector3.UnitZ;
-                    Log.Warn("Inselwechsel: kein Ankunfts-Spot " + ArrivalPrefix + "* auf " + Target + " – Start an der Inselmitte");
-                }
-                _st = St.Spawn; _t = 0f;
-                PlaceCamera(terrain);
-                return;
-            }
-            case St.Spawn:
-            {
-                PlaceCamera(terrain);
-                var s = terrain.Streamer;
-                if (s == null) { Done(); return; }
-                bool ground = s.RaycastDown(_game + Vector3.UnitY * 60f, 0f, 200f, out _);
-                if ((!ground || _t < 0.5f) && _t < SpawnTimeout) return;
-                if (!ground) Log.Warn($"Inselwechsel: Boden an der Ankunft nach {SpawnTimeout:0} s nicht geladen – setze trotzdem");
-                var save = TDU2Session.Save;
-                int color = -1;
-                if (save?.carConfigs != null && _car != null)
-                    foreach (var e in save.carConfigs) if (e != null && string.Equals(e.car, _car, StringComparison.OrdinalIgnoreCase)) color = Math.Max(0, e.color);
-                if (vm != null && _car != null && vm.SpawnCar(_car, _game, _dir, color)) { if (save != null) TDU2Session.SetCurrentCar(_car); }
-                else Log.Warn("Inselwechsel: Auto " + (_car ?? "-") + " nicht spawnbar");
-                if (vehicles != null) vehicles.Suspended = false;
-                SessionAutosave.Schedule(5f);
-                GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
-                Done();
-                return;
-            }
         }
     }
 
     static void Done()
     {
-        Pending = false; Arriving = false; ArrivalPrefix = "EAIR"; _car = null; _keep = false;
+        Pending = false; Arriving = false; ArrivalPrefix = "EAIR"; _car = null; _keep = false; _arrival = null;
     }
 
     static Vector3 SpotPos(Spot s) => s.Position2.LengthSquared() > 1f ? s.Position2 : s.Position;

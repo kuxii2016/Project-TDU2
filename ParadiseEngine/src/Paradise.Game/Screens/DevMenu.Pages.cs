@@ -26,12 +26,12 @@ public sealed partial class DevMenu
     {
         Head("RACING & TESTS"),
         PhMenu("Race Debug / Start Race (.ig2)", "Racing is not ported yet"),
-        PhMenu("Cutscene Tester", "Cutscenes are not ported yet"),
-        PhMenu("Animation Viewer", "Avatars/animations are not ported yet"),
+        Menu("Cutscene Tester", CutsceneMenu),
+        Menu("Animation Viewer", AnimViewerMenu),
 
         Head("VEHICLES & TRAFFIC"),
         Menu("Cars", CarsMenu),
-        PhMenu("Traffic", "Traffic is not ported yet"),
+        Menu("Traffic", TrafficMenu),
 
         Head("WORLD"),
         Menu("World / Island", WorldMenu),
@@ -41,6 +41,7 @@ public sealed partial class DevMenu
         Menu("Audio ", AudioMenu),
 
         Head("INPUT"),
+        Bool("Toggle Control: drive with the menu open (" + ToggleKeyName() + ")", () => _drive, SetDrive, false),
         Menu("Controls / Input Devices", ControlsMenu),
         PhBool("Input overlay (axes, pedals, buttons)", false),
 
@@ -85,9 +86,14 @@ public sealed partial class DevMenu
         }));
         l.Add(Action_("Right / reset car", () => { if (m.Current == null) return; m.ResetUpright(); Toast("Car reset"); }));
         l.Add(Bool("Mirror reflections (probe on the car)", () => m.MirrorReflections, v => m.MirrorReflections = v, true));
+        l.Add(Head("PHYSICS"));
+        l.Add(Menu("Physics settings", CarPhysicsMenu));
+        l.Add(Menu("Physics debug (live values + rays)", CarDebugMenu));
         l.Add(Head("SWITCH CAR"));
         l.Add(Menu("All cars (" + m.Available.Count + ")", CarList));
         l.Add(Menu("Own cars", OwnCarsMenu));
+        l.Add(Head(""));
+        l.Add(Menu("Traffic", TrafficMenu));
         return l;
     }
 
@@ -285,6 +291,7 @@ public sealed partial class DevMenu
             l.Add(Float("Vegetation distance (new tiles)", () => s.VegetationDistance, v => s.VegetationDistance = v, 50f, 100f, 5000f, 1100f, "0", " m"));
             l.Add(Float("Wind strength", () => s.WindStrength, v => s.WindStrength = v, 0.1f, 0f, 3f, 1f, "0.0"));
         }
+        AddPostFxItems(l);
         return l;
     }
 

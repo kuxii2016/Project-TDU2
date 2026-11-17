@@ -134,8 +134,9 @@ namespace Paradise.Core.Vehicles
                     case 'W': kind = Kind.Indicator; break;
                     default: continue;
                 }
-                // Engine: hinten keine Lichtkugel (Brems-/Rück-/Rückfahrlicht leuchten über die Gläser)
-                if (kind is Kind.Brake or Kind.Tail or Kind.Reverse) continue;
+                // Engine: hinten keine Lichtkugel (Brems-/Rück-/Rückfahrlicht leuchten über die Gläser) – außer bei Verkehrsautos
+                // (External): deren Rückleuchten sind nur Lampenflächen ohne Glas, nachts sonst erst spät zu sehen
+                if (kind is Kind.Brake or Kind.Tail or Kind.Reverse && !External) continue;
                 _flares.Add(new Flare { Kind = kind, Side = GetAnchorSide(n), Local = U.Mirror(model.LocalToVisualParent(kv.Value).Translation), Color = FlareColor(kind) });
             }
 
@@ -143,6 +144,9 @@ namespace Paradise.Core.Vehicles
             _brakePos[1] = (Anchor('B', 2) ?? new Vector3(0.7f, 0.7f, -2.2f)) + new Vector3(0.05f, 0, 0);
             _reversePos[0] = (Anchor('R', 1) ?? new Vector3(-0.5f, 0.6f, -2.2f)) + new Vector3(0.05f, 0, 0);
             _reversePos[1] = (Anchor('R', 2) ?? new Vector3(0.5f, 0.6f, -2.2f)) + new Vector3(0.05f, 0, 0);
+            // Verkehrsautos ohne FA_S-Anker: Schlusslicht-Schein an den Bremslicht-Ankern (bzw. Standardlage hinten)
+            if (External && !_flares.Exists(f => f.Kind == Kind.Tail))
+                for (int s = 0; s < 2; s++) _flares.Add(new Flare { Kind = Kind.Tail, Side = s + 1, Local = _brakePos[s], Color = FlareColor(Kind.Tail) });
         }
 
         static int GetAnchorSide(string n)
@@ -260,7 +264,7 @@ namespace Paradise.Core.Vehicles
                 switch (lamp.Kind)
                 {
                     case CarModel.LampKind.Head: e = head * 1.7f; break;
-                    case CarModel.LampKind.Tail: e = Mathf.Max(tail * 0.9f, brake * 2.0f); break;
+                    case CarModel.LampKind.Tail: e = Mathf.Max(tail * (External ? 1.5f : 0.9f), brake * 2.0f); break;
                     case CarModel.LampKind.Brake: e = brake * 2.0f; break;
                     case CarModel.LampKind.Reverse: e = reverse ? 1.9f : 0f; break;
                     case CarModel.LampKind.Indicator:

@@ -30,6 +30,8 @@ public static class InteriorNpcs
     public static readonly List<Npc> Npcs = new();
     /// <summary>Figuren anzeigen (Entwicklermenü).</summary>
     public static bool Show = true;
+    /// <summary>__Hc der Figuren, die gerade eine Cinematic spielt (SpotCinematics zeichnet sie dort) – hier nicht zusätzlich zeichnen.</summary>
+    public static HashSet<ulong>? Suppressed;
     public static Dictionary<string, CineScene> Cines { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
     public static BnkArchive? Bank { get; private set; }
     static readonly Dictionary<string, AnmClip?> _clips = new(StringComparer.OrdinalIgnoreCase);
@@ -145,6 +147,7 @@ public static class InteriorNpcs
         {
             var a = n.Avatar;
             if (a == null) continue;
+            if (Suppressed != null && Suppressed.Contains(n.Hc)) continue;
             a.Update();
             if (!a.Ready || a.Rig == null) continue;
             a.Visible = Show;
