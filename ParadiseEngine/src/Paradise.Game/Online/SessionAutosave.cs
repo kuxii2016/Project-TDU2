@@ -40,7 +40,7 @@ public static class SessionAutosave
         // Inselwechsel läuft: Zielinsel steht schon im Spielstand (IslandTravel.Go), nicht mit der alten Insel überschreiben
         if (IslandTravel.Pending) return;
         // Autoradio: Sender und Lautstärke (Original-DATA RadioOptions)
-        var radio = Paradise.Core.Audio.TDU2Radio.Instance;
+        var radio = Paradise.Core.Audio.Radio.Instance;
         if (radio != null)
         {
             var (hash, name) = radio.SavedStation();
@@ -67,6 +67,8 @@ public static class SessionAutosave
         }
         var car = vm.CurrentCar;
         if (vm.Current == null || car == null) return;
+        // während einer Rennschul-Prüfung (Prüfungsauto, private Strecke) Auto und Position nicht speichern (Unity TDU2Login)
+        if (Paradise.Game.Gamemodes.GAME_MODE_SCHOOL.IsSchoolCar(car)) return;
         save.currentCar = car.FileName;
         var g = vm.PositionGame;
         var d = vm.ForwardGame; d.Y = 0f;

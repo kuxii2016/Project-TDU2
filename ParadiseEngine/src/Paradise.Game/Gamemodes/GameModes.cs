@@ -40,12 +40,18 @@ public static class GameModes
         Gamemode.GAME_MODE_HAIRDRESSER => new GAME_MODE_HAIRDRESSER(),
         Gamemode.GAME_MODE_DRESSING => new GAME_MODE_DRESSING(),
         Gamemode.GAME_MODE_PAUSE => new GAME_MODE_PAUSE(),
+        Gamemode.GAME_MODE_SCHOOL => new GAME_MODE_SCHOOL(),
+        Gamemode.GAME_MODE_CHAMPIONSHIP => new GAME_MODE_CHAMPIONSHIP(),
+        Gamemode.GAME_MODE_AVATAR_CHOICE => new GAME_MODE_AVATAR_CHOICE(),
+        Gamemode.GAME_MODE_FIRST_WM => new GAME_MODE_FIRST_WM(),
+        Gamemode.GAME_MODE_CINE => new GAME_MODE_CINE(),
+        Gamemode.GAME_MODE_CLUB => new GAME_MODE_CLUB(),
         _ => Empty(mode),
     };
 
     static GameModeHandler Empty(Gamemode mode)
     {
-        Log.Info($"GAME MODE {mode}: noch keine eigene Klasse in Game/Gamemodes – läuft ohne Oberfläche.");
+        Log.NotImplemented($"Missing Gamemode: {mode} Create empty mode.");
         return new GAME_MODE_EMPTY(mode);
     }
 

@@ -12,6 +12,8 @@ public sealed class VehicleConfig
     public string StartCar { get; set; } = "delta_integrale_evo_2";
     /// <summary>Motorsounds laden.</summary>
     public bool LoadSound { get; set; } = true;
+    /// <summary>Motor nach dem Laden/Spawnen aus; springt beim ersten Gas/Bremse/Lenken an (wie in Unity).</summary>
+    public bool EngineOffAtSpawn { get; set; } = true;
     /// <summary>Grip-Skalierung der Reifen (0,3–1,2). Unity-Standard 0,62 – damit rutscht das Auto in Kurven heraus; 0,9 war der Wert vor s80.</summary>
     public float GripScale { get; set; } = 1.2f;
     /// <summary>Fahrhilfen beim Einsteigen: Secure, Sport, HyperSport, Off (Taste T wechselt).</summary>
@@ -62,6 +64,7 @@ public sealed class VehicleConfig
         Vehicle.DamperHighRatio = System.Math.Clamp(DamperHighRatio, 0.05f, 1f);
         vm.StartCar = StartCar;
         vm.LoadSound = LoadSound;
+        vm.EngineOffAtSpawn = EngineOffAtSpawn;
         vm.GripScale = System.Math.Clamp(GripScale, 0.3f, 1.2f);
         vm.Aids = Aids;
         vm.AutomaticGearbox = AutomaticGearbox;

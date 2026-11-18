@@ -40,6 +40,9 @@ internal sealed class CinematicAudio
     readonly Dictionary<ulong, BnkEntry> _rsc = new(), _langRsc = new();
     readonly Dictionary<ulong, ulong> _rootSources = new();
     readonly Dictionary<ulong, string> _rootNames = new();
+    /// <summary>Entity__Fx der Bank: Name -> (Fx__Root, Position im Bankrahmen) – Emitter für "snd:music"/"snd:timestop" und
+    /// PlayEmitter("C_OUTRO", "S_TimeStart") (Unity TDU2CinematicAudio._emitters).</summary>
+    readonly Dictionary<string, (ulong root, Vector3 pos)> _emitters = new(StringComparer.Ordinal);
     readonly Dictionary<ulong, (ulong bfx, List<ulong> nodes)> _sources = new();
     readonly Dictionary<ulong, ulong> _soundFiles = new();
     readonly Dictionary<ulong, List<Sound>> _resolved = new();
@@ -165,6 +168,14 @@ internal sealed class CinematicAudio
                         if (l != null && l.Items.Count > 0) { _soundFiles[it.U("__Hc")] = l.Items[0].U("rsc"); break; }
                     }
             }
+        var em = root.Get("ExportType_Entity")?.Get("ArrayOf_Entity__Fx");
+        if (em != null)
+            foreach (var it in em.Items)
+            {
+                var p = it.Get("orient_pos_scale")?.Get("pos");
+                var pos = p != null ? new Vector3(p.F("X"), p.F("Y"), p.F("Z")) : Vector3.Zero;
+                _emitters[it.S("__Name", "") ?? ""] = (it.U("Fx"), pos);
+            }
         // alle Wurzeln auflösen und die Töne vorab dekodieren
         int waves = 0;
         foreach (var hc in new List<ulong>(_rootSources.Keys))
@@ -275,7 +286,7 @@ internal sealed class CinematicAudio
     }
 
     /// <summary>Töne einer Fx-Wurzel. pos/eye: Spielraum (null = 2D). Gestartete Stimmen kommen in <paramref name="into"/>.</summary>
-    void PlayRoot(ulong rootHc, float offset, Vector3? pos, Vector3? eye, uint flags, List<AudioVoice>? into)
+    void PlayRoot(ulong rootHc, float offset, Vector3? pos, Vector3? eye, uint flags, List<AudioVoice>? into, bool forceLoop = false)
     {
         foreach (var s in Resolve(rootHc))
         {
@@ -295,7 +306,7 @@ internal sealed class CinematicAudio
             float start = offset * pitch;
             if (s.Loop && len > 0f) start %= len;
             if (start >= len) continue;
-            var v = new AudioVoice { Clip = clip, Loop = s.Loop, Pitch = pitch };
+            var v = new AudioVoice { Clip = clip, Loop = s.Loop || forceLoop, Pitch = pitch };
             v.Volume = System.Math.Clamp(vol, 0f, 1f);
             v.Play();
             if (start > 0f) v.Time = start;
@@ -340,6 +351,34 @@ internal sealed class CinematicAudio
                     PlayRoot(sc.References[(int)reference].Hashcode, System.Math.Max(to - t, 0f), world, eye, flags, into);
                 }
             }
+    }
+
+    /// <summary>Fx__Root nach Name (z.B. "EVTE_to_player_01"), 0 = keiner.</summary>
+    public ulong FindRootByName(string name)
+    {
+        foreach (var kv in _rootNames) if (string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase) && Resolve(kv.Key).Count > 0) return kv.Key;
+        return 0;
+    }
+
+    public bool HasEmitter(string name) => _emitters.ContainsKey(name ?? "");
+
+    /// <summary>Fx-Wurzel ohne Lage (2D, z.B. Stimmen) abspielen; Rückgabe: Dauer der längsten Stimme (s).</summary>
+    public float PlayRoot2D(ulong rootHc, List<AudioVoice>? into = null)
+    {
+        var list = new List<AudioVoice>();
+        PlayRoot(rootHc, 0f, null, null, Flag2D, list);
+        float len = 0f;
+        foreach (var v in list) if (v.Clip != null) len = MathF.Max(len, v.Clip.Frames / (float)v.Clip.Rate / MathF.Max(0.1f, v.Pitch));
+        into?.AddRange(list);
+        return len;
+    }
+
+    /// <summary>Entity__Fx (z.B. "C_OUTRO", "S_TimeStart") an seiner Position (Bankrahmen <paramref name="frame"/>) abspielen.</summary>
+    public bool PlayEmitter(string name, float offset, bool loop, Matrix4x4 frame, Vector3? eye, List<AudioVoice>? into)
+    {
+        if (!_emitters.TryGetValue(name ?? "", out var e) || e.root == 0) return false;
+        PlayRoot(e.root, offset, Vector3.Transform(e.pos, frame), eye, 0, into, loop);
+        return true;
     }
 
     public static void Stop(List<AudioVoice>? voices)

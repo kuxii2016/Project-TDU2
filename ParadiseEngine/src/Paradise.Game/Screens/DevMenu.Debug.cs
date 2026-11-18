@@ -329,8 +329,24 @@ public sealed partial class DevMenu
         l.Add(Menu("Own cars (Delete = remove)", OwnCarsMenu));
         l.Add(Bool("Starter car chosen", () => save.starterChosen, v => save.starterChosen = v, true));
         l.Add(Head("STORY"));
-        l.Add(PhInfo("Story step", save.story >= 0 ? save.story.ToString(Inv) : "never started"));
-        l.Add(PhAction("Start the selected story step now", "Story is not ported yet"));
+        l.Add(new Item
+        {
+            Label = "Story step  (Left/Right)",
+            Value = () => { int s = StoryProgress.Get(TDU2Session.Nick); return s.ToString(Inv) + "  " + (s >= 0 ? StoryProgress.StepName(s) : "never started"); },
+            Change = d =>
+            {
+                int s = System.Math.Clamp(StoryProgress.Get(TDU2Session.Nick) + System.Math.Sign(d), -1, StoryProgress.Implemented);
+                StoryProgress.Set(TDU2Session.Nick, s); save.story = s;
+            },
+            Reset = () => { StoryProgress.Set(TDU2Session.Nick, -1); save.story = -1; },
+        });
+        l.Add(Action_("Start the selected story step now", () =>
+        {
+            int s = StoryProgress.Get(TDU2Session.Nick);
+            if (Story.Active) { Story.Go(s); Toast("Story: step " + s); }
+            else Toast("Story not running – the step starts with the next login");
+        }));
+        l.Add(Bool("Story gave the California (step 4–5)", () => StoryProgress.GaveStoryCar(TDU2Session.Nick), v => StoryProgress.SetGaveStoryCar(TDU2Session.Nick, v), false));
         l.Add(Head("OTHER"));
         l.Add(Info("Houses with layout / furniture / materials", () => save.houses.Count + " / " + save.ownedFurniture.Count + " / " + save.ownedMaterials.Count));
         l.Add(Info("Clothes / sticker boards / liveries", () => save.ownedClothes.Count + " / " + save.stickerBoards.Count + " / " + save.liveries.Count));
@@ -417,9 +433,9 @@ public sealed partial class DevMenu
         var l = new List<Item>
         {
             Head("RACE DEBUG VIEW"),
-            PhMenu("Race route / gates / opponents", "Racing is not ported yet"),
-            Head("TRAFFIC DEBUG VIEW"),
         };
+        AddRaceDebugToggles(l);
+        l.Add(Head("TRAFFIC DEBUG VIEW"));
         AddTrafficDebugToggles(l);
         l.Add(Head("CAR PHYSICS DEBUG VIEW"));
         l.Add(Bool("Suspension rays", () => _dbgRays, v => _dbgRays = v, false));
@@ -549,9 +565,9 @@ public sealed partial class DevMenu
         foreach (var res in new[] { "hires", "medres", "lowres" })
         {
             string dir = Path.Combine(bnk, "frontend", res);
-            if (!Directory.Exists(dir)) continue;
+            if (!Paradise.Core.Files.GameFiles.DirectoryExists(dir)) continue;
             l.Add(Head(res.ToUpperInvariant()));
-            var files = Directory.GetFiles(dir, "*.bnk");
+            var files = Paradise.Core.Files.GameFiles.GetFiles(dir, "*.bnk");
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             foreach (var f in files)
             {

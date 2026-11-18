@@ -209,8 +209,8 @@ public static class TDU2InputDevices
             string? root = Paradise.Core.Config.GameData.Root;
             if (root == null) return false;
             string path = Path.Combine(root, file + ".xmb");
-            if (!File.Exists(path)) return false;
-            var r = XmbFile.Parse(File.ReadAllBytes(path));
+            if (!Paradise.Core.Files.GameFiles.Exists(path)) return false;
+            var r = XmbFile.Parse(Paradise.Core.Files.GameFiles.ReadAllBytes(path));
             var km = r?.Get("KeyMap");
             if (km == null) return false;
             bool xinput = file.IndexOf("360", StringComparison.Ordinal) >= 0 || file.IndexOf("XBOX", StringComparison.OrdinalIgnoreCase) >= 0;

@@ -2,7 +2,7 @@
   "profiles": {
     "Paradise.Game": {
       "commandName": "Project",
-      "commandLineArgs": "--server 127.0.0.1:7777 -n \"Kuxii\""
+      "commandLineArgs": "--server 85.215.133.235:2605 -n \"Kuxii\""
     }
   }
 }

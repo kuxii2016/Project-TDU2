@@ -18,7 +18,9 @@ namespace Paradise.Game.Screens;
 ///   - FSCommands: "paou" (Pause beendet), "exit:vali"/"quit"/"egam" (Spiel verlassen, vorher speichern), "dbxo" (Ja/Nein-Dialog).
 ///   - Spielerlisten (Lobby/Zuletzt gesehen …) aus TDU2GameData.
 /// Während das Menü offen ist, steht das Spiel (Unity Time.timeScale = 0): Fahrzeuge werden angehalten.
-/// Optionsseiten: Options (TDU2Options). Noch nicht portiert: Tastenbelegung, Spielerkarte/Freunde/Party, Renn-Modus.
+/// Optionsseiten: Options (TDU2Options). Spielerkarte (pcrd:open), Freunde (frre/delf), Beitreten/Einladen (join:wait, pjoi,
+/// pcrd:pinv -> Game/Online/Party). Spielerlisten Freunde/Club/Lobby/Zuletzt gesehen mit MyTDULife-Fotos (TDU2GameData.ListFor,
+/// FetchLife), eigenes Foto im Ausweis. Renn-Modus (WhatGameMode 2: Neu starten/Beenden) über RegisterRace.
 /// </summary>
 public sealed class PauseMenu
 {
@@ -34,6 +36,42 @@ public sealed class PauseMenu
 
     readonly IGameModeContext _ctx;
     VmfPlayer? _ui;
+
+    // ------------------------------------------------------------------ Renn-Modus (Unity TDU2PauseMenu.RegisterRace)
+    /// <summary>Rennen läuft: Menü im Rennmodus (WhatGameMode 2) mit "Neu starten" und "Beenden" = Rennen abbrechen.</summary>
+    bool _raceMode;
+    Action? _raceQuit, _raceRestart;   // Anbieter, der beim Öffnen aktiv war
+
+    /// <summary>Anbieter für das Renn-ESC-Menü (Rennschul-Prüfung, Meisterschaft, Missionen …).</summary>
+    sealed class RaceProvider { public object Owner = null!; public Func<bool>? Active; public Action? Restart, Quit; }
+    static readonly List<RaceProvider> _raceProviders = new();
+
+    /// <summary>
+    /// Renn-Modus des ESC-Menüs anmelden (WhatGameMode 2: "Neu starten" / "Beenden"). Mehrere Anbieter möglich; beim Öffnen
+    /// gilt der erste aktive. Gleicher Besitzer ersetzt seine alte Anmeldung.
+    /// </summary>
+    public static void RegisterRace(object owner, Func<bool> active, Action restart, Action quit)
+    {
+        _raceProviders.RemoveAll(p => p.Owner == owner);
+        _raceProviders.Add(new RaceProvider { Owner = owner, Active = active, Restart = restart, Quit = quit });
+    }
+
+    public static void UnregisterRace(object owner) => _raceProviders.RemoveAll(p => p.Owner == owner);
+
+    static bool FindRace(out Action? restart, out Action? quit)
+    {
+        restart = null; quit = null;
+        foreach (var p in _raceProviders)
+        {
+            bool on = false;
+            try { on = p.Active != null && p.Active(); } catch (Exception) { }
+            if (on) { restart = p.Restart; quit = p.Quit; return true; }
+        }
+        return false;
+    }
+
+    /// <summary>Rennen neu starten/abbrechen: Menü schließen, dann die Aktion des Anbieters.</summary>
+    void RaceAction(Action? a) { Close(); _raceMode = false; a?.Invoke(); }
     Options? _options;
     Dictionary<string, string>? _texts;
     public Options? Settings => _options;
@@ -53,6 +91,8 @@ public sealed class PauseMenu
         ui.Visible = false;
         ui.FSCommand += OnCommand;
         ui.ListCreated += OnListCreated;
+        ui.ListValidated += OnListValidated;   // A auf einer Spielerzeile -> Spielerkarte
+        ui.ListLineDrawn += OnListLineDrawn;   // Zeile neu beschrieben (auch beim Blättern): Flagge, Online-Symbol, Foto
         EnsureOptions();
         _options!.Publish(ui);
     }
@@ -79,7 +119,8 @@ public sealed class PauseMenu
         if (ui == null || _open) return;
         _open = true;
         _clockShown = -1; _clockDay = -1;
-        ui.SetValue("/:WhatGameMode", 1);   // 1 Freie Fahrt (2 Rennen: folgt mit Racing)
+        _raceMode = FindRace(out _raceRestart, out _raceQuit);
+        ui.SetValue("/:WhatGameMode", _raceMode ? 2 : 1);   // 1 Freie Fahrt, 2 Rennen (Fortsetzen/Neu starten/…/Beenden)
         ui.SetValue("/:WhatPlatform", 1);
         ui.SetVariable("/:MenuType", "pc");
         ui.SetValue("/:IsPC_X360", true);
@@ -92,6 +133,7 @@ public sealed class PauseMenu
         ui.ForceVisible("/pause_menu/data_extd/objective", false);
         foreach (var n in Unlocked) ui.SetValue("/:" + n, false);
         foreach (var n in Locked) ui.SetValue("/:" + n, true);
+        if (_raceMode) { ui.SetValue("/:LockRestart", false); ui.SetValue("/:LockQuit", false); }
         ui.SetVariable("/:NbNewsUnread", "0");
         ui.SetVariable("/:Money", TDU2Session.LoggedIn
             ? TDU2Session.Save.money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $"
@@ -138,6 +180,7 @@ public sealed class PauseMenu
     {
         _clock += dt;
         var ui = _ui;
+        if (ui != null) UpdateOwnPhoto();   // Unity: jedes Bild, sobald der Film geladen ist
         if (!_open || ui == null) return;
         UpdateClock();
         UpdateMapMarker();
@@ -186,15 +229,25 @@ public sealed class PauseMenu
         if (c.StartsWith("sndp:")) return;                 // Menü-Sounds (FrontendSounds)
         if (c == "dbxo") { _pendingDialog = true; return; }
         if (c.StartsWith("mylf:scrl:")) return;            // Scrollbalken der Liste: behandelt VmfPlayer
-        if (c == "plli") { ReloadPlayerLists(); return; }  // Spielerliste (Reiter) geöffnet
+        if (c == "pcrd:open") { OpenPlayerCard(); return; }  // Spielerkarte: Daten liefern
+        if (c == "plli") { TDU2GameData.RequestRecent(); ReloadPlayerLists(); return; }  // Spielerliste (Reiter) geöffnet
         if (c == "psch:vali") { SearchPlayer(); return; }  // "Spieler suchen": Name bestätigt
         if (c == "psch:canc") return;
         if (HandleControlsCommand(c)) return;                // Steuerung (Tastenbelegung)
+        if (HandleFriendCommand(c)) return;                  // Freund hinzufügen / entfernen (Spielerkarte)
+        if (HandlePartyCommand(c)) return;                   // Beitreten / Einladen (Spielerkarte, Party)
         if (_options != null && _ui != null && _options.Handle(_ui, c)) return;   // Optionsseiten
         switch (c)
         {
             case "paou":           // Pause beendet (nach der Schließen-Animation)
                 Close();
+                break;
+            case "rest" when _raceMode:   // Rennen neu starten
+                RaceAction(_raceRestart);
+                break;
+            case "quit" when _raceMode:   // im Rennen: "Beenden" = Rennen abbrechen (nicht das Spiel)
+            case "fain" when _raceMode:
+                RaceAction(_raceQuit);
                 break;
             case "exit:vali":      // "Spiel beenden" bestätigt
             case "quit":
@@ -222,6 +275,10 @@ public sealed class PauseMenu
     void DeliverAnswer(VmfPlayer ui, string ans)
     {
         string kase = ui.GetVariable("/:DgbxCase") ?? "";
+        // Im Rennen: "Beenden"/"Neu starten" bestätigt -> direkt ausführen (die Antwortkette des Films kommt nicht immer an);
+        // Anbieter, der beim Öffnen aktiv war (Rennschule, Meisterschaft …)
+        if (_raceMode && ans == "a" && string.Equals(kase, "confirm_quit_race", StringComparison.OrdinalIgnoreCase)) { RaceAction(_raceQuit); return; }
+        if (_raceMode && ans == "a" && string.Equals(kase, "confirm_restart", StringComparison.OrdinalIgnoreCase)) { RaceAction(_raceRestart); return; }
         var owners = ui.FunctionOwners("DialogBox");
         string? target = null;
         foreach (var o in owners) if (o.IndexOf("options", StringComparison.OrdinalIgnoreCase) >= 0) { target = o; break; }
@@ -392,6 +449,7 @@ public sealed class PauseMenu
         }
         if (!PlayerLists.Contains(l.Name ?? "")) return;
         var ui = _ui!;
+        TDU2GameData.RequestRecent();   // "Zuletzt gesehen" vom Server nachladen
         FillPlayers(l);
         foreach (var old in _playerLists.FindAll(x => x.Owner == l.Owner)) _listPlayers.Remove(old);
         _playerLists.RemoveAll(x => x.Owner == l.Owner || x.Owner == null);
@@ -401,42 +459,54 @@ public sealed class PauseMenu
         ApplyPlayerLineStates(l);
     }
 
-    /// <summary>Spieler einer Liste: Lobby = alle online (eigene Insel zuerst); Freunde/Club/Zuletzt gesehen folgen mit dem Multiplayer.</summary>
-    static List<PlayerInfo> ListFor(string? name)
-    {
-        var r = new List<PlayerInfo>();
-        if (string.Equals(name, "current_players", StringComparison.OrdinalIgnoreCase))
-        {
-            foreach (var p in TDU2GameData.Players.Values) if (p.Online) r.Add(p);
-            r.Sort((a, b) => (b.SameIsland ? 1 : 0).CompareTo(a.SameIsland ? 1 : 0) != 0 ? (b.SameIsland ? 1 : 0).CompareTo(a.SameIsland ? 1 : 0) : string.Compare(a.Nick, b.Nick, StringComparison.OrdinalIgnoreCase));
-        }
-        return r;
-    }
-
     void FillPlayers(VmfPlayer.FlashList l)
     {
-        var players = ListFor(l.Name);
+        var players = TDU2GameData.ListFor(l.Name);   // Unity TDU2GameData.ListFor: Freunde, Club, Lobby, Zuletzt gesehen, Sperrliste
         _listPlayers[l] = players;
         l.ColumnVars = new[] { "PlayerName", "PlayerTitle", "GlobalLevel" };
         l.Rows.Clear();
-        foreach (var p in players) l.Rows.Add(new[] { p.Nick, p.CarName, System.Math.Max(1, p.NbCars).ToString() });
+        foreach (var p in players)
+        {
+            string title = p.CarName;
+            if (l.Name == "recent_players" && !p.Online && p.LastSeen != default) title = (title.Length > 0 ? title + "  –  " : "") + p.LastSeen.ToString("dd.MM. HH:mm");
+            l.Rows.Add(new[] { p.Nick, title, System.Math.Max(1, p.NbCars).ToString() });
+        }
         if (l.Selected >= l.Rows.Count) { l.Selected = System.Math.Max(0, l.Rows.Count - 1); l.Top = 0; }
     }
 
     void ApplyPlayerLineStates(VmfPlayer.FlashList l)
     {
+        if (!_listPlayers.ContainsKey(l)) return;
+        for (int i = 1; i <= l.ViewSize; i++) ApplyPlayerLine(l, i, l.Top + i - 1);
+    }
+
+    /// <summary>Rückruf der nativen Liste je Zeile (exe 0x9ef1e0) – nur Spielerlisten.</summary>
+    void OnListLineDrawn(VmfPlayer.FlashList l, int line, int row)
+    {
+        if (_ui != null && _listPlayers.ContainsKey(l)) ApplyPlayerLine(l, line, row);
+    }
+
+    /// <summary>
+    /// Eine Spielerzeile wie das Spiel (exe 0x9ef1e0): content/forbidden aus, content/nationality = Bild Ländernummer (1..113,
+    /// sonst 135), content/state online/offline, Foto in content/photo/lure. Bild/Label festgehalten (PinFrame/PinLabel), weil der
+    /// Film die Zeilen-Clips beim Aufbau/Blättern neu anlegt – sonst fehlte die Flagge.
+    /// </summary>
+    void ApplyPlayerLine(VmfPlayer.FlashList l, int i, int r)
+    {
         var ui = _ui!;
-        if (!_listPlayers.TryGetValue(l, out var players)) return;
+        if (!_listPlayers.TryGetValue(l, out var players) || r < 0 || r >= players.Count) return;
         string op = VmfPlayer.PathOf(l.Owner);
-        for (int i = 1; i <= l.ViewSize; i++)
-        {
-            int r = l.Top + i - 1;
-            if (r < 0 || r >= players.Count) continue;
-            string line = (op == "/" ? "" : op) + "/line" + i;
-            ui.ForceVisible(line + "/content/forbidden", false);
-            ui.GotoLabel(line + "/content/state", players[r].Online ? "online" : "offline", false);
-            if (players[r].Nationality > 0) ui.SetFrame(line + "/content/nationality", players[r].Nationality);   // Flagge = Bild Ländernummer
-        }
+        string line = (op == "/" ? "" : op) + "/line" + i;
+        var pl = players[r];
+        ui.ForceVisible(line + "/content/forbidden", false);
+        ui.PinLabel(line + "/content/state", pl.Online ? "online" : "offline");
+        ui.PinFrame(line + "/content/nationality", pl.Nationality >= 1 && pl.Nationality <= 113 ? pl.Nationality : 135);   // Flagge = Bild Ländernummer
+        // MyTDULife-Foto des Spielers (kommt per op "profile" nach, Version aus der Spielerliste)
+        ui.SetClipTexture(line + "/content/photo/lure", pl.Photo);
+        SetPhotoState(line + "/content/photo", pl.Photo != null, IsFemale(pl));
+        // Profil noch nie geholt (Freunde/Club/Zuletzt gesehen kennen die Foto-Version nicht) -> wie beim Öffnen der Karte holen
+        if (pl.Life == null || (pl.PhotoVer > 0 && (pl.Photo == null || pl.PhotoTexVer != pl.PhotoVer)))
+            TDU2GameData.FetchLife(pl, _ => { if (_ui != null && _listPlayers.ContainsKey(l)) ApplyPlayerLineStates(l); });
     }
 
     /// <summary>Offene Spielerliste regelmäßig aktualisieren (Spieler kommen/gehen) – nur bei geändertem Inhalt neu zeichnen.</summary>
@@ -483,13 +553,226 @@ public sealed class PauseMenu
         var ui = _ui!;
         string name = (ui.GetVariable("/:PlayerSearched") ?? "").Trim();
         PlayerInfo? hit = null;
+        // unter allen bekannten Spielern suchen (online, Freunde, Club, zuletzt gesehen)
         if (name.Length > 0)
-            foreach (var p in TDU2GameData.Players.Values)
-                if (string.Equals(p.Nick, name, StringComparison.OrdinalIgnoreCase)) { hit = p; break; }
-        // Freundschaftsanfrage über den Server (Unity TDU2Friends) folgt mit dem Multiplayer
+            foreach (var ln in PlayerLists)
+            {
+                foreach (var p in TDU2GameData.ListFor(ln))
+                    if (p != null && string.Equals(p.Nick, name, StringComparison.OrdinalIgnoreCase)) { hit = p; break; }
+                if (hit != null) break;
+            }
+        if (hit != null) _cardPlayer = hit;
+        // Wie im Original: "Nach Spieler suchen" schickt dem Spieler eine Freundschaftsanfrage (Erfolg = Dialog search_player_ok
+        // "Freundschaftsanfrage gesendet"). Der Server kennt alle Konten – auch Spieler, die nie in einer Liste standen (Unity).
+        if (TDU2Session.LoggedIn && name.Length > 0)
+        {
+            Friends.Request(name, r =>
+            {
+                bool ok = r != null && r.ok;
+                Log.Info($"Pausemenü: Freundschaftsanfrage '{name}' -> {(ok ? r!.friendResult : (r?.error ?? "keine Antwort"))}");
+                if (_ui == null) return;
+                _ui.SetValue("/:PlayerFound", ok);
+                _ui.CallClip("/search_player", ok ? "endLoading" : "timeOutLoading");
+            });
+            return;
+        }
         ui.SetValue("/:PlayerFound", hit != null);
         ui.CallClip("/search_player", hit != null ? "endLoading" : "timeOutLoading");
         Log.Info($"Pausemenü: Spieler '{name}' {(hit != null ? "gefunden" : "nicht gefunden")}");
+    }
+
+    // ------------------------------------------------------------------ Spielerkarte (Unity TDU2PauseMenu.OpenPlayerCard)
+    // A auf einer Zeile -> FSCommand "pcrd:open", Daten in _root.listAvatarName/listMoney/…, dann _root.Clip.IsCardLoaded = true.
+    PlayerInfo? _cardPlayer;
+
+    void OnListValidated(VmfPlayer.FlashList l)
+    {
+        _cardPlayer = null;
+        if (l != null && _listPlayers.TryGetValue(l, out var players) && l.Selected >= 0 && l.Selected < players.Count) _cardPlayer = players[l.Selected];
+    }
+
+    string CardPath
+    {
+        get
+        {
+            string? card = _ui?.GetVariable("/:PlayerCardPath");
+            return string.IsNullOrEmpty(card) ? "/players/player_card" : card;
+        }
+    }
+
+    void OpenPlayerCard()
+    {
+        var ui = _ui!;
+        var p = _cardPlayer;
+        // Menü der Karte baut der Film nach _root.PlayerType (setMenu, main.bnk): "current" (Aktuelle Spieler) hat im Original nur
+        // Link/Freund/Chat … – gewünscht sind dort Beitreten + Einladen auf Platz 1 und 2 wie bei Freunde/Zuletzt gesehen ("recent").
+        if (string.Equals(ui.GetVariable("/:PlayerType"), "current", StringComparison.OrdinalIgnoreCase)) ui.SetVariable("/:PlayerType", "recent");
+        ui.SetVariable("/:listAvatarName", p?.Nick ?? "");
+        ui.SetNumber("/:listNationality", p != null && p.Nationality >= 1 && p.Nationality <= 113 ? p.Nationality : 135);   // unbekannt = 135 (exe 0xc09030)
+        ui.SetVariable("/:listMoney", p != null ? p.Money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $" : "");
+        ui.SetVariable("/:listNbCars", (p?.NbCars ?? 0).ToString());
+        ui.SetVariable("/:listNbHouses", "0");
+        // MyTDULife: Smiley, Stimmungstext und Avatar-Foto (Foto/Profil kommen per op "profile" nach)
+        ui.SetVariable("/:listMood", p != null && !string.IsNullOrEmpty(p.Mood) ? p.Mood : "neutral");
+        ui.SetVariable("/:listMoodTxt", p?.MoodTxt ?? "");
+        ApplyCardPhoto(p);
+        if (p != null) TDU2GameData.FetchLife(p, OnCardLife);
+        ui.SetValue("/:listIsConnected", p != null && p.Online);
+        ApplyCardFriendState(p);
+        // Kreise (Wettbewerb/Sozial/Entdeckung/Sammlung) und Globales Level: Standard wie Unity PlayerCardStats.Default
+        ui.SetValue("/:listGlobalLevel", 1);
+        ui.SetValue("/:listGlobalPoints", 0);
+        ui.SetValue("/:listGlobalLvlPoints", 0);
+        ui.SetVariable("/:GlobalLevelCount", "1");
+        ui.SetValue("/:listRacingPoints", 0);
+        ui.SetValue("/:listSocialPoints", 0);
+        ui.SetValue("/:listCruisingPoints", 0);
+        ui.SetValue("/:listCollectionPoints", 0);
+        ui.SetVariable("/:listRacingLevelCount", "0");
+        ui.SetVariable("/:listCollectionLevelCount", "0");
+        ui.SetValue(CardPath + ":IsCardLoaded", true);
+        // Der Lader der Karte fragt "_root.Clip.IsCardLoaded" ab (Clip = Verweis auf das offene Menü)
+        ui.SetValue("_root.Clip.IsCardLoaded", true);
+    }
+
+    // ------------------------------------------------------------------ Eigenes MyTDULife-Foto (Ausweis im Pausemenü / Spielfortschritt)
+    static readonly string[] OwnPhotoClips = { "/pause_menu/data_extd/idcard/avatar_photo/lure", "/gameprogress_menu/transition_menu/content_menu/main_menu/pbox/idcard/avatar_photo/lure" };
+    Texture2D? _ownPhoto; int _ownPhotoVer = -1;
+
+    void UpdateOwnPhoto()
+    {
+        var life = TDU2Session.Save?.myLife;
+        int ver = life != null && !string.IsNullOrEmpty(life.photo) ? life.photoVer : 0;
+        if (ver == _ownPhotoVer) return;
+        _ownPhotoVer = ver;
+        // altes Foto nicht sofort freigeben (Unity Destroy): der Film zeichnet es evtl. noch in diesem Bild
+        _ownPhoto = ver > 0 ? TDU2GameData.DecodePhoto(life!.photo) : null;
+        foreach (var c in OwnPhotoClips) _ui!.SetClipTexture(c, _ownPhoto);
+    }
+
+    /// <summary>Avatar-Foto des Spielers in die Karte (content/photo/lure); ohne Foto leer.</summary>
+    void ApplyCardPhoto(PlayerInfo? p)
+    {
+        if (_ui == null) return;
+        _ui.SetClipTexture(CardPath + "/content/photo/lure", p?.Photo);
+        SetPhotoState(CardPath + "/content/photo", p != null && p.Photo != null, IsFemale(p));
+    }
+
+    /// <summary>MyTDULife ist angekommen: offene Karte desselben Spielers aktualisieren.</summary>
+    void OnCardLife(PlayerInfo p)
+    {
+        if (_ui == null || p == null || p != _cardPlayer) return;
+        _ui.SetVariable("/:listMood", !string.IsNullOrEmpty(p.Mood) ? p.Mood : "neutral");
+        _ui.SetVariable("/:listMoodTxt", p.MoodTxt ?? "");
+        ApplyCardPhoto(p);
+        var ci = _ui.Find(CardPath)?.Sprite;
+        if (ci != null && _ui.IsShown(ci)) _ui.CallClip(CardPath, "setPlayerCard");
+    }
+
+    /// <summary>Foto-Clip wie im Spiel: "loaded", ohne Foto der Platzhalter nach Geschlecht ("empty_male"/"empty_female").</summary>
+    void SetPhotoState(string photoClip, bool loaded, bool female)
+    {
+        var ui = _ui!;
+        string want = loaded ? "loaded" : female ? "empty_female" : "empty_male";
+        if (ui.Find(photoClip) != null && ui.Label(photoClip) == want) return;
+        ui.PinLabel(photoClip, want);   // festhalten: Zeilen-/Karten-Clips werden vom Film neu angelegt
+    }
+
+    static bool IsFemale(PlayerInfo? p)
+    {
+        if (p == null || string.IsNullOrEmpty(p.Avatar)) return false;
+        var c = Paradise.Core.Avatars.AvatarConfig.Decode(p.Avatar);
+        return c != null && c.Sex == 1;
+    }
+
+    /// <summary>Spieler der Karte als aktueller Online-Eintrag (über den Namen); null = nicht online.</summary>
+    PlayerInfo? LiveCardPlayer()
+    {
+        string? nick = _cardPlayer?.Nick;
+        if (string.IsNullOrEmpty(nick)) nick = _ui?.GetVariable("/:listAvatarName");
+        if (string.IsNullOrEmpty(nick)) return null;
+        foreach (var o in TDU2GameData.Players.Values)
+            if (string.Equals(o.Nick, nick, StringComparison.OrdinalIgnoreCase)) return o;
+        return null;
+    }
+
+    /// <summary>Menü der Karte: IsFriend -> "Aus Freundesliste entfernen" statt "Zu Freunden hinzufügen"; gesperrt für sich selbst/ohne Server.</summary>
+    void ApplyCardFriendState(PlayerInfo? p)
+    {
+        var ui = _ui;
+        if (ui == null) return;
+        string nick = p?.Nick ?? ui.GetVariable("/:listAvatarName") ?? "";
+        bool self = string.Equals(nick, TDU2Session.Nick, StringComparison.OrdinalIgnoreCase);
+        bool can = TDU2Session.LoggedIn && nick.Length > 0 && !self;
+        bool friend = can && Friends.IsFriend(nick);
+        ui.SetValue("/:IsFriend", friend);
+        ui.SetValue("/:LockAddFriend", !can || friend || Friends.RequestSentTo(nick));
+        ui.SetValue("/:LockAddToFriends", !can || friend || Friends.RequestSentTo(nick));
+        ui.SetValue("/:LockDelFriend", !can || !friend);
+        ui.SetValue("/:LockFriendRequest", !can);
+    }
+
+    bool HandleFriendCommand(string c)
+    {
+        bool add = c == "frre" || c == "pcrd:frre", del = c == "delf" || c == "pcrd:delf";
+        if (!add && !del) return false;
+        string? nick = _cardPlayer?.Nick;
+        if (string.IsNullOrEmpty(nick)) nick = _ui?.GetVariable("/:listAvatarName");
+        Log.Info($"Pausemenü: Freunde {(add ? "Anfrage an" : "entfernen")} '{nick}'");
+        if (string.IsNullOrEmpty(nick)) return true;
+        void Done(NetResponse? r)
+        {
+            if (_ui == null) return;
+            ApplyCardFriendState(_cardPlayer);
+            var ci = _ui.Find(CardPath)?.Sprite;
+            if (ci != null && _ui.IsShown(ci)) _ui.CallClip(CardPath, "setMenu");   // Menü der Karte neu aufbauen
+        }
+        if (add) Friends.Request(nick!, Done); else Friends.Remove(nick!, Done);
+        return true;
+    }
+
+    // Karte: "pcrd:pjoi" (Beitreten) bzw. join_player.joinPlayer() -> "join:wait" (Ladeanzeige wartet auf _root.CanJoinPlayer)
+    // -> "pjoi"; Fehler: _root.JoinError + timeOutLoading() (Dialog player_join_fail). "pcrd:pinv" = Einladen.
+    bool HandlePartyCommand(string c)
+    {
+        var ui = _ui!;
+        var p = c == "join:wait" || c == "pjoi" || c == "pcrd:pjoi" || c == "pcrd:pinv" ? LiveCardPlayer() : _cardPlayer;
+        switch (c)
+        {
+            case "join:wait":
+                {
+                    string err = "Spieler nicht gefunden.";
+                    bool ok = p != null && p.Id != 0 && Party.CanJoin(p.Id, out err);
+                    Log.Info($"Pausemenü: Beitreten {p?.Nick ?? "-"}: " + (ok ? "ok" : err));
+                    if (ok) ui.SetValue("/:CanJoinPlayer", true);
+                    else
+                    {
+                        ui.SetVariable("/:JoinError", err);
+                        // Ladeanzeige der Beitreten-Funktion (/join_player); der letzte Besitzer von timeOutLoading war oft die
+                        // Spielersuche -> deren Fehlerfenster ("none") statt player_join_fail mit JoinError
+                        var owners = ui.FunctionOwners("timeOutLoading");
+                        if (!ui.CallClip("/join_player", "timeOutLoading") && (owners.Count == 0 || !ui.CallClip(owners[owners.Count - 1], "timeOutLoading"))) ui.SetValue("/:Input", true);
+                    }
+                    return true;
+                }
+            case "join:canc":
+                return true;
+            case "pjoi":
+            case "pcrd:pjoi":
+                if (p != null && p.Id != 0)
+                {
+                    int id = p.Id;
+                    Close();
+                    Party.Join(id);
+                }
+                return true;
+            case "pcrd:pinv":
+                if (p == null || p.Id == 0) Log.Info("Pausemenü: " + (_cardPlayer?.Nick ?? "Spieler") + " ist nicht online – Einladung nicht möglich.");
+                else if (p.Id == TDU2Session.PlayerId) Log.Info("Pausemenü: Du kannst dich nicht selbst einladen.");
+                else Party.Invite(p.Id);
+                return true;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ Steuerung: Tastenbelegungs-Liste (Unity TDU2PauseMenu)

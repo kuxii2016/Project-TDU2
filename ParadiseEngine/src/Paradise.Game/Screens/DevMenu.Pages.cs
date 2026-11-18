@@ -25,7 +25,7 @@ public sealed partial class DevMenu
     List<Item> MainMenu() => new List<Item>
     {
         Head("RACING & TESTS"),
-        PhMenu("Race Debug / Start Race (.ig2)", "Racing is not ported yet"),
+        Menu("Race Debug / Start Race (.ig2)", RaceMenu),
         Menu("Cutscene Tester", CutsceneMenu),
         Menu("Animation Viewer", AnimViewerMenu),
 
@@ -58,6 +58,7 @@ public sealed partial class DevMenu
         Head("DEBUG VIEW"),
         Menu("Debug View Toggles (race / traffic / camera)", DebugViewMenu),
         Bool("Free-fly camera", () => _terrain.FreeFly, SetFreeFly, false),
+        Bool("Race debug in the 3D world", () => RaceView.ShowInWorld, v => RaceView.ShowInWorld = v, true),
 
         Head("FLASH"),
         Menu("Flash Debug", FlashMenu),

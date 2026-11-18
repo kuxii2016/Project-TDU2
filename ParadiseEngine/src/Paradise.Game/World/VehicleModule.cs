@@ -56,20 +56,24 @@ public sealed class VehicleModule : GameModule
         _vm.DiagContext = () =>
         {
             var s = _terrain.Streamer;
-            return s == null ? "" : $"Kollider zuletzt eingetragen vor {(s.Time - s.LastColliderAddTime) * 1000:0} ms, Aufträge {s.ColliderJobs}";
+            return s == null ? "" : $"Collider last added {(s.Time - s.LastColliderAddTime) * 1000:0} ms ago, jobs {s.ColliderJobs}";
         };
         _vm.IslandBank = () => _terrain.Streamer?.Index?.IslandBank;
         _vm.GroundHeight = p => _terrain.Streamer != null && _terrain.Streamer.TryGetGroundHeight(p, out float y) ? y : null;
         new VehicleConfig().ApplyTo(_vm);   // Werte: Game/Config/VehicleConfig.cs
         _vm.EnsureDatabase(GameData.BnkDir);
         _traffic = new Paradise.Game.Gameplay.Traffic(_renderer, _terrain, () => _vm);
-        _overlay?.AddSection("Fahrzeug (Tasten: Game/Config/KeyConfig.cs – F2 ein-/aussteigen, F3/F4 Auto, F8 Farbe, F9 neu)", () => _vm.DebugLines());
+        Paradise.Game.Racing.RaceOpponents.Renderer = _renderer;   // Gegner im Rennen (Racing/RaceOpponents)
+        Paradise.Game.Racing.RaceOpponents.World = _terrain.Physics;
+        _overlay?.AddSection("Vehicle (Keys: F2 to get in/out, F3/F4 for car, F8 for color, F9 to reset)", () => _vm.DebugLines());
     }
 
     public override void FixedUpdate(in GameTime time)
     {
         if (Frozen) return;
         _traffic?.FixedUpdate(time.FixedDeltaTime);   // KI + kinematische Körper vor dem Physikschritt
+        Paradise.Game.Online.RemoteCars.FixedUpdate(time.FixedDeltaTime);   // Mitspieler-Autos (kinematisch, Unity TDU2Multiplayer)
+        Paradise.Game.Racing.RaceOpponents.FixedUpdateActive(time.FixedDeltaTime);   // Gegner im Rennen (kinematisch)
         _vm?.FixedUpdate(time.FixedDeltaTime);
     }
 
@@ -168,6 +172,7 @@ public sealed class VehicleModule : GameModule
             _terrain.NearClip = _vm.Camera.nearClipPlane;
             _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);   // Scheinwerferkegel, Brems-/Rückfahrlicht
             _traffic?.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
+            Paradise.Game.Online.RemoteCars.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
         }
     }
 
@@ -177,7 +182,10 @@ public sealed class VehicleModule : GameModule
         if (_vm == null || s == null) return;
         if (_terrain.MapTerrainShown) return;   // Unity: Kartenkamera zeichnet dann nur die Kartenebene
         _vm.Render(s.RootMatrix);
+        if (_terrain.Camera != null) Paradise.Game.Online.Party.RenderOwnPassenger(_terrain.Camera.Position);   // Beifahrer im eigenen Auto
         if (!s.HideWorld) _traffic?.Render(_vm, s.RootMatrix);
+        if (!s.HideWorld && _terrain.Camera != null) Paradise.Game.Online.RemoteCars.Render(_vm, s.RootMatrix, _terrain.Camera.Position, _renderer);   // Mitspieler
+        if (!s.HideWorld) Paradise.Game.Racing.RaceOpponents.RenderActive(s.RootMatrix);   // Gegner im Rennen
         // Debug-Linien (Core/Render/DebugLines, Unity TDU2DebugLines): Verkehr, Radstrahlen des Autos (F1)
         var cam = _terrain.Camera;
         if (cam != null && _renderer.Height > 0)

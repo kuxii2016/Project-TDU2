@@ -48,4 +48,5 @@ public enum Gamemode
     GAME_MODE_WORLD_MAP = 39, //World Viewer, Like Current FlyCam need Hotkey to switch Island F6 Ibiza, F7 Hawaii, F8 Casino
     GAME_MODE_PAUSE = 40, //ESC menue in Unity3d
     GAME_MODE_TUNER = 41, //Tuner (Spots ETUN_*, Interieur itun_a, shopscar.vmf "after_mkt"); im Original ein Teil des Shop-Managers, hier eigene Klasse
+    GAME_MODE_CHAMPIONSHIP = 42, //Meisterschaftsrennen (Unity TDU2Championships); im Original Teil des Wettbewerbs-Managers, hier eigene Klasse
 }

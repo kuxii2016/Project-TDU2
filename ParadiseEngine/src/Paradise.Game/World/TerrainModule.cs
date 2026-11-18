@@ -5,13 +5,14 @@ using Paradise.Core.Platform;
 using Paradise.Core.Render;
 using Paradise.Core.World;
 using Paradise.Game.Config;
+using Paradise.Game.Gameplay;
 using System.Numerics;
 
 namespace Paradise.Game.World;
 
 /// <summary>
-/// Gameplay-Seite der Welt: Flugkamera + MapStreamer (Paradise.Core, Port von TDU2MapStreamer).
-/// Laden/Bauen/Zeichnen passiert vollständig im Core.
+/// World gameplay page: Flight camera + MapStreamer
+/// Loading, building, and rendering take place entirely in the Core.
 /// </summary>
 public sealed class TerrainModule : GameModule
 {
@@ -25,14 +26,14 @@ public sealed class TerrainModule : GameModule
     private PhysicsWorld? _physics;
     private string _groundInfo = "";
 
-    /// <summary>Physikwelt mit den Kollisionsnetzen der geladenen Sektoren (für Fahrzeuge).</summary>
+    /// <summary>Physics world with the collision meshes of the loaded sectors (for vehicles).</summary>
     public PhysicsWorld? Physics => _physics;
     public MapStreamer? Streamer => _streamer;
-    /// <summary>Wetter/Tageszeit der Insel (null = LightingConfig.UseWeather aus oder noch nicht geladen) – für das Entwicklermenü.</summary>
+    /// <summary>Weather/time of day on the island (null = LightingConfig.UseWeather is disabled or not yet loaded) – for the developer menu.</summary>
     public WorldWeather? Weather => _weather;
-    /// <summary>Freiflug-Kamera (Render-Raum).</summary>
+    /// <summary>Free-Flight Camera (Render Room).</summary>
     public FlyCamera? Camera => _cam;
-    /// <summary>Eingabe des Fensters (Maus-Deltas, gefangene Maus im Interieur).</summary>
+    /// <summary>Window input (mouse deltas, mouse trapped inside the window).</summary>
     public InputState Input => _window.Input;
     /// <summary>false, solange ein Fahrzeug die Kamera führt (Unity: FlyCamera.enabled).</summary>
     public bool FlyCameraEnabled = true;
@@ -50,7 +51,7 @@ public sealed class TerrainModule : GameModule
     /// der Render-Ursprung verschiebt sich nicht.
     /// </summary>
     public Vector3? StreamFocus;
-    /// <summary>Hintergrund der Kartenkamera (Unity TDU2BigMap.SeaColor, sRGB).</summary>
+    /// <summary>Hintergrund der Kartenkamera (BigMap.SeaColor, sRGB).</summary>
     public Vector3 MapSeaColor = new(0f, 18f / 255f, 47f / 255f);
     /// <summary>Große Karte: Meter je Bildpunkt für die Straßenbreite (0 = keine Straßen).</summary>
     public float MapMetersPerPixel;
@@ -64,7 +65,7 @@ public sealed class TerrainModule : GameModule
     private List<string> _pick = new();
 
     // wie im Unity-Projekt (Camera: far 60000, near 1)
-    private const float Near = 1f, Far = 60000f, FovDeg = 60f;
+    private const float Near = 1f, Far = 5000f, FovDeg = 60f;
 
     public TerrainModule(IRenderer renderer, WorldModule world, IGameWindow window, DebugOverlay? overlay = null)
     {
@@ -76,7 +77,11 @@ public sealed class TerrainModule : GameModule
 
     public override void Load()
     {
-        if (_world.Root == null) { Log.Warn("TerrainModule: kein Spielordner gefunden."); return; }
+        if (_world.Root == null) 
+        { 
+            Log.Warn("TerrainModule: No game folder found."); 
+            return; 
+        }
         _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
         _light.ApplyAvatars();
         _globals = _light.ToFrameGlobals();
@@ -89,30 +94,16 @@ public sealed class TerrainModule : GameModule
         if (_weather != null)
             _overlay?.AddSection("Tag/Wetter", () => new[]
             {
-                $"Uhr {(int)WorldWeather.Hour:00}:{(int)(WorldWeather.Hour % 1f * 60f):00}   {WorldWeather.Kind}   Nacht {WorldWeather.Night:0.00}",
-                $"Regen {WorldWeather.Rain:0.00}   Nässe {WorldWeather.GroundWet:0.00}   Lampen {_globals.LampCount}   Ampeln {TrafficLights.Count}",
+                $"Time {(int)WorldWeather.Hour:00}:{(int)(WorldWeather.Hour % 1f * 60f):00}   {WorldWeather.Kind}   Night {WorldWeather.Night:0.00}",
+                $"Rain {WorldWeather.Rain:0.00}   Wetness {WorldWeather.GroundWet:0.00}   Lights {_globals.LampCount}   Traffic Lights {TrafficLights.Count}",
             });
         _overlay?.AddSection("Auswahl (F10: Objekt in Blickmitte)", () => _pick);
         _overlay?.AddSection("Physik", () => new[]
         {
-            $"Kollider {_physics?.StaticCount ?? 0}   Dreiecke {(_physics?.TriangleCount ?? 0):N0}   letzter Bau {_streamer?.ColliderBuildMs ?? 0:0.0} ms (Hintergrund), Eintragen {_streamer?.ColliderAddMs ?? 0:0.0} ms",
+            $"Colliders {_physics?.StaticCount ?? 0}   Triangles {(_physics?.TriangleCount ?? 0):N0}   Last build {_streamer?.ColliderBuildMs ?? 0:0.0} ms (background), Add {_streamer?.ColliderAddMs ?? 0:0.0} ms",
             _groundInfo,
         });
-        // Speicher-Diagnose ([DIAG Mem] alle 30 s): Welt, Physik, GPU
-        MemoryLog.Register("Welt", () => _streamer?.MemoryInfo() ?? "-");
-        MemoryLog.Register("Physik", () =>
-        {
-            var (main, bg) = _physics?.PoolBytes() ?? (0UL, 0UL);
-            return $"Kollider {_physics?.StaticCount ?? 0}, Dreiecke {(_physics?.TriangleCount ?? 0):N0}, Bepu-Pool {MemoryLog.Mb(main)} + Hintergrund {MemoryLog.Mb(bg)}";
-        });
-        MemoryLog.Register("GPU", () =>
-        {
-            var rs = _renderer.Stats;
-            return $"Allokation {MemoryLog.Mb(rs.GpuMemoryAllocated)}, Texturen {rs.Textures}, Materialien {rs.Materials}, Meshes {rs.Meshes}";
-        });
-        // Unity: Viewer.rotation = Quaternion.Euler(35, 0, 0) -> 35° nach unten, Blick +Z
         _cam = new FlyCamera(s.StartPosition, 0f, -35f * MathF.PI / 180f);
-        Log.Info($"TerrainModule: Start bei {s.StartPosition} (Spiel {s.RenderToGame(s.StartPosition)})");
     }
 
     /// <summary>MapStreamer (+ Wetter) einer Insel anlegen; die Physikwelt bleibt dieselbe.</summary>
@@ -133,9 +124,9 @@ public sealed class TerrainModule : GameModule
     }
 
     /// <summary>
-    /// Inselwechsel (Unity TDU2IslandTravel: Szene neu laden mit TDU2MapStreamer.IslandOverride): alte Insel freigeben
-    /// (Kacheln, Kollider, Wetter), Zielinsel (Bnk/islands/&lt;name&gt;: ibiza, hawai, casino) aufbauen. Kamera an den Startpunkt;
-    /// die Ankunftsstelle setzt Gamemodes/Utils/IslandTravel. Schlägt die Zielinsel fehl, wird die alte wieder geladen.
+    /// Island change, Release old island
+    /// (tiles, colliders, weather), build destination island (Bnk/islands/name: ibiza, hawai, casino). Move camera to starting point;
+    /// The arrival point is set by Gamemodes/Utils/IslandTravel. If the destination island fails to load, the old one is reloaded.
     /// </summary>
     public bool ChangeIsland(string island)
     {
@@ -167,9 +158,6 @@ public sealed class TerrainModule : GameModule
         }
         long tp = System.Diagnostics.Stopwatch.GetTimestamp();
         _streamer.Update(focus, time.DeltaTime);
-        PerfLog.Add("Terrain: Streamer gesamt", System.Diagnostics.Stopwatch.GetElapsedTime(tp).TotalMilliseconds);
-        MemoryLog.Update(time.TotalTime);
-        PerfLog.Frame(time.TotalTime, time.DeltaTime);
 
         // Tag/Nacht + Wetter (Serverzeit -> für alle gleich)
         if (_weather != null && _weather.Loaded)
@@ -181,7 +169,6 @@ public sealed class TerrainModule : GameModule
             var strm = _streamer;
             _weather.GroundHeight ??= (lx, lz) => strm.TryGetMapGroundHeight(lx, lz, out float lh) ? lh : null;
             _weather.Update(now, time.TotalTime, time.DeltaTime, _streamer.ViewerGame, _streamer.RootOffset, _streamer.FindPlacementInstances);
-            PerfLog.Add("Terrain: Wetter/Lampen", System.Diagnostics.Stopwatch.GetElapsedTime(tp).TotalMilliseconds);
             var g = _weather.Globals;
             g.ShadowDistance = GraphicsSettings.ShadowDistance > 0f ? GraphicsSettings.ShadowDistance : _light.ShadowDistance;   // Effektqualität (Optionen)
             g.ShadowStrength *= _light.ShadowStrength > 0f ? 1f : 0f;
@@ -192,7 +179,6 @@ public sealed class TerrainModule : GameModule
         var camGame = _streamer.ViewerGame;
         tp = System.Diagnostics.Stopwatch.GetTimestamp();
         bool ground = _streamer.RaycastDown(camGame, 2f, 3000f, out float gy);
-        PerfLog.Add("Terrain: Boden-Strahl (Debug-Anzeige)", System.Diagnostics.Stopwatch.GetElapsedTime(tp).TotalMilliseconds);
         _groundInfo = ground
             ? $"Boden unter Kamera: y {gy:0.00}  (Abstand {camGame.Y - gy:0.0} m)"
             : "Boden unter Kamera: kein Kollider";
@@ -201,14 +187,7 @@ public sealed class TerrainModule : GameModule
         bool f10 = _window.Input.IsKeyDown(0x79);
         if (f10 && !_f10Was) _pick = _streamer.Pick(_cam.Position, _cam.Forward);
         _f10Was = f10;
-
-
         _nextStats -= time.DeltaTime;
-        if (_nextStats <= 0)
-        {
-            _nextStats = 5;
-            Log.Debug($"Welt: Areas {_streamer.LoadedAreas}, Sektoren {_streamer.LoadedSectors}, Objekte gezeichnet {_streamer.DrawnObjects}, Spiel {_streamer.ViewerGame}");
-        }
     }
 
     public override void Render(in GameTime time)
@@ -221,7 +200,6 @@ public sealed class TerrainModule : GameModule
         var g = _globals;
         if (MapView)
         {
-            // große Karte (Unity TDU2BigMap): kein Nebel, keine Schatten, Kamera SolidColor (Meer) statt Skybox
             g.FogEnd = g.FogStart; g.ShadowStrength = 0f;
             g.NoSky = true; g.BackgroundColor = MapSeaColor;
             if (MapTerrainShown) { _streamer.RenderMapTerrain(_cam.Position, g); return; }   // nur die Kartenkacheln

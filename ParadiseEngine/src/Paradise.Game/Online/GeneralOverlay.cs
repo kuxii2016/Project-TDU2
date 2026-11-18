@@ -9,7 +9,8 @@ namespace Paradise.Game.Online;
 /// <summary>
 /// general.bnk als globales Overlay wie im Spiel (Unity TDU2GameData.UpdateGeneral):
 ///   saving_logo = Speichern (ab TDU2Session.SaveStarted, mindestens <see cref="SavingLogoMinSeconds"/>),
-///   online_evt = Spieler online/offline, deco_pop = Verbindung verloren. Nur diese Clips (und pop_chat) bleiben sichtbar.
+///   online_evt = Spieler online/offline, deco_pop = Verbindung verloren. Nur diese Clips (und pop_chat = Chat, av_name_XX = Namen
+///   über den Mitspieler-Autos, Game/Online/Chat und NameTags) bleiben sichtbar.
 /// </summary>
 public static class GeneralOverlay
 {
@@ -17,6 +18,8 @@ public static class GeneralOverlay
     public static float SavingLogoMinSeconds = 2f;
 
     static VmfPlayer? _general;
+    /// <summary>general.bnk (für Chat und Namensschilder).</summary>
+    public static VmfPlayer? General => _general;
     static float _clock, _saveCloseAt = -1f, _evtCloseAt = -1f, _evtFreeAt, _districtCloseAt = -1f, _districtOpenAt = -1f;
     static volatile bool _saveRequested;
     static readonly Queue<(string nick, bool on)> _events = new();
@@ -39,7 +42,7 @@ public static class GeneralOverlay
         general.GotoLabel("/", "default", false);
         // nur die benutzten Overlays sichtbar lassen
         if (general.Root != null)
-            foreach (var d in general.Root.List.Values) d.Visible = d.Name == "deco_pop" || d.Name == "online_evt" || d.Name == "saving_logo" || d.Name == "pop_chat";
+            foreach (var d in general.Root.List.Values) d.Visible = d.Name == "deco_pop" || d.Name == "online_evt" || d.Name == "saving_logo" || d.Name == "pop_chat";   // av_name_XX: NameTags
         general.GotoLabel("/pop_chat", "default", false);
         for (int i = 1; i <= 4; i++) general.GotoLabel("/pop_chat/log/line" + i, "default", false);
         TDU2Session.SaveStarted -= OnSaveStarted;
@@ -47,6 +50,44 @@ public static class GeneralOverlay
     }
 
     static void OnSaveStarted() => _saveRequested = true;
+
+    // ------------------------------------------------------------------ Ausweis in Fenstern (pop_gameInvite, pop_request)
+    /// <summary>
+    /// Spieler-Ausweis eines Fensters wie das Spiel (exe 0x999350 + 0x9999d0): &lt;popup&gt;/disp/player_IDCard –
+    /// ic_status "connected"/"disconnected", titles = Bild des Titels, flag = Bild Ländernummer (1..113, sonst 135),
+    /// avatar_photo/lure = MyTDULife-Foto (fehlt es, wird es per op "profile" nachgeladen). Ohne Spieler: nur Flagge Bild 135.
+    /// Bilder/Labels festgehalten, weil die Fenster ihre Clips je Ansicht (mini/big/answer) neu anlegen.
+    /// </summary>
+    public static void FillIdCard(string popup, PlayerInfo? p)
+    {
+        var g = _general;
+        if (g == null) return;
+        string card = "/" + popup + "/disp/player_IDCard";
+        if (p == null) { g.PinFrame(card + "/flag", 135); return; }
+        g.PinLabel(card + "/ic_status", p.Online ? "connected" : "disconnected");
+        g.PinFrame(card + "/titles", 1);   // Titel wie im Pausemenü (NumTitle 1)
+        g.PinFrame(card + "/flag", p.Nationality >= 1 && p.Nationality <= 113 ? p.Nationality : 135);
+        g.SetClipTexture(card + "/avatar_photo/lure", p.Photo);
+        bool female = false;
+        if (!string.IsNullOrEmpty(p.Avatar)) { var c = Paradise.Core.Avatars.AvatarConfig.Decode(p.Avatar); female = c != null && c.Sex == 1; }
+        g.PinLabel(card + "/avatar_photo", p.Photo != null ? "loaded" : female ? "empty_female" : "empty_male");
+        if (p.Life == null || (p.PhotoVer > 0 && (p.Photo == null || p.PhotoTexVer != p.PhotoVer)))
+            TDU2GameData.FetchLife(p, pp => { if (_general != null && string.Equals(_general.GetVariable("/:AvatarName"), pp.Nick, StringComparison.OrdinalIgnoreCase)) FillIdCard(popup, pp); });
+    }
+
+    // ------------------------------------------------------------------ Server-Meldung (general.bnk /pop_news, Unity TDU2UIManager.SendNews)
+    static float _newsCloseAt = -1f;
+
+    /// <summary>Meldung im Spiel zeigen (Server-Konsole "say"): pop_news "open", Text /:NewsTxt, nach 4 s "close".</summary>
+    public static void SendNews(string text)
+    {
+        var g = _general;
+        if (g == null) return;
+        g.PlayLabel("/pop_news", "open");
+        g.SetText("/:NewsTxt", text);
+        g.ForceVisible("/pop_news", true);
+        _newsCloseAt = _clock + 4f;
+    }
 
     static bool _decoOpen;
 
@@ -79,6 +120,8 @@ public static class GeneralOverlay
         _clock += dt;
         var g = _general;
         if (g == null) return;
+
+        if (_newsCloseAt > 0f && _clock >= _newsCloseAt) { _newsCloseAt = -1f; g.PlayLabel("/pop_news", "close"); }
 
         // Spieler online/offline
         if (_evtCloseAt > 0f && _clock >= _evtCloseAt)

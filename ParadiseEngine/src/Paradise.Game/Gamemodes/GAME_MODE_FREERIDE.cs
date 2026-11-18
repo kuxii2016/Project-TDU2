@@ -10,7 +10,7 @@ namespace Paradise.Game.Gamemodes
     /// HUD/Minimap (Taste "minimap"), Autoradio (Unity TDU2Radio, Anzeige in hud.bnk), große Karte (Taste "map"),
     /// Einfahrten der Spots (Interieurs, Utils/InteriorUtils), ESC = Pausemenü.
     /// </summary>
-    public class GAME_MODE_FREERIDE : GameModeHandler
+    public partial class GAME_MODE_FREERIDE : GameModeHandler
     {
         //Flash Screens:
         //hud.bnk (Minimap, Radio)
@@ -24,18 +24,20 @@ namespace Paradise.Game.Gamemodes
 
         public override void Run(IGameModeContext ctx, in GameTime time)
         {
-            HandlePauseKey(ctx);
+            if (!Story.BlocksPauseMenu) HandlePauseKey(ctx);   // Unity TDU2PauseMenu: gesperrt während Kino/Laufmodus der Geschichte
             if (ctx.Paused) return;
             var veh = ctx.Vehicles; var vm = veh?.Manager;
             // Minimap ein/aus (Unity TDU2VehicleManager.HandleKeys "minimap")
             if (TDU2Controls.Pressed("minimap") && vm?.Minimap != null && vm.Current != null && !veh!.Suspended && !veh.Frozen)
                 vm.Minimap.ShowMinimap = !vm.Minimap.ShowMinimap;
             // Taste "map" (M): große Karte (Unity TDU2BigMap.Update – nicht im Interieur, nur mit Welt)
-            if (TDU2Controls.Pressed("map") && veh != null && !veh.Suspended && ctx.Terrain?.Streamer != null)
+            if (TDU2Controls.Pressed("map") && veh != null && !veh.Suspended && ctx.Terrain?.Streamer != null && !Story.BlocksMap)
                 GameMode.Set(Gamemode.GAME_MODE_MAP);
             // Spots betreten (Unity TDU2Interiors.UpdateOutside): Einfahrt eines Händlers/Hauses/Shops + Bestätigen,
             // bzw. nach dem Teleport der Karte ("goin") hinein, sobald die Welt dort steht
             if (ctx.Terrain != null && veh != null) InteriorUtils.UpdateOutside(ctx, time.DeltaTime);
+            // Meisterschaften: Treffpunkte/Startpunkte (Einfahrt, Wettbewerb der Karte, Rennen aus der Karte)
+            if (GameMode.Current == Gamemode.GAME_MODE_FREERIDE && ctx.Terrain != null && veh != null) Championships.UpdateFreeride(ctx, time.DeltaTime);
             // schwebende Spot-Hologramme an den Einfahrten (pack_spots.bnk)
             if (GameMode.Current == Gamemode.GAME_MODE_FREERIDE && !InteriorUtils.Inside) SpotHolograms.Update(ctx);
             else SpotHolograms.Hide();
@@ -48,15 +50,15 @@ namespace Paradise.Game.Gamemodes
 
         // ------------------------------------------------------------------ Autoradio (Unity TDU2Radio, Anzeige in hud.bnk der Minimap)
         // Läuft wie in Unity in jedem Spielmodus weiter (Musik, Tasten) – jedes Bild aus ScreenModule.Update.
-        static TDU2Radio? _radio;
+        static Radio? _radio;
         /// <summary>Autoradio (null bis zum ersten Bild) – Entwicklermenü F1 > Audio.</summary>
-        public static TDU2Radio? Radio => _radio;
+        public static Radio? Radio => _radio;
         static Paradise.Core.Online.SaveData? _radioSave;   // Spielstand, aus dem Sender/Lautstärke zuletzt übernommen wurden
 
-        static TDU2Radio CreateRadio()
+        static Radio CreateRadio()
         {
             var c = new Config.AudioConfig();   // Grundwerte: Game/Config/AudioConfig.cs
-            var r = new TDU2Radio(Paradise.Core.Config.GameData.BnkDir)
+            var r = new Radio(Paradise.Core.Config.GameData.BnkDir)
             {
                 PlayOriginalRadio = c.PlayOriginalRadio,
                 JingleChance = c.RadioJingleChance,
@@ -96,10 +98,10 @@ namespace Paradise.Game.Gamemodes
         public static void DisposeRadio() { _radio?.Dispose(); _radio = null; _radioSave = null; }
 
         // ------------------------------------------------------------------ Umgebungsgeräusche (ambiences.xmb + Sektor-Klangzonen .psa)
-        static TDU2Ambience? _ambience;
+        static Ambience? _ambience;
         static string? _ambienceIsland;
         /// <summary>Umgebungsgeräusche der aktuellen Insel – Entwicklermenü F1 > Audio.</summary>
-        public static TDU2Ambience? Ambience => _ambience;
+        public static Ambience? Ambience => _ambience;
         static int _thunderSeen = Paradise.Core.World.Lightning.Strikes;
 
         /// <summary>
@@ -114,13 +116,13 @@ namespace Paradise.Game.Gamemodes
             {
                 _ambience?.Dispose();
                 _ambienceIsland = streamer.Island;
-                _ambience = TDU2Ambience.Load(Paradise.Core.Config.GameData.BnkDir, streamer.Island);
+                _ambience = Ambience.Load(Paradise.Core.Config.GameData.BnkDir, streamer.Island);
                 if (_ambience == null) return;
                 _ambience.Volume = System.Math.Clamp(new Config.AudioConfig().Ambience, 0f, 1f);
             }
             if (_ambience == null) return;
             var mode = GameMode.Current;
-            bool world = mode is Gamemode.GAME_MODE_FREERIDE or Gamemode.GAME_MODE_TESTCAR or Gamemode.GAME_MODE_MAP or Gamemode.GAME_MODE_PAUSE;
+            bool world = mode is Gamemode.GAME_MODE_FREERIDE or Gamemode.GAME_MODE_MISSION or Gamemode.GAME_MODE_TESTCAR or Gamemode.GAME_MODE_MAP or Gamemode.GAME_MODE_PAUSE;
             bool active = world && !Paradise.Core.World.WorldWeather.Inside && ctx.Vehicles?.Manager?.Current != null;
             var p = streamer.ViewerGame;
             int zone = active ? streamer.AmbienceZoneAt(p.X, p.Z) : -1;

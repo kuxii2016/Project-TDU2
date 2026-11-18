@@ -19,6 +19,8 @@ internal sealed class AvatarPreview : IDisposable
     public Matrix4x4 Pose = Matrix4x4.Identity;
     public AnmClip? Clip;
     public float T;
+    /// <summary>Wurzel-Versatz der Animation übernehmen (Unity ApplyClip positions); Mitspieler beim Laufen: aus (Position kommt aus dem Netz).</summary>
+    public bool ClipPositions = true;
 
     public AvatarPreview(IRenderer r) { _r = r; }
 
@@ -65,7 +67,7 @@ internal sealed class AvatarPreview : IDisposable
         if (Clip != null)
         {
             float len = MathF.Max(0.05f, Clip.Length);
-            a.Rig.ApplyClip(Clip, T - MathF.Floor(T / len) * len, 1f, true);
+            a.Rig.ApplyClip(Clip, T - MathF.Floor(T / len) * len, 1f, ClipPositions);
         }
         a.Draw(Pose * sceneToRender);
     }

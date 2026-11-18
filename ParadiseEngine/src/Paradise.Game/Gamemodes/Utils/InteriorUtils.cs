@@ -87,7 +87,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static float EnterMaxSpeedKmh = 40f;
     internal static float InteractDistance = 10f;
 
-    internal enum Kind { Dealer, Living, Garage, StickerShop, Tuner, Airport, Other }
+    internal enum Kind { Dealer, Living, Garage, StickerShop, Tuner, Airport, Other, Club, ClubGarage, Casino }
     internal sealed class SpotBanks { public bool Valid, IsClub, IsCasino, CarWash; public Kind Kind; public string? Living, Garage, Name, TravelTo; }
 
     internal static TerrainModule _t = null!;
@@ -112,6 +112,120 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static Kind CurrentKind => _kind;
     internal static bool SceneReady => Inside && _scene != null && _sceneTask == null;
     internal static Spot? CurrentSpot => _spot;
+    /// <summary>Gastgeber (Spielernummer), wenn man als eingeladener Gast in einem fremden Haus ist; 0 = eigenes (Unity TDU2Interiors.GuestHost).</summary>
+    internal static int GuestHost;
+    /// <summary>Gast im Haus eines Mitspielers (Einladung): dessen Autos und Beklebungen in der Garage; null = eigene (Unity GuestGarageCars/GuestLiveries).</summary>
+    internal static List<string>? GuestGarageCars;
+    internal static Dictionary<string, string>? GuestLiveries;
+    /// <summary>Name der geladenen Szene (Bank ohne Endung, z.B. "lph_l1a", "gph_l1a") – Einladung "room|SPOT|Bank|Ort".</summary>
+    internal static string CurrentBankStem => string.IsNullOrEmpty(_pendingBank) ? "" : Path.GetFileNameWithoutExtension(_pendingBank).ToLowerInvariant();
+
+    /// <summary>
+    /// Ort für die Einladung (/:InvitePlace beim Eingeladenen) wie im Original (exe 0x999e7e…0x99a060): unterwegs Text 0xE84
+    /// "Freie Fahrt", Haus 0xE82 "Zu Hause (§HOUSENAME§)", Geschäft 0xE85 "Geschäft (§SHOPNAME§)", Casino 0x104C, sonst 0xE86
+    /// "Ort (§SPOTNAME§)".
+    /// </summary>
+    internal static string InvitePlaceText()
+    {
+        if (!Inside || _spot == null || _spotBanks == null) return Lang(0xE84, "Freie Fahrt");
+        if (_spotBanks.IsCasino) return Lang(0x104C, "Casino");
+        string island = _t.Streamer?.Index?.IslandName ?? "";
+        var db = Vm?.Database;
+        string code = (_spot.Code ?? "").ToUpperInvariant();
+        if (code.StartsWith("EPH") && !code.StartsWith("EPHOT"))
+        {
+            var h = db?.HouseForSpot(_spot, island);
+            string name = h != null ? Lang(h.NameHash, h.SpotName ?? "") : TitleFor(_kind);
+            return Lang(0xE82, "Zu Hause (§HOUSENAME§)").Replace("§HOUSENAME§", name);
+        }
+        bool shop = _spotBanks.Kind is Kind.Dealer or Kind.StickerShop or Kind.Tuner || code.StartsWith("EHD")
+                    || (db != null && db.ShopForSpot(_spot, island) != null);
+        if (shop) return Lang(0xE85, "Geschäft (§SHOPNAME§)").Replace("§SHOPNAME§", TitleFor(_kind));
+        return Lang(0xE86, "Ort (§SPOTNAME§)").Replace("§SPOTNAME§", TitleFor(_kind));
+    }
+
+    // ------------------------------------------------------------------ Mitspieler im Interieur (Game/Online/RoomAvatars, Unity TDU2Interiors)
+    /// <summary>
+    /// Kennung des aktuellen Raums (Spot + geladene Bank, z.B. Casino-Halle/Pokerraum getrennt); Mitspieler mit gleicher Kennung sieht
+    /// man als Spielfigur. 0 = nicht im Interieur. Häuser (EPH) sind privat: dort nur Mitspieler aus der eigenen Gruppe (IsPrivateRoom).
+    /// FNV-1a über "SPOTCODE|KEY(X16)|bank" wie Unity – gleiche Kennung wie Unity-Clients.
+    /// </summary>
+    internal static uint PresenceKey
+    {
+        get
+        {
+            if (!Inside || _scene == null || _sceneTask != null || string.IsNullOrEmpty(_pendingBank) || _spot == null) return 0;
+            if (!Paradise.Game.Config.OnlineConfig.InteriorShared(_spot.Code, _spotBanks != null && _spotBanks.IsCasino)) return 0;
+            string s = (_spot.Code ?? "").ToUpperInvariant() + "|" + _spot.Key.ToString("X16") + "|" + Path.GetFileNameWithoutExtension(_pendingBank).ToLowerInvariant();
+            uint h = 2166136261u;
+            foreach (char c in s) { h ^= c; h *= 16777619u; }
+            return h == 0 ? 1u : h;
+        }
+    }
+
+    /// <summary>Haus (EPH): Mitspieler nur auf Einladung (Gruppe).</summary>
+    internal static bool IsPrivateRoom => Inside && Paradise.Game.Config.OnlineConfig.HousesInviteOnly && _spot != null
+                                          && (_spot.Code ?? "").StartsWith("EPH", StringComparison.OrdinalIgnoreCase)
+                                          && !(_spot.Code ?? "").StartsWith("EPHOT", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Eigene Position (Füße) und Blickrichtung (Grad um Y) im Raum der Interieur-Szene (Unity LocalPresence).</summary>
+    internal static bool LocalPresence(out Vector3 local, out float yaw)
+    {
+        local = default; yaw = 0f;
+        if (_fp == null || _scene == null) return false;
+        local = Vector3.Transform(_fp.Feet, _holderInv);
+        var f = Vector3.TransformNormal(_fp.Forward, _holderInv); f.Y = 0f;
+        yaw = f.LengthSquared() > 1e-6f ? MathF.Atan2(f.X, f.Z) * 180f / MathF.PI : 0f;
+        return true;
+    }
+
+    /// <summary>Auto, an dem man zuletzt Türen/Fenster bedient hat (Online: Mitspieler im Raum sehen es, Unity _netCar).</summary>
+    internal static DisplayCar? _netCar;
+
+    /// <summary>Ausstellungsauto, an dem man Türen/Fenster bedient bzw. in dem man sitzt (Unity TDU2CarDealer.LocalCarState).</summary>
+    internal static bool LocalCarState(out int carId, out int bits, out int flags)
+    {
+        carId = 0; bits = 0; flags = 0;
+        var dc = _carIn == CarIn.Inside && _inCar != null ? _inCar : _netCar;
+        if (dc == null || dc.Model == null || !_cars.Contains(dc)) return false;
+        var acc = CarAccessories.Existing(dc.Model);
+        carId = dc.Car.Id;
+        bits = acc != null ? acc.Bits : 0;
+        bool sitting = _carIn == CarIn.Inside && _inCar == dc;
+        if (sitting) flags |= 1;
+        if (sitting && _inEngine) flags |= 2;
+        if (sitting && (TDU2Controls.Held("horn") || _inHornClick)) flags |= 4;
+        return true;
+    }
+
+    /// <summary>Online: Mitspieler im selben Raum bedient Türen/Fenster an einem Ausstellungsauto (DB-Id).</summary>
+    internal static bool ApplyRemoteCarState(int carId, int bits, int flags)
+    {
+        if (!Inside || carId == 0) return false;
+        foreach (var dc in _cars)
+        {
+            if (dc.Car == null || dc.Car.Id != carId || dc.Model == null) continue;
+            CarAccessories.For(dc.Model)?.ApplyBits(bits);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Unity EnterSpotRoom: Interieur eines Spots betreten und dort die Szene <paramref name="bankStem"/> öffnen (Einladung: wie der
+    /// Gastgeber Wohnbereich oder Garage).
+    /// </summary>
+    internal static bool EnterSpotRoom(Spot s, string bankStem)
+    {
+        if (!EnterSpot(s)) return false;
+        if (string.IsNullOrEmpty(bankStem) || _spotBanks == null) return true;
+        static string Stem(string? p) => string.IsNullOrEmpty(p) ? "" : Path.GetFileNameWithoutExtension(p).ToLowerInvariant();
+        string? target = null; Kind k = _spotBanks.Kind;
+        if (Stem(_spotBanks.Garage) == bankStem) { target = _spotBanks.Garage; k = Kind.Garage; }
+        else if (Stem(_spotBanks.Living) == bankStem) { target = _spotBanks.Living; k = _spotBanks.Kind; }
+        if (target != null && !string.Equals(target, _pendingBank, StringComparison.OrdinalIgnoreCase)) LoadScene(target, k, null);
+        return true;
+    }
     /// <summary>Spielmodus für die Oberfläche des aktuellen Interieurs.</summary>
     internal static Gamemode RoomMode => (_sceneTask != null ? _pendingKind : _kind) switch { Kind.Dealer => Gamemode.GAME_MODE_SHOP, Kind.Garage => Gamemode.GAME_MODE_GARAGE, Kind.StickerShop => Gamemode.GAME_MODE_STICKERS, Kind.Tuner => Gamemode.GAME_MODE_TUNER, Kind.Airport => Gamemode.GAME_MODE_AIRPORT, _ => Gamemode.GAME_MODE_LIVING };
 
@@ -139,6 +253,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             float best = float.MaxValue;
             foreach (var s in st.Spots.Spots)
             {
+                if (s.Code.StartsWith('#')) continue;   // zusätzliche Spots (Meisterschaften: Gamemodes/Utils/Championships)
                 // Abstand zum Spot ODER zu seiner Einfahrt (Casino: Einfahrt ~160 m vom Anker)
                 float dx = g.X - s.Position.X, dz = g.Z - s.Position.Z;
                 float d2 = dx * dx + dz * dz;
@@ -215,7 +330,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         if (Inside || _t.Streamer == null || Vm == null) return;
         _waitSpot = s; _waitUntil = _time + 20f; _waitDone = false;
-        TDU2LoadingScreen.Show("Teleport " + s.Code, () => _waitDone && (!Inside || SceneReady), 0.8f, false);
+        LoadingScreen.Show("Teleport " + s.Code, () => _waitDone && (!Inside || SceneReady), 0.8f, false);
     }
 
     /// <summary>Wartet auf die Welt an der Einfahrt; true = Interieur betreten.</summary>
@@ -230,6 +345,41 @@ public abstract partial class InteriorUtils : GameModeHandler
     }
 
     /// <summary>Unity TDU2Interiors.EnterSpot: Spot direkt betreten (ohne Einfahrt/Bestätigen).</summary>
+    // ------------------------------------------------------------------ Startauto beim Händler (Unity TDU2Interiors.EnterStarterDealer)
+    /// <summary>Gebrauchtwagenhändler mit den Startautos (Story-Schritt 7 / neues Konto): Wahl eines Autos = geschenkt, losfahren.</summary>
+    internal static List<CarPhysics>? StarterCars;
+    internal static Action<CarPhysics>? StarterChosen;
+    internal static bool ChoosingStarter => StarterCars != null;
+
+    internal static bool EnterStarterDealer(Spot s, List<CarPhysics> cars, Action<CarPhysics> chosen)
+    {
+        if (Vm == null || BnkDir == null) return false;
+        if (Inside) ExitInterior();
+        var b = Resolve(s);
+        if (!b.Valid)
+        {
+            Log.Error("Kein Interieur für Startauto: " + s.Code);
+            chosen?.Invoke(cars != null && cars.Count > 0 ? cars[0] : null!);
+            return false;
+        }
+        StarterCars = cars != null ? new List<CarPhysics>(cars) : new List<CarPhysics>();
+        StarterChosen = chosen;
+        _lastCar = null;
+        if (EnterSpot(s)) { GameMode.Set(RoomMode); return true; }
+        StarterCars = null; StarterChosen = null;
+        return false;
+    }
+
+    /// <summary>Startauto gewählt (Unity Activate): Rückruf, dann mit dem Auto hinaus.</summary>
+    static void ChooseStarter(CarPhysics car)
+    {
+        var cb = StarterChosen;
+        StarterCars = null; StarterChosen = null;
+        Log.Info("Startauto beim Händler gewählt: " + car.FileName);
+        cb?.Invoke(car);
+        ExitInterior(car);
+    }
+
     internal static bool EnterSpot(Spot s)
     {
         if (Vm == null || BnkDir == null) return false;
@@ -273,20 +423,31 @@ public abstract partial class InteriorUtils : GameModeHandler
             else if (code.Length > 4 && code.StartsWith("eph_"))
             {
                 string rest = code[4..];
-                b.Living = Bank("lph_" + rest); b.Garage = Bank("gph_" + rest); b.Kind = Kind.Living; b.Name = "Haus";
+                b.Living = Bank("lph_" + rest); 
+                b.Garage = Bank("gph_" + rest); 
+                b.Kind = Kind.Living; b.Name = "Haus";
             }
             else if (code.Length > 4 && code.StartsWith("ech_"))
             {
                 string rest = code[4..];
+
+                //ich_ia Stage 1
+                //ich_ib Stage 2
+                //ich_ib Stage 3
+
                 // Clubhaus (ECH_*): das Spiel lädt für ECH_IA "Interior/ich_ib.bnk" (TestDrive2Dev.exe)
                 b.Living = (rest == "ia" ? Bank("ich_ib") : null) ?? Bank("ich_" + rest);
-                b.Garage = Bank("gch_" + rest) ?? BankPrefix("gch_" + rest[..1]); b.Kind = Kind.Living; b.Name = "Club";
+                b.Garage = Bank("gch_" + rest) ?? BankPrefix("gch_" + rest[..1]); 
+                b.Kind = Kind.Living; 
+                b.Name = "Club";
                 b.IsClub = true;
+                GameMode.Push(Gamemode.GAME_MODE_CLUB);
             }
             else if (code.StartsWith("ecas") || (s.TypeA & 0xFF) == 21)
             {
                 b.Living = Bank("i" + code[1..]) ?? Bank("icashal"); b.Kind = Kind.Other; b.Name = "Casino";
                 b.IsCasino = true;
+                GameMode.Push(Gamemode.GAME_MODE_CASINO);
             }
             else if (code.StartsWith("estol"))
             {
@@ -345,7 +506,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         // während der Testfahrt ein Interieur betreten: Testfahrt endet, beim Verlassen kommt das eigene Auto (Unity AbortTestDriveOnEnter)
         if (GAME_MODE_TESTCAR.TestDriveActive) { var prev = GAME_MODE_TESTCAR._testPrev; GAME_MODE_TESTCAR.StopTestDrive(); _lastCar = prev; }
         else if (vm.Current != null) _lastCar = vm.Current.Car;
-        _lastCar ??= vm.FindCar(vm.StartCar) ?? (vm.Available.Count > 0 ? vm.Available[0] : null);
+        if (StarterCars == null) _lastCar ??= vm.FindCar(vm.StartCar) ?? (vm.Available.Count > 0 ? vm.Available[0] : null);
         vm.Despawn();
         _v.Suspended = true;
         _spot = s; _spotBanks = b;
@@ -356,9 +517,10 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Spot-Musik (Unity TDU2SpotAudio): Radio stumm, Musik des Spots aus sound/musics
         Paradise.Core.Audio.SpotMusic.Enter(s.Code, s.Index, BnkDir, _t.Streamer?.Index?.ExteriorDir);
         // Wie im Spiel: Haus und Club betritt man im Wohnbereich bzw. im Clubraum; die Garage erreicht man von dort.
-        if (b.Kind == Kind.Living && b.Living != null) LoadScene(b.Living, Kind.Living, null);
-        else if (b.Kind == Kind.Living && b.Garage != null) LoadScene(b.Garage, Kind.Garage, null);
-        else LoadScene((b.Living ?? b.Garage)!, b.Kind, null);
+        if (b.Kind == Kind.Living && b.Living != null) 
+            LoadScene(b.Living, Kind.Living, null);
+        else if (b.Kind == Kind.Living && b.Garage != null) 
+            LoadScene(b.Garage, Kind.Garage, null);
     }
 
     internal static void LoadScene(string bank, Kind kind, string? startCam)
@@ -366,7 +528,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         var st = _t.Streamer!;
         // Ladebildschirm (Tipp-Bild) bis die Szene steht
         // Ladebildschirm (Tipp-Bild, Speichern) bis Szene und Möbel stehen – der Aufbau soll nicht zu sehen sein
-        TDU2LoadingScreen.Show("Interieur " + Path.GetFileNameWithoutExtension(bank), () => !Inside || InteriorLoaded, 1.0f, true);
+        LoadingScreen.Show("Interieur " + Path.GetFileNameWithoutExtension(bank), () => !Inside || InteriorLoaded, 1.0f, true);
         ClearScene();
         _pendingBank = bank; _pendingKind = kind; _pendingStartCam = startCam;
         _sceneTask = Task.Run(() =>
@@ -384,7 +546,19 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (t.IsFaulted)
         {
             Log.Error("Interieur: " + t.Exception?.GetBaseException().Message);
-            if (_scene == null) ExitInterior();
+            if (_scene == null)
+            {
+                if (StarterCars != null && StarterCars.Count > 0)
+                {
+                    // Interieur fehlt: erstes Startauto nehmen (Unity PollScene)
+                    var first = StarterCars[0]; var cb = StarterChosen;
+                    StarterCars = null; StarterChosen = null;
+                    cb?.Invoke(first);
+                    _lastCar = first;
+                    ExitInterior(first);
+                }
+                else ExitInterior();
+            }
             return;
         }
         if (!Inside) { t.Result.model?.Release(); return; }
@@ -527,7 +701,8 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (vm == null || db == null) return;
         string island = _t.Streamer?.Index?.IslandName ?? "";
         var cars = new List<CarPhysics>();
-        if (_kind == Kind.Dealer)
+        if (_kind == Kind.Dealer && StarterCars != null) cars.AddRange(StarterCars);
+        else if (_kind == Kind.Dealer)
         {
             var shop = db.ShopForSpot(_spot!, island);
             if (shop != null)
@@ -535,7 +710,18 @@ public abstract partial class InteriorUtils : GameModeHandler
                     if (id != 0 && db.ById.TryGetValue(id, out var c)) { var av = vm.FindCar(c.FileName); if (av != null && !cars.Contains(av)) cars.Add(av); }
         }
         else if (_kind == Kind.StickerShop || _kind == Kind.Tuner) { if (_lastCar != null) cars.Add(_lastCar); }
-        else if (_kind == Kind.Garage && _spotBanks != null && _spotBanks.IsClub) { }   // Club-Garage: Autos der Clubmitglieder (nicht portiert)
+        else if (_kind == Kind.Garage && _spotBanks != null && _spotBanks.IsClub) 
+        {
+            var house = db.HouseForSpot(_spot!, island);
+            Log.Info("Clubcars: " + house.CarSlots);
+        }   // Club-Garage: Autos der Clubmitglieder (nicht portiert)
+        else if (_kind == Kind.Garage && GuestGarageCars != null)
+        {
+            // Gast im Haus eines Mitspielers: dessen Autos (aktuelles zuerst) statt der eigenen (Unity BuildCars)
+            foreach (var n in GuestGarageCars) { var c = vm.FindCar(n); if (c != null && !cars.Contains(c)) cars.Add(c); }
+            int max = data.CarSlots.Count;
+            if (cars.Count > max) cars.RemoveRange(max, cars.Count - max);
+        }
         else if (_kind == Kind.Garage)
         {
             // Stellplätze dieser Garage aus dem Spielstand (Original: Garage[] mit Haus + IndexInGarage; Platz wechseln tauscht dort).
@@ -624,7 +810,16 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (fwd.LengthSquared() < 1e-4f) fwd = Vector3.UnitZ;
         var model = CarModel.Build(a, r);
         // eigene Lackierung in Garage und Sticker-Shop (Unity BuildDisplayCar: TDU2LiveryView.ApplyOwn)
-        if (_kind == Kind.Garage || _kind == Kind.StickerShop || _kind == Kind.Tuner) LiveryView.ApplyOwn(model, a, a.Car.FileName);
+        if (_kind == Kind.Garage && GuestGarageCars != null)
+        {
+            // Gast: Lackierung/Beklebung des Gastgebers (aus seinem Spielstand, Unity BuildDisplayCar)
+            if (GuestLiveries != null && GuestLiveries.TryGetValue(a.Car.FileName, out var lv) && !string.IsNullOrEmpty(lv))
+            {
+                try { var l = CarLivery.Decode(Convert.FromBase64String(lv)); if (l != null) LiveryView.For(model, a, r)?.Show(l); }
+                catch (Exception ex) { Log.Warn("Gast-Garage: Lackierung " + a.Car.FileName + ": " + ex.Message); }
+            }
+        }
+        else if (_kind == Kind.Garage || _kind == Kind.StickerShop || _kind == Kind.Tuner) LiveryView.ApplyOwn(model, a, a.Car.FileName);
         // Garage: gespeicherte Verschmutzung der abgestellten Autos (SaveData.carDirt)
         if (_kind == Kind.Garage) CarDirt.ApplyTo(model, a.Car);
         // Teile mit unbrauchbarer Geometrie ausblenden (Unity: Renderer größer 7 x 4 x 9 m)
@@ -713,6 +908,8 @@ public abstract partial class InteriorUtils : GameModeHandler
         RenderFx.PlanarOn = _mirrorValid && _scene != null && _sceneTask == null;
         if (RenderFx.PlanarOn) RenderFx.PlanarY = st.GameToRender(new Vector3(_holder.Translation.X, _mirrorY, _holder.Translation.Z)).Y;
         if (_scene != null && _sceneTask == null) InteriorNpcs.Render(_holder * st.RootMatrix);
+        if (_scene != null && _sceneTask == null) GAME_MODE_LIVING.RenderLifePhoto(_holder * st.RootMatrix);   // MyTDULife: Avatar vor der Fotokamera
+        if (_scene != null && _sceneTask == null) Paradise.Game.Online.RoomAvatars.Render(_holder * st.RootMatrix);   // Mitspieler als Spielfigur
         if (_cars.Count == 0) return;
         // Unity: Reflexionssonde des Interieurs in der Mitte des Raums (statt der Würfelkarte der Bank: Echtzeit)
         RenderFx.ProbeOn = true;
@@ -1076,6 +1273,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         _t.Input.CursorLocked = false;
         _t.NearClip = 1f;
         _spot = null; _spotBanks = null; _sceneTask = null; _afterBuild = null;
+        GuestHost = 0; GAME_MODE_LIVING.GuestHouses = null; GuestGarageCars = null; GuestLiveries = null;
         Paradise.Core.World.WorldWeather.Inside = false;   // Unity SetInteriorAmbient(false)
         Paradise.Core.Audio.SpotMusic.Exit();
         _v.Suspended = false;
@@ -1088,7 +1286,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         fwd = Vector3.Normalize(fwd);
         car ??= _lastCar ?? (vm != null ? vm.FindCar(vm.StartCar) ?? (vm.Available.Count > 0 ? vm.Available[0] : null) : null);
         Log.Info($"Interieur verlassen {s.Code}, Auto: {car?.FileName ?? "-"}");
-        TDU2LoadingScreen.Show("Welt (" + s.Code + ")", () => Inside || (vm?.Current != null), 1.0f, true);
+        LoadingScreen.Show("Welt (" + s.Code + ")", () => Inside || (vm?.Current != null), 1.0f, true);
         if (car != null && vm != null)
         {
             _lastCar = car;
@@ -1101,7 +1299,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     /// Interieur verlassen, ohne das Auto am Spot zu setzen (Flug: IslandTravel setzt es erst auf der Zielinsel – sonst endete der
     /// Ladebildschirm "Welt" sofort am Abflugort und der des Inselwechsels kam nicht mehr).
     /// </summary>
-    internal static void LeaveForTravel()
+    internal static void LeaveForTravel(string why = "Flug")
     {
         var s = _spot;
         ClearScene();
@@ -1109,11 +1307,12 @@ public abstract partial class InteriorUtils : GameModeHandler
         _t.Input.CursorLocked = false;
         _t.NearClip = 1f;
         _spot = null; _spotBanks = null; _sceneTask = null; _afterBuild = null;
+        GuestHost = 0; GAME_MODE_LIVING.GuestHouses = null; GuestGarageCars = null; GuestLiveries = null;
         Paradise.Core.World.WorldWeather.Inside = false;
         Paradise.Core.Audio.SpotMusic.Exit();
         _v.Suspended = false;
         _nextScan = _time + 2f;
-        Log.Info($"Interieur verlassen {s?.Code} (Flug), Auto beim Inselwechsel: {_lastCar?.FileName ?? "-"}");
+        Log.Info($"Interieur verlassen {s?.Code} ({why}), eigenes Auto: {_lastCar?.FileName ?? "-"}");
     }
 
     // ------------------------------------------------------------------ Drinnen (Unity UpdateInside)
@@ -1157,7 +1356,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             return Inside;
         }   // Tasten, Platzieren, Kamera: der Shop
         if (!paused) UpdateBackWatch();   // Zurück-Überwachung (Unity TDU2MenuFlow), für alle Interieur-Menüs
-        if (!paused && GAME_MODE_LIVING.UpdateHomeMenus(dt)) { ApplyCamera(); return Inside; }
+        if (!paused && GAME_MODE_LIVING.UpdateHomeMenus(dt)) { if (!GAME_MODE_LIVING.LifePhotoActive) ApplyCamera(); return Inside; }   // Foto: Kamera gehört dem Sucher
         if (_dealerMenu && !paused)
         {
             // Autohändler/Garage: Mini-Menü, Daten, Vergleichen, Einsteigen. Ein Fehler darf das Spiel nicht im Menü festhalten
@@ -1229,7 +1428,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             }
         }
         // Händler/Garage: Fahrzeugmenü der Hilfeleiste (Steuerkreuz unten links): Num4/Num6 Tür links/rechts, Num8/Num2 Fenster hoch/runter
-        if (_aimTarget is DisplayCar ac && (_kind == Kind.Dealer || _kind == Kind.Garage)) CarPad(CarAccessories.For(ac.Model));
+        if (_aimTarget is DisplayCar ac && (_kind == Kind.Dealer || _kind == Kind.Garage) && CarPad(CarAccessories.For(ac.Model))) _netCar = ac;
         // Rücktaste im Laufmodus: Fahrzeugdaten/Vergleich ausblenden, bis ein anderes Ziel anvisiert wird
         if (TDU2Controls.KeyPressed(0x08) && _uiAim is DisplayCar && _ui != null)
         {
@@ -1276,15 +1475,17 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) return true;
         if (s.Type == 5) return _spotBanks?.Garage != null && _kind != Kind.Garage;
         if (s.Type == 6) return _spotBanks?.Living != null && _kind != Kind.Living;
-        if (s.Type == 9) return true;   // Tagebuch / My House (Unity: nur der Besitzer – Gäste gibt es hier nicht)
+        if (s.Type == 9) return GuestHost == 0;   // Tagebuch / My House nur für den Besitzer, nicht für eingeladene Gäste
         return true;
     }
 
     internal static void Activate(object target)
     {
+        if (target is DisplayCar sdc && _kind == Kind.Dealer && StarterCars != null) { ChooseStarter(sdc.Car); return; }
         if (target is DisplayCar dc)
         {
             // Autohändler/Garage: Original-Menü des Films (Garage: Losfahren, Einsteigen, Daten, Vergleichen)
+            if (_kind == Kind.Garage && GuestGarageCars != null) { Log.Info("Gast-Garage: das Auto gehört dem Gastgeber"); return; }   // Unity Activate
             if ((_kind == Kind.Dealer || _kind == Kind.Garage) && OpenDealerMenu(dc)) return;
             if (_kind == Kind.StickerShop && GAME_MODE_STICKERS.OpenShop(dc)) return;   // Unity: Klick aufs Auto öffnet den Sticker-Shop
             if (_kind == Kind.Tuner && GAME_MODE_TUNER.Open(dc)) return;               // Tuner: Klick aufs eigene Auto öffnet das Tuner-Menü
@@ -1294,7 +1495,12 @@ public abstract partial class InteriorUtils : GameModeHandler
         }
         if (target is not InteriorScene.Selectable s) return;
         string n = s.Name ?? "";
-        if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) { ExitInterior(_lastCar); return; }
+        if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase))
+        {
+            if (StarterCars != null) { Log.Info("Startauto: zuerst eines der Autos wählen"); return; }   // Unity: erst ein Auto aussuchen
+            ExitInterior(_lastCar);
+            return;
+        }
         Log.Debug("Hotspot " + s.Name + " Typ " + s.Type + " in " + _kind);
         switch (s.Type)
         {
@@ -1302,13 +1508,14 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 5 when _spotBanks?.Garage != null: LoadScene(_spotBanks.Garage, Kind.Garage, null); break;
             case 6 when _spotBanks?.Living != null: LoadScene(_spotBanks.Living, Kind.Living, "cam_entree_garage"); break;
             case 54 when _spotBanks?.Living != null: LoadScene(_spotBanks.Living, Kind.Living, null); break;
-            case 9 when _ui != null: GAME_MODE_LIVING.OpenDiary(); break;       // Tagebuch (home.vmf diary_in): MyTDULife, My House
+            case 9 when _ui != null && GuestHost == 0: GAME_MODE_LIVING.OpenDiary(); break;       // Tagebuch (home.vmf diary_in): MyTDULife, My House
             case 57: GAME_MODE_LIVING.OpenMedia(); break;                       // Fernseher: TDU Media (tdmedia.bnk)
             case 12 or 14 when _kind == Kind.Garage: GAME_MODE_GARAGE.OpenGarageList(); break;   // Plakat: Fahrzeugliste (home.vmf garage "list")
             case 22 when GAME_MODE_GOODIES.Open(): break;                         // Verkäuferin (Seller_area) im Kleidungsladen: shopsavatar.vmf "clothes_shop"
             case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
             case 28 when _kind == Kind.StickerShop: GAME_MODE_STICKERS.OpenShop(null); break;   // Verkäuferin (StickersShop_area)
             case 29: GAME_MODE_HAIRDRESSER.Open(); break;
+            case 20 when GAME_MODE_SCHOOL.OpenFromInstructor(): break;          // Instruktor der Rennschule (ERS_*): r_school.bnk + Prüfungsauswahl
             case 32 when _kind == Kind.Airport: GAME_MODE_AIRPORT.TalkToHostess(); break;   // Hostess: airport.vmf ItemType -> camn, "ai_open"                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
             default:
                 if (_kind == Kind.Tuner && GAME_MODE_TUNER.Open()) break;          // Tuner (npc_tuner) angesprochen: Tuner-Menü

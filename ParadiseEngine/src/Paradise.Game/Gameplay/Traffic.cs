@@ -24,7 +24,11 @@ namespace Paradise.Game.Gameplay;
 ///   * Physik: nahe Autos sind kinematische Körper (der Spieler stößt an), bei einem Aufprall fallen sie aus der KI (loser Körper
 ///     mit Schwerkraft, Warnblinker), danach fädeln sie wieder ein.
 /// Spielraum = Unity-Inselkoordinaten (MapRoot); gezeichnet wie das eigene Auto (CarModel, Lage im Spielraum).
-/// Nicht portiert (Engine ohne Mehrspieler): Abgleich der Autos zwischen Spielern (Unity TDU2Multiplayer-Pakete).
+/// Mehrspieler (Unity TDU2Traffic): jedes Auto gehört genau einem Spieler (der es simuliert); die anderen sehen es interpoliert.
+///   * Spawnen nur in der eigenen Zone (näher an mir als an jedem Mitspieler), Dichte zählt alle Autos.
+///   * Entfernt sich der Besitzer, wird das Auto an den nächsten Spieler übergeben (Epoche + 1), sonst entfernt.
+///   * Wer ein fremdes Auto rammt, übernimmt es (Unfallphysik beim Verursacher). Verschwindet ein Besitzer, übernimmt der Nächste.
+/// Paket (Online/Multiplayer.SendTraffic): [ver 1][Insel][u32 Zeit ms][u8 Anzahl][0] + je Auto 54 Byte (siehe WriteCar).
 /// </summary>
 public sealed class Traffic : IDisposable
 {
@@ -34,9 +38,11 @@ public sealed class Traffic : IDisposable
         public Task<CarAssets>? Load; public CarAssets? Assets; public bool Failed;
     }
 
+    struct Snap { public double T; public Vector3 P, F, U, V; public float Steer; public byte Flags; }
+
     sealed class Car
     {
-        public uint Id;
+        public uint Id; public int Owner; public byte Epoch; public bool Mine = true;
         public TypeInfo Type = null!; public int Color;
         public LaneTrack? Lane, Next; public JunctionTrack? Junction; public int Phase;   // 0 Spur, 1 Kreuzung/Kreisel
         public float S, V, Accel, SpeedFactor = 1f, WaitT, StuckT;
@@ -58,7 +64,21 @@ public sealed class Traffic : IDisposable
         // Physik
         public BodyHandle? Kin, Loose;
         public bool Removed;
+        // Fernsteuerung (Auto eines Mitspielers)
+        public readonly List<Snap> Snaps = new();
+        public float LastPacket; public int Sender;
+        public bool HasVis; public Vector3 RVisPos, RVisVel; public Quaternion RVisRot = Quaternion.Identity;
+        public int HandoffSends, RemoveSends;
+        // Pfad-Info des letzten Pakets (für die Übernahme)
+        public int NetRoad, NetLane, NetNextRoad, NetNextLane, NetMode; public bool NetFwd, NetNextFwd; public float NetS;
     }
+
+    sealed class SenderClock { public readonly Queue<double> Lag = new(); public double Offset, Jitter; }
+    readonly Dictionary<int, SenderClock> _clocks = new();
+    int _myPid = -1;
+    byte _islandCode;
+    ushort _idSalt;
+    float _nextSend;
 
     readonly IRenderer _r;
     readonly TerrainModule _terrain;
@@ -96,6 +116,8 @@ public sealed class Traffic : IDisposable
         if (_loadedIsland == island && ReferenceEquals(_world, _terrain.Physics) && (_load != null || _lanes != null)) return;
         ClearAll();
         _loadedIsland = island;
+        _islandCode = (byte)(island.ToLowerInvariant().StartsWith("haw") ? 2 : island.ToLowerInvariant().StartsWith("cas") ? 3 : 1);
+        _idSalt = (ushort)_rng.Next(1, 65535);
         _world = _terrain.Physics;
         var idx = st.Index; var db = vm.Database; string bnk = vm.BnkDir;
         _status = "lade Verkehrsnetz …";
@@ -265,13 +287,23 @@ public sealed class Traffic : IDisposable
         PollTypes();
         if (_lanes == null) return;
         CollectMe(vm);
+        // Spielernummer gewechselt (An-/Abmelden): eigene Autos umschreiben
+        int pid = Paradise.Core.Online.TDU2Session.LoggedIn ? Paradise.Core.Online.TDU2Session.PlayerId : 0;
+        if (pid != _myPid)
+        {
+            _myPid = pid;
+            foreach (var c in _cars.Values) if (c.Mine) { c.Owner = pid; c.Epoch++; }
+        }
+        ReceiveNet();
         if (_clock >= _nextPopulation)
         {
             _nextPopulation = _clock + 0.25f;
             Population(spawn && _meDriving);
         }
         BuildVisuals();
+        UpdateRemoteCars(dt);
         UpdateVisuals(vm, dt);
+        SendNet();
     }
 
     void CollectMe(VehicleManager vm)
@@ -292,6 +324,38 @@ public sealed class Traffic : IDisposable
         }
         else if (s != null && cam != null && !_terrain.MapView) { _me = _cam; _hasMe = true; }
         else _hasMe = false;
+        CollectPlayers();
+    }
+
+    // ------------------------------------------------------------------ Positionen der Mitspieler (Spielraum)
+    readonly List<(int pid, Vector3 pos)> _players = new();
+
+    void CollectPlayers()
+    {
+        _players.Clear();
+        if (!Paradise.Core.Online.TDU2Session.LoggedIn) return;
+        float timeout = OnlineConfig.Timeout + 1f;
+        foreach (var p in Paradise.Game.Online.TDU2GameData.Players.Values)
+        {
+            if (p.Id == _myPid || !p.HasPos || !p.InCar) continue;
+            if (Paradise.Game.Online.Multiplayer.FrameClock - p.LastUpdate > timeout) continue;
+            _players.Add((p.Id, p.GamePos));
+        }
+    }
+
+    bool PlayerActive(int pid)
+    {
+        if (pid == _myPid) return true;
+        foreach (var p in _players) if (p.pid == pid) return true;
+        return false;
+    }
+
+    bool IAmNearest(Vector3 p)
+    {
+        if (!_hasMe) return false;
+        float d = Flat(p, _me);
+        foreach (var o in _players) if (o.pid != _myPid && Flat(p, o.pos) < d) return false;
+        return true;
     }
 
     static float Flat(Vector3 a, Vector3 b) { float dx = a.X - b.X, dz = a.Z - b.Z; return MathF.Sqrt(dx * dx + dz * dz); }
@@ -315,11 +379,33 @@ public sealed class Traffic : IDisposable
         _remove.Clear();
         foreach (var c in _cars.Values)
         {
-            float dMe = _hasMe ? Flat(c.Pos, _me) : 0f;
-            bool parkedLong = c.Mode == 2 && c.ModeT > 60f && dMe > 120f && !Visible(c.Pos);
-            bool deadEnd = c.DeadEnd && c.V < 0.2f && !Visible(c.Pos) && dMe > 60f;
-            bool stuck = c.StuckT > 45f && !Visible(c.Pos) && dMe > 60f;
-            if (dMe > TrafficConfig.DespawnDistance || parkedLong || deadEnd || stuck) _remove.Add(c.Id);
+            if (c.Mine)
+            {
+                if (c.Removed) { if (c.RemoveSends <= 0) _remove.Add(c.Id); continue; }
+                float dMe = _hasMe ? Flat(c.Pos, _me) : 0f;
+                bool parkedLong = c.Mode == 2 && c.ModeT > 60f && dMe > 120f && !Visible(c.Pos);
+                bool deadEnd = c.DeadEnd && c.V < 0.2f && !Visible(c.Pos) && dMe > 60f;
+                bool stuck = c.StuckT > 45f && !Visible(c.Pos) && dMe > 60f;
+                if (dMe > TrafficConfig.DespawnDistance || parkedLong || deadEnd || stuck)
+                {
+                    // nächster Mitspieler in Reichweite übernimmt
+                    int best = -1; float bd = TrafficConfig.DespawnDistance;
+                    if (!parkedLong && !deadEnd && !stuck)
+                        foreach (var p in _players) { float d = Flat(c.Pos, p.pos); if (d < bd) { bd = d; best = p.pid; } }
+                    if (best > 0) Handoff(c, best);
+                    else Remove(c);
+                }
+            }
+            else
+            {
+                if (c.HandoffSends > 0) continue;
+                // Besitzer weg oder keine Pakete mehr
+                if (_clock - c.LastPacket > 2.5f)
+                {
+                    if (!PlayerActive(c.Owner) && IAmNearest(c.Pos)) Claim(c);
+                    else _remove.Add(c.Id);
+                }
+            }
         }
         foreach (var id in _remove) if (_cars.TryGetValue(id, out var c)) { DestroyVisual(c); _cars.Remove(id); }
 
@@ -363,13 +449,18 @@ public sealed class Traffic : IDisposable
         lane.Sample(s, out var p, out var t);
         float d = Flat(p, _me);
         if (d < rMin || d > TrafficConfig.SpawnMax) return false;
+        // eigene Zone: näher an mir als an jedem Mitspieler, und nicht vor deren Augen
+        foreach (var o in _players) { float od = Flat(p, o.pos); if (od < d || od < 160f) return false; }
         if (!fill || d < 120f) { if (d < 320f && Visible(p)) return false; }
         foreach (var c in _cars.Values) if (!c.Removed && (c.Pos - p).LengthSquared() < 28f * 28f) return false;
         var ti = PickType();
         if (ti == null) return false;
         var car = new Car
         {
-            Id = ++_idCounter,
+            Id = ((uint)_idSalt << 16) | (++_idCounter & 0xFFFF),
+            Owner = _myPid,
+            Epoch = 0,
+            Mine = true,
             Type = ti,
             Color = _paints.Count > 0 ? _rng.Next(_paints.Count) : 0,
             Lane = lane,
@@ -453,10 +544,19 @@ public sealed class Traffic : IDisposable
     {
         _obs.Clear();
         foreach (var c in _cars.Values)
-            if (!c.Removed) _obs.Add(new Obstacle { P = c.Pos, V = c.Vel, F = c.Fwd, HalfLen = c.HalfLen, HalfWidth = c.HalfWidth, Car = c });
+        {
+            if (c.Removed) continue;
+            if (c.Mine) _obs.Add(new Obstacle { P = c.Pos, V = c.Vel, F = c.Fwd, HalfLen = c.HalfLen, HalfWidth = c.HalfWidth, Car = c });
+            else if (c.HasVis) _obs.Add(new Obstacle { P = c.RVisPos, V = c.RVisVel, F = c.Fwd, HalfLen = c.HalfLen, HalfWidth = c.HalfWidth, Car = c });
+        }
         if (_meDriving)
             _obs.Add(new Obstacle { P = _me, V = _meVel, F = _meFwd, HalfLen = _meHalfLen, HalfWidth = _meHalfWidth, Player = true });
+        // Autos der Mitspieler (Unity _mp.RemoteVehicles)
+        Paradise.Game.Online.RemoteCars.RemoteVehicles(_remoteVeh);
+        foreach (var r in _remoteVeh) _obs.Add(new Obstacle { P = r.pos, V = r.vel, F = r.fwd, HalfLen = r.halfLength, HalfWidth = 0.95f, Player = true });
     }
+
+    readonly List<(int id, Vector3 pos, Vector3 vel, Vector3 fwd, float halfLength)> _remoteVeh = new();
 
     /// <summary>Muss das Auto vor dem Knoten warten? Kreisverkehr: Autos auf dem Ring, die auf die Einfahrt zukommen, haben Vorfahrt.</summary>
     bool NeedYield(Car c, float dEnd)
@@ -691,6 +791,14 @@ public sealed class Traffic : IDisposable
         foreach (var c in _cars.Values)
         {
             if (c.Removed) continue;
+            if (!c.Mine)
+            {
+                // fremdes Auto: kinematischer Körper folgt der Darstellung; rammt der Spieler es, übernimmt er es (Unity OnCarCollision)
+                c.HasPrev = false; c.VisOffset = Vector3.Zero;
+                DriveBody(c, dt);
+                CheckHit(c);
+                continue;
+            }
             c.PrevPos = c.Pos + c.VisOffset; c.PrevFwd = c.Fwd; c.PrevUp = c.Up; c.HasPrev = true;
             c.ModeT += dt;
             if (c.Mode == 0)
@@ -815,7 +923,14 @@ public sealed class Traffic : IDisposable
         var rel = _meVel - c.Vel; rel.Y = 0f;
         if (rel.Length() < TrafficConfig.CrashSpeed) return;
         float m1 = 1400f, m2 = MathF.Max(300f, c.Type.Car.Mass);
-        Crash(c, c.Vel + (_meVel - c.Vel) * (m1 / (m1 + m2)) * 1.3f);
+        var est = c.Vel + (_meVel - c.Vel) * (m1 / (m1 + m2)) * 1.3f;
+        if (!c.Mine)
+        {
+            // fremdes Auto gerammt: übernehmen, Unfall bei mir berechnen
+            Claim(c);
+            c.VisOffset = Vector3.Zero;
+        }
+        Crash(c, est);
     }
 
     static bool Overlap(Vector3 pa, Vector3 fa, float la, float wa, Vector3 pb, Vector3 fb, float lb, float wb)
@@ -872,6 +987,322 @@ public sealed class Traffic : IDisposable
         if (c.Loose is BodyHandle h && _world != null) _world.RemoveBody(h);
         c.Loose = null;
     }
+
+    // ------------------------------------------------------------------ Mehrspieler: Entfernen, Übergeben, Übernehmen (Unity TDU2Traffic)
+    void Remove(Car c)
+    {
+        c.Removed = true;
+        c.RemoveSends = TrafficConfig.Sync && Paradise.Game.Online.Multiplayer.CanSend && _players.Count > 0 ? 3 : 0;
+        DestroyVisual(c);
+    }
+
+    void Handoff(Car c, int pid)
+    {
+        c.Owner = pid; c.Epoch++; c.Mine = false; c.HandoffSends = 4;
+        c.Snaps.Clear();
+        c.LastPacket = _clock;
+        SeedSnap(c);
+        RemoveLoose(c);
+        if (c.Mode != 0) { c.Mode = 0; }
+    }
+
+    /// <summary>Übernehmen (Besitzer weg oder ich habe es gerammt): Simulation aus dem letzten Zustand starten.</summary>
+    void Claim(Car c)
+    {
+        c.Owner = _myPid; c.Epoch++; c.Mine = true; c.HandoffSends = 0;
+        InitSimFromNet(c);
+    }
+
+    void InitSimFromNet(Car c)
+    {
+        var oldVis = c.HasVis ? c.RVisPos : c.Pos;
+        if (c.Snaps.Count > 0) { var s = c.Snaps[^1]; c.Pos = s.P; c.Fwd = s.F; c.Up = s.U; c.Vel = s.V; }
+        c.Mine = true;
+        c.Phase = 0; c.Junction = null; c.Next = null; c.Lane = null;
+        if ((c.NetMode == 0 || c.NetMode == 1) && _lanes != null)
+        {
+            var lane = _lanes.Lane(c.NetRoad, c.NetFwd, c.NetLane);
+            if (lane != null)
+            {
+                c.Lane = lane; c.S = c.NetS; c.Mode = 0;
+                if (c.NetMode == 1)
+                {
+                    var next = _lanes.Lane(c.NetNextRoad, c.NetNextFwd, c.NetNextLane);
+                    var j = _lanes.Junction(lane, next);
+                    if (j != null) { c.Next = next; c.Junction = j; c.Phase = 1; }
+                    else c.S = lane.Length;
+                }
+                if (c.Phase == 0) ChooseNext(c);
+                c.V = new Vector3(c.Vel.X, 0f, c.Vel.Z).Length();
+            }
+            else c.Mode = 2;
+        }
+        else c.Mode = 2;
+        if (c.Mode == 2) { c.ModeT = 0f; c.V = 0f; }
+        c.Snaps.Clear();
+        ComputePose(c, 0f);
+        c.HasPrev = false;
+        c.VisOffset = oldVis - c.Pos;
+        if (c.VisOffset.LengthSquared() > 15f * 15f) c.VisOffset = Vector3.Zero;
+    }
+
+    // ------------------------------------------------------------------ fremde Autos (Interpolation)
+    void UpdateRemoteCars(float dt)
+    {
+        double now = Paradise.Game.Online.Multiplayer.Clock;
+        dt = MathF.Max(1e-4f, dt);
+        foreach (var c in _cars.Values)
+        {
+            if (c.Mine || c.Removed) continue;
+            if (!SampleRemote(c, now, out var s)) continue;
+            if (!c.HasVis || (s.P - c.RVisPos).LengthSquared() > 20f * 20f) { c.RVisPos = s.P; c.RVisVel = s.V; c.HasVis = true; c.RVisRot = RotGame(s.F, s.U); }
+            else
+            {
+                var predicted = c.RVisPos + c.RVisVel * dt;
+                var err = predicted - s.P;
+                var np = s.P + err * MathF.Exp(-dt * 10f);
+                c.RVisVel = (np - c.RVisPos) / dt;
+                c.RVisPos = np;
+                var rot = RotGame(s.F, s.U);
+                float dot = MathF.Abs(Quaternion.Dot(c.RVisRot, rot));
+                c.RVisRot = dot < 0.866f ? rot : Quaternion.Normalize(Quaternion.Slerp(c.RVisRot, rot, 1f - MathF.Exp(-dt * 15f)));   // > 60° direkt
+            }
+            c.Pos = c.RVisPos; c.Fwd = s.F; c.Up = s.U; c.Steer = s.Steer; c.Vel = c.RVisVel;
+            c.V = new Vector3(c.RVisVel.X, 0f, c.RVisVel.Z).Length();
+            c.Brake = (s.Flags & 2) != 0; c.Hazard = (s.Flags & 4) != 0; c.IndL = (s.Flags & 8) != 0; c.IndR = (s.Flags & 16) != 0;
+            if (c.Loose != null) RemoveLoose(c);
+            c.Mode = 0;
+        }
+    }
+
+    bool SampleRemote(Car c, double now, out Snap s)
+    {
+        s = default;
+        if (c.Snaps.Count == 0) return false;
+        double off = 0, jit = 0;
+        if (c.Sender != 0 && _clocks.TryGetValue(c.Sender, out var clk)) { off = clk.Offset; jit = clk.Jitter; }
+        double delay = System.Math.Clamp(0.08 + jit * 2.5 + 1.0 / MathF.Max(2f, TrafficConfig.SendRate), 0.1, 0.6);
+        double t = now - off - delay;
+        var snaps = c.Snaps;
+        if (t <= snaps[0].T) { s = snaps[0]; return true; }
+        for (int i = snaps.Count - 1; i > 0; i--)
+        {
+            var a = snaps[i - 1]; var b = snaps[i];
+            if (t < a.T || t > b.T) continue;
+            double span = System.Math.Max(1e-4, b.T - a.T);
+            float k = (float)((t - a.T) / span), h = (float)span;
+            s = b;
+            if ((b.P - a.P).LengthSquared() > 25f * 25f) return true;
+            float k2 = k * k, k3 = k2 * k;
+            s.P = (2 * k3 - 3 * k2 + 1) * a.P + (k3 - 2 * k2 + k) * h * a.V + (-2 * k3 + 3 * k2) * b.P + (k3 - k2) * h * b.V;
+            s.V = Vector3.Lerp(a.V, b.V, k);
+            s.F = Slerp(a.F, b.F, k);
+            s.U = Slerp(a.U, b.U, k);
+            s.Steer = a.Steer + (b.Steer - a.Steer) * k;
+            return true;
+        }
+        s = snaps[^1];
+        s.P += s.V * (float)System.Math.Clamp(t - s.T, 0.0, 0.6);
+        return true;
+    }
+
+    /// <summary>Unity Vector3.Slerp für Richtungen (Winkel und Länge interpoliert).</summary>
+    static Vector3 Slerp(Vector3 a, Vector3 b, float t)
+    {
+        float la = a.Length(), lb = b.Length();
+        if (la < 1e-6f || lb < 1e-6f) return Vector3.Lerp(a, b, t);
+        var na = a / la; var nb = b / lb;
+        float dot = System.Math.Clamp(Vector3.Dot(na, nb), -1f, 1f);
+        float ang = MathF.Acos(dot);
+        Vector3 dir;
+        if (ang < 1e-4f) dir = Vector3.Normalize(Vector3.Lerp(na, nb, t));
+        else dir = (MathF.Sin((1f - t) * ang) * na + MathF.Sin(t * ang) * nb) / MathF.Sin(ang);
+        return dir * (la + (lb - la) * t);
+    }
+
+    /// <summary>Nach einer Übergabe: aktuellen Zustand als ersten Stützpunkt (bis die Pakete des neuen Besitzers kommen).</summary>
+    void SeedSnap(Car c)
+    {
+        double now = Paradise.Game.Online.Multiplayer.Clock;
+        c.Sender = 0;
+        c.Snaps.Add(new Snap { T = now, P = c.Pos, F = c.Fwd, U = c.Up, V = c.Vel, Steer = c.Steer });
+        c.RVisPos = c.Pos; c.RVisVel = c.Vel; c.HasVis = true; c.RVisRot = RotGame(c.Fwd, c.Up);
+    }
+
+    // ------------------------------------------------------------------ Netz
+    const int CarSize = 54, MaxPerPacket = 20;
+    readonly byte[] _pkt = new byte[8 + CarSize * MaxPerPacket];
+    readonly List<Car> _send = new();
+
+    void SendNet()
+    {
+        if (!TrafficConfig.Sync || !Paradise.Game.Online.Multiplayer.CanSend || _clock < _nextSend) return;
+        _nextSend = _clock + 1f / MathF.Max(1f, TrafficConfig.SendRate);
+        if (_players.Count == 0)
+        {
+            // niemand da: übergebene/entfernte Autos trotzdem abschließen
+            foreach (var c in _cars.Values) { if (c.HandoffSends > 0) c.HandoffSends = 0; if (c.RemoveSends > 0) c.RemoveSends = 0; }
+            return;
+        }
+        _send.Clear();
+        foreach (var c in _cars.Values)
+        {
+            bool relevant = false;
+            if (c.Mine || c.HandoffSends > 0 || c.RemoveSends > 0)
+                foreach (var p in _players) if (Flat(c.Pos, p.pos) < TrafficConfig.RelevantDistance) { relevant = true; break; }
+            if (c.HandoffSends > 0 || c.RemoveSends > 0) relevant = true;
+            if (relevant) _send.Add(c);
+        }
+        uint time = (uint)(Paradise.Game.Online.Multiplayer.Clock * 1000.0);
+        for (int i = 0; i < _send.Count; i += MaxPerPacket)
+        {
+            int n = System.Math.Min(MaxPerPacket, _send.Count - i);
+            var b = _pkt;
+            b[0] = 1; b[1] = _islandCode; WriteU32(b, 2, time); b[6] = (byte)n; b[7] = 0;
+            int o = 8;
+            for (int k = 0; k < n; k++, o += CarSize) WriteCar(b, o, _send[i + k]);
+            Paradise.Game.Online.Multiplayer.SendTraffic(b, o);
+        }
+        foreach (var c in _send)
+        {
+            if (c.HandoffSends > 0) c.HandoffSends--;
+            if (c.RemoveSends > 0) c.RemoveSends--;
+        }
+    }
+
+    /// <summary>
+    /// Auto (54 Byte): +0 u32 Id, +4 u16 Besitzer, +6 u8 Epoche, +7 u8 Flags (1 entfernt, 2 Bremse, 4 Warnblinker, 8 Blinker l, 16 Blinker r),
+    /// +8 u16 DB-Id, +10 u8 Lack, +11 i8 Lenkwinkel, +12 f32×3 Position, +24 i16×3 Richtung, +30 i16×3 Oben, +36 i16×3 Geschw. (cm/s),
+    /// +42 u16 Straße, +44 u8 Spur|Richtung(0x80), +45 u8 Modus (0 Spur, 1 Kreuzung, 2 Unfall/steht), +46 u16 nächste Straße,
+    /// +48 u8 nächste Spur|Richtung, +49 u8 Tempofaktor×100, +50 f32 Weg auf Spur/Kreuzung (Unity WriteCar).
+    /// </summary>
+    static void WriteCar(byte[] b, int o, Car c)
+    {
+        WriteU32(b, o, c.Id);
+        b[o + 4] = (byte)c.Owner; b[o + 5] = (byte)(c.Owner >> 8);
+        b[o + 6] = c.Epoch;
+        byte fl = 0;
+        if (c.Removed) fl |= 1;
+        if (c.Brake) fl |= 2;
+        if (c.Hazard) fl |= 4;
+        if (c.IndL) fl |= 8;
+        if (c.IndR) fl |= 16;
+        b[o + 7] = fl;
+        b[o + 8] = (byte)c.Type.DbId; b[o + 9] = (byte)(c.Type.DbId >> 8);
+        b[o + 10] = (byte)c.Color;
+        b[o + 11] = (byte)(sbyte)System.Math.Clamp((int)MathF.Round(c.Steer), -127, 127);
+        var p = c.Pos + (c.Mine ? c.VisOffset : Vector3.Zero);
+        WriteF(b, o + 12, p.X); WriteF(b, o + 16, p.Y); WriteF(b, o + 20, p.Z);
+        WriteDir(b, o + 24, c.Fwd); WriteDir(b, o + 30, c.Up);
+        WriteI16(b, o + 36, c.Vel.X * 100f); WriteI16(b, o + 38, c.Vel.Y * 100f); WriteI16(b, o + 40, c.Vel.Z * 100f);
+        int mode = c.Mode != 0 ? 2 : c.Phase;
+        var lane = c.Lane; var next = c.Next;
+        int road = lane != null ? lane.RoadId : 0, nroad = next != null ? next.RoadId : 0;
+        b[o + 42] = (byte)road; b[o + 43] = (byte)(road >> 8);
+        b[o + 44] = (byte)((lane != null ? lane.Lane & 0x7F : 0) | (lane != null && lane.Forward ? 0x80 : 0));
+        b[o + 45] = (byte)mode;
+        b[o + 46] = (byte)nroad; b[o + 47] = (byte)(nroad >> 8);
+        b[o + 48] = (byte)((next != null ? next.Lane & 0x7F : 0) | (next != null && next.Forward ? 0x80 : 0));
+        b[o + 49] = (byte)System.Math.Clamp((int)MathF.Round(c.SpeedFactor * 100f), 0, 255);
+        WriteF(b, o + 50, c.S);
+    }
+
+    void ReceiveNet()
+    {
+        while (Paradise.Game.Online.Multiplayer.TrafficInbox.TryDequeue(out var pk))
+        {
+            var d = pk.data;
+            if (d.Length < 11) continue;
+            int sender = d[1] | (d[2] << 8);
+            if (sender == _myPid || d[3] != 1 || d[4] != _islandCode) continue;
+            double sendT = BitConverter.ToUInt32(d, 5) / 1000.0;
+            int n = d[9];
+            if (d.Length < 11 + n * CarSize) continue;
+            // Uhrversatz je Absender (kleinster Laufzeitunterschied der letzten Pakete)
+            if (!_clocks.TryGetValue(sender, out var clk)) _clocks[sender] = clk = new SenderClock();
+            double lag = pk.t - sendT;
+            clk.Lag.Enqueue(lag);
+            while (clk.Lag.Count > 40) clk.Lag.Dequeue();
+            double min = double.MaxValue; foreach (var l in clk.Lag) if (l < min) min = l;
+            clk.Offset = min; clk.Jitter = clk.Jitter * 0.9 + (lag - min) * 0.1;
+            for (int k = 0; k < n; k++) ReadCar(d, 11 + k * CarSize, sender, sendT);
+        }
+    }
+
+    static bool Newer(byte a, byte b) { int diff = (byte)(a - b); return diff > 0 && diff < 128; }
+
+    void ReadCar(byte[] d, int o, int sender, double sendT)
+    {
+        uint id = BitConverter.ToUInt32(d, o);
+        int owner = d[o + 4] | (d[o + 5] << 8);
+        byte epoch = d[o + 6], fl = d[o + 7];
+        int dbId = d[o + 8] | (d[o + 9] << 8);
+        var snap = new Snap
+        {
+            T = sendT,
+            Flags = fl,
+            Steer = (sbyte)d[o + 11],
+            P = new Vector3(BitConverter.ToSingle(d, o + 12), BitConverter.ToSingle(d, o + 16), BitConverter.ToSingle(d, o + 20)),
+            F = ReadDir(d, o + 24),
+            U = ReadDir(d, o + 30),
+            V = new Vector3(BitConverter.ToInt16(d, o + 36), BitConverter.ToInt16(d, o + 38), BitConverter.ToInt16(d, o + 40)) * 0.01f,
+        };
+        _cars.TryGetValue(id, out var c);
+        if ((fl & 1) != 0)
+        {
+            if (c != null && !c.Mine && !Newer(c.Epoch, epoch)) { DestroyVisual(c); _cars.Remove(id); }
+            return;
+        }
+        if (c == null)
+        {
+            if (!_types.TryGetValue(dbId, out var ti) || ti.Failed) return;
+            if (_hasMe && Flat(snap.P, _me) > TrafficConfig.RelevantDistance + 300f) return;
+            c = new Car { Id = id, Owner = owner, Epoch = epoch, Mine = false, Type = ti, Color = d[o + 10], Pos = snap.P, Fwd = snap.F };
+            _cars[id] = c;
+            StartTypeLoad(ti);
+        }
+        if (c.Removed) return;
+        if (c.Mine)
+        {
+            // Konflikt: jemand anderes beansprucht mein Auto (gerammt) – neuere Epoche gewinnt, bei Gleichstand die kleinere Spielernummer
+            if (owner == _myPid) return;
+            bool lose = Newer(epoch, c.Epoch) || (epoch == c.Epoch && owner < _myPid);
+            if (!lose) return;
+            c.Mine = false; c.Owner = owner; c.Epoch = epoch;
+            c.Snaps.Clear(); c.RVisPos = c.Pos; c.RVisVel = c.Vel; c.HasVis = true; c.RVisRot = RotGame(c.Fwd, c.Up);
+            RemoveLoose(c); c.Mode = 0;
+        }
+        else
+        {
+            if (Newer(c.Epoch, epoch)) return;   // veraltet (vom vorigen Besitzer)
+            c.Owner = owner; c.Epoch = epoch;
+        }
+        if (c.Sender != sender) c.Snaps.Clear();   // andere Uhr
+        c.Sender = sender;
+        c.LastPacket = _clock;
+        c.HandoffSends = 0;
+        if (c.Snaps.Count > 0 && snap.T <= c.Snaps[^1].T)
+        {
+            if (c.Snaps[^1].T - snap.T > 5.0) c.Snaps.Clear();   // Neustart des Absenders
+            else return;
+        }
+        c.Snaps.Add(snap);
+        if (c.Snaps.Count > 30) c.Snaps.RemoveRange(0, c.Snaps.Count - 30);
+        int lane = d[o + 44], nlane = d[o + 48];
+        c.NetRoad = d[o + 42] | (d[o + 43] << 8); c.NetLane = lane & 0x7F; c.NetFwd = (lane & 0x80) != 0;
+        c.NetMode = d[o + 45];
+        c.NetNextRoad = d[o + 46] | (d[o + 47] << 8); c.NetNextLane = nlane & 0x7F; c.NetNextFwd = (nlane & 0x80) != 0;
+        c.SpeedFactor = d[o + 49] / 100f;
+        c.NetS = BitConverter.ToSingle(d, o + 50);
+        // an mich übergeben
+        if (owner == _myPid && _myPid != 0) InitSimFromNet(c);
+    }
+
+    static void WriteU32(byte[] b, int o, uint v) { b[o] = (byte)v; b[o + 1] = (byte)(v >> 8); b[o + 2] = (byte)(v >> 16); b[o + 3] = (byte)(v >> 24); }
+    static void WriteF(byte[] b, int o, float f) => BitConverter.TryWriteBytes(new Span<byte>(b, o, 4), f);
+    static void WriteI16(byte[] b, int o, float v) { short s = (short)System.Math.Clamp((int)MathF.Round(v), -32767, 32767); b[o] = (byte)s; b[o + 1] = (byte)(s >> 8); }
+    static void WriteDir(byte[] b, int o, Vector3 v) { v = v.LengthSquared() > 1e-8f ? Vector3.Normalize(v) : Vector3.UnitZ; WriteI16(b, o, v.X * 32767f); WriteI16(b, o + 2, v.Y * 32767f); WriteI16(b, o + 4, v.Z * 32767f); }
+    static Vector3 ReadDir(byte[] d, int o) => new Vector3(BitConverter.ToInt16(d, o), BitConverter.ToInt16(d, o + 2), BitConverter.ToInt16(d, o + 4)) / 32767f;
 
     // ------------------------------------------------------------------ Darstellung
     void BuildVisuals()
@@ -1056,6 +1487,7 @@ public sealed class Traffic : IDisposable
     /// dem eigenen (interpolierten) Auto, weil die KI im festen Takt rechnet.</summary>
     Vector3 VisPos(Car c)
     {
+        if (!c.Mine) return c.Pos;
         var cur = c.Pos + c.VisOffset;
         if (!c.HasPrev || (cur - c.PrevPos).LengthSquared() > 100f) return cur;
         return Vector3.Lerp(c.PrevPos, cur, System.Math.Clamp(Alpha, 0f, 1f));
@@ -1063,6 +1495,7 @@ public sealed class Traffic : IDisposable
 
     Quaternion VisRot(Car c)
     {
+        if (!c.Mine) return c.RVisRot;
         var cur = RotGame(c.Fwd, c.Up);
         if (!c.HasPrev) return cur;
         return Quaternion.Normalize(Quaternion.Slerp(RotGame(c.PrevFwd, c.PrevUp), cur, System.Math.Clamp(Alpha, 0f, 1f)));

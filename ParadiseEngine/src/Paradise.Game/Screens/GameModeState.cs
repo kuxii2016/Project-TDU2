@@ -40,7 +40,9 @@ public static class GameMode
         if (m == _current) return;
         var old = _current;
         _current = m; _since = _clock.Elapsed.TotalSeconds; ModeStartedUtc = DateTime.UtcNow;
+        Log.Info("---------------- GAMEMODE -----------------");
         Log.Info("GAME MODE : " + CurrentName);   // wie DebugManager.switchGamemode (Banner im Original-Log)
+        Log.Info("-------------------------------------------");
         try { Changed?.Invoke(old, m); }
         catch (Exception ex) { Log.Error("GameMode.Changed: " + ex.Message); }
     }

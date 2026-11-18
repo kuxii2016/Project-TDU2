@@ -40,7 +40,7 @@ public static class IslandTravel
     public static bool CanTravelTo(string? island, string? bnkDir)
     {
         if (string.IsNullOrEmpty(island) || string.IsNullOrEmpty(bnkDir)) return false;
-        try { return Directory.Exists(Path.Combine(bnkDir, "islands", island.ToLowerInvariant())); } catch (Exception) { return false; }
+        try { return Paradise.Core.Files.GameFiles.DirectoryExists(Path.Combine(bnkDir, "islands", island.ToLowerInvariant())); } catch (Exception) { return false; }
     }
 
     public static string DisplayName(string? island) =>
@@ -70,7 +70,7 @@ public static class IslandTravel
         }
         Log.Info("Inselwechsel nach " + DisplayName(Target) + (flight ? " (Flug)" : " (Spielstand)") + ", Auto " + (_car ?? save?.currentCar ?? "-"));
         // Ladebildschirm bis zur fertigen Welt auf der Zielinsel (gespeichert wird oben schon)
-        TDU2LoadingScreen.Show("Inselwechsel nach " + DisplayName(Target), () => !Pending && TDU2LoadingScreen.WorldReady(), 2f, false);
+        LoadingScreen.Show("Inselwechsel nach " + DisplayName(Target), () => !Pending && LoadingScreen.WorldReady(), 2f, false);
         _st = St.Fade; _t = 0f;
     }
 

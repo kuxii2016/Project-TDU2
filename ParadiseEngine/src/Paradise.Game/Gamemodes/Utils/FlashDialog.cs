@@ -32,7 +32,7 @@ public static class FlashDialog
     public static bool Open(VmfPlayer source, Action<string>? onAnswer = null)
     {
         _onAnswer = onAnswer;
-        var gen = TDU2LoadingScreen.General;
+        var gen = LoadingScreen.General;
         _case = source.GetVariable("/:DgbxCase") ?? "";
         // /dialog_box ist im Overlay ausgeblendet (GeneralOverlay); erst sichtbar machen – FunctionOwners kennt nur gezeigte Clips
         bool wasShown = gen != null && gen.Find("/dialog_box")?.Visible == true;

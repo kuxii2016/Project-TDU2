@@ -111,7 +111,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
                 else if (Ready) OpenProfiles();
                 break;
             case St.PressStart:
-                if (ctx.Pressed(VK_R)) TDU2TitleScene.Next();   // OpenTDU2: nächstes Kino
+                if (ctx.Pressed(VK_R)) TitleScene.Next();   // OpenTDU2: nächstes Kino
                 if (Ready && (ctx.Pressed(VK_RETURN) | ctx.Pressed(VK_SPACE) | FlashInput.GetMouseButtonDown(0)))
                 {
                     _intro!.GotoLabel("/", "next", true);
@@ -142,9 +142,9 @@ public class GAME_MODE_LOGIN : GameModeHandler
         {
             _titleTried = true;
             if (terrain != null) _fovBefore = terrain.FieldOfView;
-            TDU2TitleScene.Begin(vm, s, FlashHost.Renderer);
+            TitleScene.Begin(vm, s, FlashHost.Renderer);
         }
-        var ts = TDU2TitleScene.Current;
+        var ts = TitleScene.Current;
         var cam = terrain?.Camera;
         if (ts == null || s == null || cam == null || !ts.Update(dt)) return;
         cam.Position = s.GameToRender(ts.CameraGame);
@@ -154,7 +154,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
 
     void EndTitleScene()
     {
-        TDU2TitleScene.End();
+        TitleScene.End();
         var terrain = _ctx?.Terrain;
         if (terrain != null)
         {
@@ -169,7 +169,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
     public override void Render(IGameModeContext ctx, in GameTime time)
     {
         var s = Streamer;
-        if (s != null) TDU2TitleScene.Current?.Render(s.RootMatrix);
+        if (s != null) TitleScene.Current?.Render(s.RootMatrix);
     }
 
     /// <summary>Welt, Fahrzeugdatenbank, Spots und main.bnk geladen (Unity Ready).</summary>
@@ -740,6 +740,7 @@ public class GAME_MODE_LOGIN : GameModeHandler
             favoriteColors = old.favoriteColors ?? new List<int>(),
             story = 0,
         };
+        _storyDone = false;
         TDU2SaveGame.WriteAsync(r.nick, r.save, Vm?.Database, "Neues Spiel – lokale DATA zurückgesetzt");
         Log.Info($"Neues Spiel für {r.nick}: Spielstand zurückgesetzt");
     }
@@ -751,6 +752,10 @@ public class GAME_MODE_LOGIN : GameModeHandler
         if (_offline) TDU2Session.BeginOffline(r.nick, r.save);
         else TDU2Session.Begin(r);
         var save = TDU2Session.Save;
+        // Ladebildschirm (Unity TDU2LoadingScreen) bis Auto gesetzt, Welt um die Kamera gebaut und ggf. Inselwechsel/Interieur fertig –
+        // sonst sieht man den Aufbau der Welt. Interieur und Inselwechsel hängen ihre Bedingungen an denselben Bildschirm an.
+        LoadingScreen.Show("Spielstart", () => _st == St.Done && !IslandTravel.Pending && InteriorUtils._restore == null
+            && (Vm?.Current != null || InteriorUtils.Inside || Story.Active) && LoadingScreen.WorldReady(), 1.5f, false);
         // Kilometerstände des Spielstands in den Tacho (Unity ApplyOdometers)
         foreach (var o in save.odometers) if (o != null && o.meters > 0) VehicleHud.SetOdometer(o.carId, o.meters);
         if (_pushImported) { _pushImported = false; TDU2Session.SaveAsync(); Log.Info("Savegame: übernommener lokaler Spielstand an den Server geschickt"); }
@@ -758,6 +763,29 @@ public class GAME_MODE_LOGIN : GameModeHandler
         string island = s.Index?.IslandName ?? "";
         if (string.IsNullOrEmpty(save.island)) save.island = island;
         Log.Info($"Angemeldet als {r.nick} ({(_offline ? "offline" : r.online + " online")}) – {save.ownedCars.Count} Autos, Startauto gewählt: {save.starterChosen}, Insel {save.island}, Position={save.hasPosition}, Auto {save.currentCar}");
+
+        // Geschichte (GamePC.cpr SCENARIOTUTORIAL = ON) noch nicht gespielt bzw. mittendrin: Intro und Missionen statt des direkten
+        // Starts – wie im Original auf Ibiza (Party-Haus EPH_L3DI_5067I). Unity TDU2Login.StartGame -> BeginStory.
+        if (!_storyDone && Story.ShouldRun(GamePC.Load(vm.BnkDir), r.nick, save.starterChosen))
+        {
+            if (!island.StartsWith("ibiza", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IslandTravel.Pending && IslandTravel.CanTravelTo("ibiza", vm.BnkDir))
+                {
+                    save.hasPosition = false;
+                    _st = St.Done;
+                    IslandTravel.Go("ibiza", false);
+                    Story.BeginAfterTravel(_ctx, r.nick, r);   // beginnt, sobald Ibiza steht
+                    return;
+                }
+            }
+            else
+            {
+                _st = St.Done;
+                Story.Begin(_ctx, r.nick, r);
+                return;
+            }
+        }
 
         // Spielstand auf einer anderen Insel: dorthin wechseln (IslandTravel, mit gespeicherter Position bzw. am Flughafen-Spot)
         bool travel = false;
@@ -904,7 +932,8 @@ public class GAME_MODE_LOGIN : GameModeHandler
     static Vector3 SpotPos(Spot s) => s.Position2.LengthSquared() > 1f ? s.Position2 : s.Position;
     static Vector3 SpotDir(Spot s) => new(MathF.Sin(s.Heading2), 0f, MathF.Cos(s.Heading2));
 
-    void OnStarterChosen(CarPhysics car)
+    /// <summary>Startauto gewählt (Händler, GamePC, Geschichte): eigenes Auto, aktuelles Auto, Spielstand speichern (Unity OnStarterChosen).</summary>
+    internal static void OnStarterChosen(CarPhysics car)
     {
         if (car == null || TDU2Session.Save == null) return;
         TDU2Session.AddOwned(car.FileName);
@@ -962,6 +991,9 @@ public class GAME_MODE_LOGIN : GameModeHandler
         SessionAutosave.Schedule(Math.Max(5f, _cfg.AutosaveSeconds));
         GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
     }
+
+    /// <summary>Unity TDU2Login._storyDone: Geschichte in dieser Anmeldung schon beendet (Neues Spiel setzt zurück).</summary>
+    bool _storyDone;
 
     void QuitGame()
     {

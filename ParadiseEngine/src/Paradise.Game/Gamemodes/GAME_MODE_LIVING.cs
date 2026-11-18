@@ -1,4 +1,5 @@
 using Paradise.Core.Audio;
+using Paradise.Core.Avatars;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Flash;
@@ -9,6 +10,7 @@ using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
 using Paradise.Game.Input;
+using Paradise.Game.Online;
 using Paradise.Game.Screens;
 using System.Globalization;
 using System.Numerics;
@@ -20,12 +22,13 @@ namespace Paradise.Game.Gamemodes;
 /// Wohnbereich (home.vmf) – Port von Unity TDU2Interiors (Tagebuch), TDU2MyLife, TDU2MyHouse und TDU2TDUMedia:
 ///  * Tagebuch (Auswahlpunkt Typ 9): Film-Label "diary_in" -> Menü mit My Life / My House.
 ///  * MyTDULife (/mylf): Stimmung, Stimmungstext (Bildschirmtastatur), Kästen, Profilangaben, Geburtsdatum, Geschlecht –
-///    gespeichert in SaveData.myLife. Das Avatar-Foto braucht den Avatar (in der Engine noch nicht vorhanden): der Sucher
-///    schließt wieder.
+///    gespeichert in SaveData.myLife. Avatar-Foto: Avatar mit der Pose der Szene M_MYLIFE, Sucher /mylf/photo_taker, Bild aus
+///    dem Renderer (RequestSceneCapture) als JPG in myLife.photo, Anzeige im Namenskasten.
+///  * My House Live-Sync (Server-Erweiterung): Besitzer schickt Änderungen sofort (op "house"), Gäste laden nach (UDP [11]).
 ///  * My House (myhs_*): Möbel tauschen (DBFurniture, gleicher Typ, Gruppen gemeinsam), Böden/Tapeten (DBMaterial, Spender-Bänke
 ///    ground_NN / wall_NN mit Vorschaubildern), Kaufen, gespeichert je Haus-Spot (SaveData.houses, ownedFurniture/ownedMaterials).
-///  * TDU Media (Fernseher, Typ 57, tdmedia.bnk): Uhr, Wetter beider Inseln (jetzt / +2 h / +4 h), Meldungen zum Spielfortschritt.
-///    Server-News, Umfragen, Freundes-Meldungen und Patch-Notes kommen in Unity vom Server – den gibt es in der Engine noch nicht.
+///  * TDU Media (Fernseher, Typ 57, tdmedia.bnk): Uhr, Wetter beider Inseln (jetzt / +2 h / +4 h), News (Spielfortschritt, Community =
+///    Server-News + Freundes-Meldungen, Club), Updates-Kanal mit Patch-Notes vom Server (TDU2News); Umfragen ausgelassen.
 /// Interieur-Ablauf (Betreten, Szene, Laufen, Hotspots): InteriorUtils.
 /// </summary>
 public class GAME_MODE_LIVING : InteriorUtils
@@ -56,6 +59,8 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         PollHouseObjects();
         PollDonors();
+        HookHouseSync();
+        PollGuestHouse();
         if (_mediaOpen) { UpdateMedia(dt); return true; }
         if ((_myHouse != HouseMode.None || _houseRestoreAt > 0f) && UpdateMyHouse()) return true;
         if (_diaryOpen) { UpdateDiary(); return true; }
@@ -406,7 +411,7 @@ public class GAME_MODE_LIVING : InteriorUtils
             case "mylf:self": return true;
             case "mylf:wait": PushMyLifeVars(); _ui!.SetValue("/:myLifeVarLoaded", true); return true;   // Laden: Werte setzen, dann darf "open" sie lesen
             case "mylf:open": PushMyLifeVars(); return true;
-            case "mylf:bxok": return true;   // Avatar-Foto im Namenskasten: kein Foto (Avatar fehlt)
+            case "mylf:bxok": ApplyLifePhoto(); return true;
             case "mylf:clos": EndLifeModes(); SaveLifeIfDirty(); return true;
             case "mylf:sgcx": return true;
             case "mylf:edit:edin": _lifeSnap = null; return true;
@@ -460,15 +465,14 @@ public class GAME_MODE_LIVING : InteriorUtils
             case "mylf:edit:phca":
             case "mylf:edit:phot":
                 return true;   // Fotoalbum-Kästen – ohne Fotoalbum nichts zu tun
+            // Avatar-Foto
             case "mylf:phot:open":
-                // Unity: Avatar mit der Pose der Szene M_MYLIFE vor die Kamera, Sucher /mylf/photo_taker. Der Avatar fehlt in der
-                // Engine noch -> Sucher wie bei "Abbrechen" wieder schließen.
-                Log.Warn("MyTDULife: Avatar-Foto braucht den Avatar (in der Engine noch nicht vorhanden)");
-                _ui!.GotoLabel("/mylf/photo_taker", "close", true);
-                _ui.SetValue("/:LockMyLifeEdition", false);
-                _ui.SetValue("/:Input", true);
+                try { StartLifePhoto(); }
+                catch (Exception ex) { Log.Error("MyTDULife Foto: " + ex); EndLifePhoto(); }
                 return true;
-            case "mylf:phot:lock": case "mylf:phot:vali": case "mylf:phot:canc": return true;
+            case "mylf:phot:lock": TakeLifePhoto(); return true;   // Auslöser (auch per Maus): Foto machen und Sucher schließen
+            case "mylf:phot:vali": CaptureLifePhoto(); return true;
+            case "mylf:phot:canc": EndLifePhoto(); return true;
             case "tfoc": BeginTextInput(); return true;
             case "vtke": return true;
         }
@@ -590,10 +594,293 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         if (_ui == null) return false;
         UpdateLifeLoader();
+        if (UpdateLifePhoto()) return true;
         return UpdateTextInput();
     }
 
-    internal static void EndLifeModes() { _textVar = null; }
+    internal static void EndLifeModes() { _textVar = null; EndLifePhoto(); }
+
+    // ================================================================== MyTDULife: Avatar-Foto (Unity TDU2MyLife StartLifePhoto …)
+    // Unity: zweite Kamera (512×512, RenderTexture) am Blick der Hauptkamera, Avatar mit der Pose des Darstellers "Avatar" der Szene
+    // M_MYLIFE, Kamera c_mylife; Sucherbild in /mylf/photo_taker/lure, Foto 256×256 als JPG (85) in SaveData.myLife.photo.
+    // Engine (kein Render-Ziel): die Hauptkamera hat denselben Blick; das mittige Quadrat des Weltbilds (vor Flash/HUD, gleiches
+    // senkrechtes Sichtfeld wie die quadratische Unity-Kamera) kommt über IRenderer.RequestSceneCapture als Sucherbild und als Foto.
+    internal static bool _lifePhoto, _lifeFrozen;
+    internal static float _lifePhotoAt, _lifeLastAt;
+    static AvatarPreview? _lifeAvatar;
+    static Vector3 _orbitPivot; static float _orbitYaw, _orbitPitch, _orbitDist, _orbitFov;
+    static IGpuTexture? _lifeShowGpu; static Texture? _lifeShowTex;   // Sucherbild
+    static SceneCapture? _lifeFrame, _lifeShotFrame;                 // aus BeginFrame (Renderer), abgeholt im Update
+    static bool _lifeFrameWanted, _lifeCaptureBroken;
+    static int _lifeShot;   // 0 = keine Aufnahme unterwegs, 1 = Foto (vali), 2 = Foto und Sucher schließen (lock)
+    static Texture2D? _myPhotoTex; static int _myPhotoVer = -1;
+    static readonly string[] LifePhotoHide = { "diary", "title_bar", "club_money", "mylf_book", "help" };
+    const int LifeShowSize = 512, LifePhotoSize = 256;
+
+    internal static bool LifePhotoActive => _lifePhoto;
+
+    /// <summary>Eigenes Avatar-Foto in den Namenskasten (/mylf/pbox/name_box/avatar_photo/lure).</summary>
+    internal static void ApplyLifePhoto()
+    {
+        var l = Life;
+        if (_ui == null || l == null) return;
+        if (_myPhotoVer != l.photoVer || (_myPhotoTex == null && !string.IsNullOrEmpty(l.photo)))
+        {
+            _myPhotoTex?.Dispose();
+            _myPhotoTex = TDU2GameData.DecodePhoto(l.photo);
+            _myPhotoVer = l.photoVer;
+        }
+        _ui.SetClipTexture("/mylf/pbox/name_box/avatar_photo/lure", _myPhotoTex!);
+    }
+
+    internal static void StartLifePhoto()
+    {
+        if (_lifePhoto) { FreezeLifePhoto(false); return; }   // neues Foto nach "Nein"
+        var cam = _t.Camera; var st = _t.Streamer;
+        if (cam == null || st == null || _ui == null) return;
+        _lifePhoto = true; _lifeFrozen = false; _lifePhotoAt = _lifeLastAt = _time;
+        _lifeShot = 0; _lifeFrameWanted = false; _lifeCaptureBroken = false;
+        _lifeFrame = null; _lifeShotFrame = null;
+
+        var act = InteriorNpcs.FindObject("Avatar", "MYLIFE");
+        var cobj = InteriorNpcs.FindObject("c_mylife", "MYLIFE");
+        bool woman = AvatarConfigs.Local != null && AvatarConfigs.Local.Sex == 1;
+        string? clip = act?.Clip;
+        if (!string.IsNullOrEmpty(clip))
+        {
+            if (woman && clip!.EndsWith("-m", StringComparison.Ordinal)) clip = clip[..^2] + "-w";
+            else if (!woman && clip!.EndsWith("-w", StringComparison.Ordinal)) clip = clip[..^2] + "-m";
+        }
+        _lifeAvatar?.Dispose();
+        _lifeAvatar = new AvatarPreview(_v.Renderer);
+        _lifeAvatar.Place(act != null && act.HasPosition ? act : null, clip, woman ? 1 : 0, "co_stand-m", "co_stand-w");
+        Vector3 eye = _fp?.Eye ?? st.RenderToGame(cam.Position);
+        if (act == null || !act.HasPosition)
+        {
+            // Ersatz: 2,3 m vor der Kamera auf dem Boden, Blick zur Kamera
+            var f0 = _fp?.Forward ?? cam.Forward; f0.Y = 0f;
+            var fwd = f0.LengthSquared() < 1e-4f ? Vector3.UnitZ : Vector3.Normalize(f0);
+            var p = eye + fwd * 2.3f;
+            float floor = eye.Y - 1.65f;
+            if (Phys != null && Phys.Raycast(p + Vector3.UnitY * 0.5f, -Vector3.UnitY, 4f, out var hit)) floor = hit.Point.Y;
+            p.Y = floor;
+            var local = Vector3.Transform(p, _holderInv);
+            var f = Vector3.TransformNormal(-fwd, _holderInv); f.Y = 0f;
+            float yaw = f.LengthSquared() > 1e-4f ? MathF.Atan2(f.X, f.Z) : 0f;
+            _lifeAvatar.Pose = Matrix4x4.CreateRotationY(yaw) * Matrix4x4.CreateTranslation(local);
+        }
+        var holderPos = Vector3.Transform(Vector3.Zero, _lifeAvatar.Pose * _holder);
+
+        // Kamera der Szene (c_mylife), sonst halbnah von vorn
+        Vector3 cpos; float fov;
+        if (cobj != null && cobj.HasPosition)
+        {
+            cpos = Vector3.Transform(Vector3.Zero, cobj.Matrix * _holder);
+            fov = Math.Clamp(cobj.Fov, 15f, 70f);
+        }
+        else
+        {
+            var look = holderPos + Vector3.UnitY * 1.45f;
+            var front = eye - holderPos; front.Y = 0f;
+            front = front.LengthSquared() < 1e-4f ? Vector3.UnitZ : Vector3.Normalize(front);
+            cpos = look + front * 1.6f + Vector3.UnitY * 0.05f;
+            fov = 35f;
+        }
+
+        // Sucherbild (/mylf/photo_taker/lure)
+        _lifeShowGpu ??= _v.Renderer.CreateTexture(new TextureUpload
+        {
+            Width = LifeShowSize, Height = LifeShowSize, Format = GpuTextureFormat.Rgba8, Mips = 1,
+            Blocks = new byte[LifeShowSize * LifeShowSize * 4], WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "MyTDULife Sucher",
+        });
+        _lifeShowTex ??= Texture.Wrap(_lifeShowGpu, LifeShowSize, LifeShowSize);
+        _ui.SetClipTexture("/mylf/photo_taker/lure", _lifeShowTex);
+        // Tagebuch (Buch/Menü links), Titelleiste und Geld ausblenden: nur der Sucher
+        foreach (var n in LifePhotoHide) _ui.SetVisible("/" + n, false);
+        // Umsicht um den Avatar (Maus ziehen, Pfeile/WASD, Mausrad)
+        _orbitPivot = holderPos + Vector3.UnitY * 1.35f;
+        var off = cpos - _orbitPivot;
+        float len = off.Length();
+        _orbitDist = Math.Clamp(len, 0.8f, 6f);
+        _orbitYaw = MathF.Atan2(off.X, off.Z) * 180f / MathF.PI;
+        _orbitPitch = MathF.Asin(Math.Clamp(off.Y / MathF.Max(0.01f, len), -1f, 1f)) * 180f / MathF.PI;
+        _orbitFov = fov;
+        ApplyLifeOrbit();
+
+        _lifeAvatar.Show(AvatarConfigs.Local ?? new AvatarConfig(), true);
+        Log.Debug("MyTDULife Foto: Szene " + (act != null ? "M_MYLIFE" : "Ersatz") + ", Pose " + (_lifeAvatar.Clip != null ? clip ?? "co_stand" : "keine"));
+    }
+
+    /// <summary>Kamera kreist um den Avatar (Unity ApplyLifeOrbit: Euler(-pitch, yaw, 0) · vorne · Abstand, Blick zum Mittelpunkt).</summary>
+    static void ApplyLifeOrbit()
+    {
+        var cam = _t.Camera; var st = _t.Streamer;
+        if (cam == null || st == null) return;
+        float yaw = _orbitYaw * MathF.PI / 180f, pitch = _orbitPitch * MathF.PI / 180f;
+        var dir = new Vector3(MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Sin(pitch), MathF.Cos(yaw) * MathF.Cos(pitch));
+        var pos = _orbitPivot + dir * _orbitDist;
+        _t.FlyCameraEnabled = false;
+        cam.Position = st.GameToRender(pos);
+        cam.Override = (Vector3.Normalize(_orbitPivot - pos), Vector3.UnitY);
+        _t.FieldOfView = _orbitFov;
+        _t.NearClip = 0.03f;
+    }
+
+    /// <summary>Auslöser: Blitz, Bild speichern, Sucher schließen (zurück zu MyTDULife).</summary>
+    internal static void TakeLifePhoto()
+    {
+        if (!_lifePhoto || _lifeShot != 0) return;
+        _ui!.GotoLabel("/mylf/photoFlash", "flash", true);
+        RequestLifeShot(2);   // Schließen erst, wenn das Bild dieses Blicks aufgenommen ist (FinishLifeShot)
+    }
+
+    /// <summary>Sucher schließen wie im Film (photo_taker "close": MyTDULife wieder öffnen).</summary>
+    static void CloseLifePhotoTaker()
+    {
+        EndLifePhoto();
+        if (_ui == null) return;
+        _ui.GotoLabel("/mylf/photo_taker", "close", true);
+        _ui.SetValue("/:LockMyLifeEdition", false);
+        _ui.SetValue("/:Input", true);
+    }
+
+    static void FreezeLifePhoto(bool frozen) => _lifeFrozen = frozen;
+
+    /// <summary>"vali": Foto aufnehmen (Unity CaptureLifePhoto).</summary>
+    internal static void CaptureLifePhoto()
+    {
+        if (!_lifePhoto) { if (_ui != null) _ui.SetValue("/:photoUploaded", true); return; }
+        if (_lifeShot == 0) RequestLifeShot(1);
+    }
+
+    static void RequestLifeShot(int kind)
+    {
+        _lifeShot = kind;
+        _v.Renderer.RequestSceneCapture(c => { Volatile.Write(ref _lifeShotFrame, c ?? new SceneCapture()); }, true);
+    }
+
+    /// <summary>Aufnahme ist da: verkleinern, JPG (Zeilen gekippt wie Unity EncodeToJPG), speichern, Namenskasten, Sucher anhalten.</summary>
+    static void FinishLifeShot(SceneCapture c)
+    {
+        int kind = _lifeShot; _lifeShot = 0;
+        var l = Life;
+        if (c.Width > 0 && l != null)
+        {
+            var px = SquareScaled(c, LifePhotoSize);
+            byte[] jpg = Paradise.Core.Formats.JpegEncoder.Encode(px, LifePhotoSize, LifePhotoSize, 85, flipVertical: true);
+            l.photo = Convert.ToBase64String(jpg);
+            l.photoVer++;
+            _lifeDirty = true;
+            SaveLifeIfDirty();
+            ApplyLifePhoto();
+            if (_lifePhoto && !_lifeFrozen) ShowViewfinder(c);
+            Log.Debug("MyTDULife Foto gespeichert (" + jpg.Length / 1024 + " KB)");
+        }
+        else if (c.Width == 0) Log.Warn("MyTDULife Foto: Bildaufnahme vom Renderer nicht möglich – kein Foto gespeichert");
+        FreezeLifePhoto(true);
+        _ui?.SetValue("/:photoUploaded", true);
+        if (kind == 2 && _lifePhoto) CloseLifePhotoTaker();
+    }
+
+    /// <summary>Mittiges Quadrat der Aufnahme auf size×size (Kastenfilter), Rgba8, Zeile 0 = oben.</summary>
+    static byte[] SquareScaled(SceneCapture c, int size)
+    {
+        int n = Math.Min(c.Width, c.Height);
+        int ox = (c.Width - n) / 2, oy = (c.Height - n) / 2;
+        var dst = new byte[size * size * 4];
+        for (int y = 0; y < size; y++)
+        {
+            int y0 = oy + y * n / size, y1 = Math.Max(y0 + 1, oy + (y + 1) * n / size);
+            for (int x = 0; x < size; x++)
+            {
+                int x0 = ox + x * n / size, x1 = Math.Max(x0 + 1, ox + (x + 1) * n / size);
+                int r = 0, g = 0, b = 0, cnt = 0;
+                for (int sy = y0; sy < y1; sy++)
+                {
+                    int row = sy * c.Width;
+                    for (int sx = x0; sx < x1; sx++) { int p = (row + sx) * 4; r += c.Rgba[p]; g += c.Rgba[p + 1]; b += c.Rgba[p + 2]; cnt++; }
+                }
+                int o = (y * size + x) * 4;
+                dst[o] = (byte)(r / cnt); dst[o + 1] = (byte)(g / cnt); dst[o + 2] = (byte)(b / cnt); dst[o + 3] = 255;
+            }
+        }
+        return dst;
+    }
+
+    static void ShowViewfinder(SceneCapture c)
+    {
+        if (_lifeShowGpu == null || c.Width == 0) return;
+        _v.Renderer.UpdateTexture(_lifeShowGpu, SquareScaled(c, LifeShowSize));
+    }
+
+    /// <summary>Foto-Modus: Pose weiterspielen, Sucherbild, Ende erkennen (Sucher geschlossen); true = Eingabe verbraucht.</summary>
+    internal static bool UpdateLifePhoto()
+    {
+        var shot = Interlocked.Exchange(ref _lifeShotFrame, null);
+        if (shot != null) FinishLifeShot(shot);
+        if (!_lifePhoto) return false;
+        float dt = Math.Clamp(_time - _lifeLastAt, 0f, 0.1f);
+        _lifeLastAt = _time;
+        _lifeAvatar?.Update(_lifeFrozen ? 0f : dt);
+        if (!_lifeFrozen)
+        {
+            var f = Interlocked.Exchange(ref _lifeFrame, null);
+            if (f != null) { _lifeFrameWanted = false; if (f.Width == 0) _lifeCaptureBroken = true; else ShowViewfinder(f); }
+            if (!_lifeFrameWanted && _lifeShot == 0 && !_lifeCaptureBroken)
+            {
+                _lifeFrameWanted = true;
+                _v.Renderer.RequestSceneCapture(c => { Volatile.Write(ref _lifeFrame, c ?? new SceneCapture()); }, true);
+            }
+        }
+        string pl = _ui!.Label("/mylf/photo_taker") ?? "default";
+        if (_time - _lifePhotoAt > 1f && _lifeShot == 0 && (pl == "default" || pl == "close")) { EndLifePhoto(); return false; }
+        _t.Input.CursorLocked = false;
+        if (_time - _lifePhotoAt < 0.3f) { ApplyLifeOrbit(); return true; }   // Taste, mit der geöffnet wurde
+        // Auslösen direkt (der Film-Dialog "Dieses Foto aufnehmen?" hing ohne Rückmeldung); ESC/Rücktaste: Menüablauf schließt den Sucher
+        if (TDU2Controls.ConfirmPressed()) { TakeLifePhoto(); ApplyLifeOrbit(); return true; }
+        // Kamera um den Avatar: Maus ziehen (links/rechts gedrückt), Pfeile/WASD drehen, Mausrad/Bild-Tasten zoomen, Q/E Avatar drehen
+        var input = _t.Input;
+        if (FlashInput.GetMouseButton(0) || FlashInput.GetMouseButton(1))
+        {
+            // Unity GetAxis("Mouse X/Y") ≈ Pixel × 0,1 (Y nach oben)
+            _orbitYaw += input.MouseDeltaX * 0.1f * 4f;
+            _orbitPitch = Math.Clamp(_orbitPitch - (-input.MouseDeltaY * 0.1f) * 3f, -30f, 60f);
+        }
+        float h = (TDU2Nav.RightHeld() || TDU2Controls.RawKeyDown(0x44) ? 1f : 0f) - (TDU2Nav.LeftHeld() || TDU2Controls.RawKeyDown(0x41) ? 1f : 0f);
+        float v = (TDU2Nav.UpHeld() || TDU2Controls.RawKeyDown(0x57) ? 1f : 0f) - (TDU2Nav.DownHeld() || TDU2Controls.RawKeyDown(0x53) ? 1f : 0f);
+        _orbitYaw += h * 70f * dt;
+        _orbitPitch = Math.Clamp(_orbitPitch + v * 40f * dt, -30f, 60f);
+        float zoom = -FlashInput.mouseScrollDelta * 0.25f
+                     + ((TDU2Controls.RawKeyDown(0x22) || TDU2Controls.RawKeyDown(0x6D) ? 1f : 0f) - (TDU2Controls.RawKeyDown(0x21) || TDU2Controls.RawKeyDown(0x6B) ? 1f : 0f)) * 1.5f * dt;
+        _orbitDist = Math.Clamp(_orbitDist + zoom, 0.6f, 5f);
+        if (_lifeAvatar != null)
+        {
+            float turn = (TDU2Controls.RawKeyDown(0x45) ? 1f : 0f) - (TDU2Controls.RawKeyDown(0x51) ? 1f : 0f);   // E / Q
+            if (turn != 0f) _lifeAvatar.Pose = Matrix4x4.CreateRotationY(turn * 90f * dt * MathF.PI / 180f) * _lifeAvatar.Pose;
+        }
+        ApplyLifeOrbit();
+        return true;
+    }
+
+    internal static void EndLifePhoto()
+    {
+        if (!_lifePhoto) return;
+        _lifePhoto = false;
+        _lifeFrameWanted = false;
+        if (_ui != null)
+        {
+            _ui.SetClipTexture("/mylf/photo_taker/lure", null!);
+            foreach (var n in LifePhotoHide) if (n != "help") _ui.SetVisible("/" + n, true);
+        }
+        _lifeAvatar?.Dispose(); _lifeAvatar = null;
+        // Hauptkamera: InteriorUtils.ApplyCamera setzt ab dem nächsten Bild wieder den Blick des Laufmodus (Unity: gemerkte Lage)
+    }
+
+    /// <summary>InteriorUtils.RenderCars: Avatar vor der Fotokamera.</summary>
+    internal static void RenderLifePhoto(Matrix4x4 sceneToRender)
+    {
+        if (_lifePhoto) _lifeAvatar?.Render(sceneToRender);
+    }
 
     // ================================================================== My House (Unity TDU2MyHouse)
     internal sealed class FurnItem { public int Id; public string Bank = ""; public int Type; public int Price; public int Level; public int NameHc; public string? Path; }
@@ -668,17 +955,27 @@ public class GAME_MODE_LIVING : InteriorUtils
     }
 
     // ------------------------------------------------------------------ Einrichtung (gespeichert)
+    /// <summary>Einrichtung des Gastgebers (Unity TDU2MyHouse.GuestHouses, kommt mit der Einladung); null = eigene.</summary>
+    internal static List<HouseLayout>? GuestHouses;
+
     internal static HouseLayout? Layout(bool create)
     {
         if (_spot == null) return null;
         string key = _spot.Code ?? "";
-        var sv = TDU2Session.Save;
-        if (sv == null) return null;
-        sv.houses ??= new List<HouseLayout>();
-        foreach (var h in sv.houses) if (h != null && string.Equals(h.spot, key, StringComparison.OrdinalIgnoreCase)) return h;
-        if (!create) return null;
+        List<HouseLayout>? list;
+        if (GuestHost != 0) list = GuestHouses;
+        else
+        {
+            var sv = TDU2Session.Save;
+            if (sv == null) return null;
+            sv.houses ??= new List<HouseLayout>();
+            list = sv.houses;
+        }
+        if (list == null) return null;
+        foreach (var h in list) if (h != null && string.Equals(h.spot, key, StringComparison.OrdinalIgnoreCase)) return h;
+        if (!create || GuestHost != 0) return null;
         var nh = new HouseLayout { spot = key };
-        sv.houses.Add(nh);
+        list.Add(nh);
         return nh;
     }
 
@@ -1375,6 +1672,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         _t.Input.CursorLocked = true;
         if (_ui != null) { SetMoneyVars(); _ui.SetValue("/:Input", true); _ui.MouseEnabled = false; }
         if (sv != null) _ = TDU2Session.SaveAsync();
+        PushHouse();
     }
 
     /// <summary>Vorschau verwerfen: gespeicherten Stand wiederherstellen.</summary>
@@ -1386,17 +1684,113 @@ public class GAME_MODE_LIVING : InteriorUtils
         _shapes = null; _mats = null;
     }
 
+    // ================================================================== My House Live-Sync (Server-Erweiterung)
+    // Besitzer: nach jedem Kauf geht die Einrichtung des Hauses sofort per op "house" an den Server (zusätzlich zum vollen
+    // Spielstand). Der Server erhöht den Änderungszähler (PlayerEntry.houseVer) und schickt UDP [11] an die Lobby.
+    // Gast (GuestHost != 0): bei UDP [11] oder geändertem houseVer des Gastgebers holt "houseget" die neue Einrichtung, danach
+    // werden Möbel (SetFurnitureBank) und Böden/Tapeten (ApplyZone, entfernte Einträge = Standard der Szene) neu angewendet.
+    static bool _houseSyncHooked;
+    static Task<NetResponse>? _houseGet;
+    static int _houseGetHost;
+    static bool _houseGetAgain;
+    static int _houseGetVer = -1;
+
+    /// <summary>Ereignisse einmalig verbinden (erstes Bild im Wohnbereich).</summary>
+    internal static void HookHouseSync()
+    {
+        if (_houseSyncHooked) return;
+        _houseSyncHooked = true;
+        Multiplayer.HouseChanged += (owner, ver) => OnHostHouseChanged(owner, (int)ver);
+        TDU2GameData.HouseVersionChanged += OnHostHouseChanged;
+    }
+
+    /// <summary>Eigene Einrichtung des aktuellen Hauses an den Server (nur online, nur Besitzer).</summary>
+    internal static void PushHouse()
+    {
+        if (GuestHost != 0 || TDU2Session.Offline || !TDU2Session.LoggedIn || TDU2Session.Client == null) return;
+        var l = Layout(false);
+        if (l == null) return;
+        var copy = NetJson.Copy(l);
+        var task = TDU2Session.Client.Send(new NetRequest { op = "house", session = TDU2Session.SessionId, house = copy });
+        task.ContinueWith(t =>
+        {
+            if (t.IsFaulted) Log.Warn("My House (Sync): " + t.Exception?.GetBaseException().Message);
+            else if (t.Result != null && !t.Result.ok) Log.Warn("My House (Sync): " + t.Result.error);
+        });
+    }
+
+    /// <summary>Gastgeber hat seine Einrichtung geändert (UDP [11] oder Status houseVer).</summary>
+    static void OnHostHouseChanged(int owner, int ver)
+    {
+        if (GuestHost == 0 || owner != GuestHost || _spot == null) return;
+        if (owner == _houseGetHost && ver == _houseGetVer) return;   // beide Wege melden dieselbe Änderung
+        if (_houseGet != null) { _houseGetAgain = true; return; }
+        RequestGuestHouse();
+    }
+
+    static void RequestGuestHouse()
+    {
+        if (TDU2Session.Client == null || _spot == null) return;
+        _houseGetHost = GuestHost; _houseGetAgain = false;
+        _houseGet = TDU2Session.Client.Send(new NetRequest { op = "houseget", session = TDU2Session.SessionId, target = GuestHost, spot = _spot.Code ?? "" });
+    }
+
+    /// <summary>Jedes Bild im Wohnbereich: Antwort von "houseget" übernehmen.</summary>
+    internal static void PollGuestHouse()
+    {
+        if (_houseGet == null || !_houseGet.IsCompleted) return;
+        var t = _houseGet; _houseGet = null;
+        if (t.IsFaulted) Log.Warn("My House (Sync): " + t.Exception?.GetBaseException().Message);
+        else if (t.Result is { ok: true } r && GuestHost != 0 && r.lifeOf == _houseGetHost && _spot != null)
+        {
+            _houseGetVer = r.playerId;
+            string key = _spot.Code ?? "";
+            GuestHouses ??= new List<HouseLayout>();
+            GuestHouses.RemoveAll(h => h == null || string.Equals(h.spot, key, StringComparison.OrdinalIgnoreCase));
+            if (r.save?.houses != null) foreach (var h in r.save.houses) if (h != null) GuestHouses.Add(h);
+            ReapplyHouse();
+        }
+        else if (t.Result is { ok: false } e) Log.Warn("My House (Sync): " + e.error);
+        if (_houseGetAgain && GuestHost != 0) RequestGuestHouse();
+    }
+
+    /// <summary>Einrichtung (Layout) erneut auf die Szene anwenden: Möbel und Böden/Tapeten (wie beim Aufbau der Szene).</summary>
+    internal static void ReapplyHouse()
+    {
+        foreach (var o in _houseObjs)
+        {
+            string bank = HouseObjectBank(o.Ent, o.DefaultBank);
+            if (!string.Equals(o.LoadingBank ?? o.Bank, bank, StringComparison.OrdinalIgnoreCase)) SetFurnitureBank(o, bank);
+        }
+        ApplyHouseMaterials();
+    }
+
     // ================================================================== TDU Media (Unity TDU2TDUMedia, tdmedia.bnk)
+    // Kanäle: Wetter, News (Reiter Spielfortschritt / Community = Server-News + Freundes-Meldungen / Club), Updates (Patch-Notes
+    // vom Server im Original-DLC-Kanal: Reiter Packs/Vehicles/Avatar/Furnitures/Stickers, Version statt Datum, Bild).
+    // Umfragen (Unity TDU2Surveys, Hilfe-DLC-Kachel) sind auf Wunsch ausgelassen: IsDLCHsys = false.
     internal static bool _mediaOpen;
     internal static VmfPlayer? _media;
     internal static float _mediaOpenedAt, _mediaNextWeather, _mediaForceCloseAt = -1f;
     internal static VmfPlayer.FlashList? _newsList;
     internal static int _shownNews = -1, _clockShown = -1;
-    internal static bool _german, _mediaHooked;
-    internal static string _newsTab = "game_progress";
-    internal sealed class News { public string Title = "", Text = "", Version = ""; public DateTime Date; }
+    internal static bool _german, _mediaHooked, _mediaNewsHooked;
+    internal static string _newsTab = "game_progress";   // Reiter des News-Kanals: game_progress, community, club
+    internal sealed class News { public string Title = "", Text = "", Icon = "", Version = ""; public DateTime Date; public int ServerId; public NewsEntry? Entry; }
     internal static readonly List<News> _news = new();
+    // Detailansicht (lists/details/content, Sprite 272): Bild "default" = schmaler Text + Bildrahmen img (Textur auf img/lure,
+    // PS-Store-Logo ausgeblendet), "pictured" = Text über die ganze Breite (ohne Bild). Der Film schaltet beim Blättern selbst um –
+    // hier jedes Bild auf den Stand der gewählten Meldung gebracht.
     internal const string DetailPath = "/lists/details/content";
+    internal static string _detailLabel = "pictured";
+    internal static Texture2D? _detailTex;
+    // Updates-Kanal (Patch-Notes)
+    internal static bool _updatesMode;           // Liste im DLC-Kanal zeigt Patch-Notes
+    internal static string _updCat = "gmodes";   // Reiter/Kategorie: gmodes (Packs), vehicles, avatar, furnitures, stickers
+    internal static bool _updatesSeenPending;
+    internal const string UpdatesTitle = "Updates";
+    internal static readonly string[] UpdateCats = { "gmodes", "vehicles", "avatar", "furnitures", "stickers" };
+    internal static readonly string[] UpdateCatVars = { "IsNewsGM", "IsNewsVehicles", "IsNewsAvatar", "IsNewsFurnitures", "IsNewsStickers" };
 
     internal static void OpenMedia()
     {
@@ -1409,6 +1803,13 @@ public class GAME_MODE_LIVING : InteriorUtils
             _media.ListValidated += l => { if (l == _newsList) ShowNews(l.Selected); };
             _mediaHooked = true;
         }
+        if (!_mediaNewsHooked)
+        {
+            // Unity OnEnable: neue Server-News / Freundes-Meldungen, während der Fernseher läuft
+            TDU2News.Changed += OnServerNews;
+            Friends.NewsChanged += OnFriendNews;
+            _mediaNewsHooked = true;
+        }
         _german = (FlashHost.Language ?? "").StartsWith("ge", StringComparison.OrdinalIgnoreCase);
         _mediaOpen = true; _mediaOpenedAt = _time; _mediaForceCloseAt = -1f; _clockShown = -1;
         UpdateUiAim(null);
@@ -1420,10 +1821,12 @@ public class GAME_MODE_LIVING : InteriorUtils
         _media.SetValue("/:IsPC_X360", true);
         _media.SetValue("/:fake", false);
         _media.SetValue("/:IsMyHouse", true);
-        // Updates-/Umfrage-Kanal kommen in Unity vom Server (TDU2News/TDU2Surveys) – ohne Server keine Kacheln dafür
-        _media.SetValue("/:IsDLCChannel", false);
-        _media.SetValue("/:IsDLCHsys", false);
+        _media.SetValue("/:IsDLCChannel", true);           // DLC-Kanal = Updates (Patch-Notes)
         _media.SetValue("/:DLC_Bought", false);
+        _updatesMode = false; _updCat = "gmodes";
+        SetUpdateTexts();
+        SetUpdateTabFlags();
+        _media.SetValue("/:IsDLCHsys", false);             // Umfrage-Kanal ausgelassen
         _media.SetValue("/:Input", true);
         _newsTab = "game_progress";
         BuildNews();
@@ -1431,7 +1834,24 @@ public class GAME_MODE_LIVING : InteriorUtils
         _media.Visible = true;
         _media.GotoLabel("/", "media_in", true);
         try { FrontendMusic.Play("TDMEDIA"); } catch (Exception) { }
-        Log.Info($"TDU Media geöffnet: {_news.Count} Meldungen");
+        Log.Info($"TDU Media geöffnet: {_news.Count} Meldungen, Wetter {WeatherFrame(0f, "ibiza")} / {WeatherFrame(2f, "ibiza")} / {WeatherFrame(4f, "ibiza")}");
+    }
+
+    /// <summary>Neue Freundes-Meldung, während der Fernseher läuft und der Reiter Community offen ist: neu aufbauen.</summary>
+    internal static void OnFriendNews()
+    {
+        if (!_mediaOpen || _media == null || _updatesMode || _newsTab != "community") return;
+        BuildNews();
+        if (_newsList != null) ShowNews(_newsList.Selected);
+        Friends.MarkNewsRead();
+    }
+
+    /// <summary>Neue Server-News (oder ein nachgeladenes Bild), während der Fernseher läuft: Liste neu aufbauen.</summary>
+    internal static void OnServerNews()
+    {
+        if (!_mediaOpen || _media == null) return;
+        BuildNews();
+        if (_newsList != null) { ShowNews(_newsList.Selected); if (!_updatesMode) TDU2News.MarkSeen(); }
     }
 
     internal static void UpdateMedia(float dt)
@@ -1439,6 +1859,8 @@ public class GAME_MODE_LIVING : InteriorUtils
         if (_fp != null) _fp.LookEnabled = false;
         if (_media == null) { _mediaOpen = false; return; }
         if (_time >= _mediaNextWeather) { _mediaNextWeather = _time + 5f; SetWeather(); }
+        if (_updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "main", StringComparison.OrdinalIgnoreCase)) LeaveUpdates();
+        UpdateListChrome();
         UpdateNewsDetails();
         UpdateClock();
         if (_mediaForceCloseAt > 0f && _time >= _mediaForceCloseAt)
@@ -1453,7 +1875,9 @@ public class GAME_MODE_LIVING : InteriorUtils
         if (TDU2Controls.Pressed("menu_down")) _media.Input("Move", "down");
         if (TDU2Controls.Pressed("menu_left")) _media.Input("Move", "left");
         if (TDU2Controls.Pressed("menu_right")) _media.Input("Move", "right");
-        if (TDU2Controls.ConfirmPressed()) _media.Input("A");
+        if (TDU2Controls.ConfirmPressed()
+            && !(_updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "dlc", StringComparison.OrdinalIgnoreCase)))
+            _media.Input("A");   // im Updates-Kanal (DLC-Liste) hätte A nur den Kauf ausgelöst
         _media.ForceVisible("/dlc_popup", false);
     }
 
@@ -1471,6 +1895,8 @@ public class GAME_MODE_LIVING : InteriorUtils
         _mediaOpen = false; _mediaForceCloseAt = -1f;
         if (_media != null) { _media.Visible = false; _media.GotoLabel("/", "default", false); }
         _newsList = null; _shownNews = -1;
+        if (_updatesSeenPending) { _updatesSeenPending = false; TDU2News.MarkUpdatesSeen(); }
+        _updatesMode = false;
         try { FrontendMusic.Stop(); } catch (Exception) { }
         _t.Input.CursorLocked = true;
         ResetUiAim();
@@ -1499,15 +1925,36 @@ public class GAME_MODE_LIVING : InteriorUtils
         string lc = c.ToLowerInvariant();
         if (lc.StartsWith("sndp:")) return;
         Log.Info("TDU Media FSCommand " + c);
-        if (lc == "sbdd") { try { FlashLocalization.Apply(_media, FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language)); } catch (Exception) { } return; }
+        if (lc == "sbdd")
+        {
+            try { FlashLocalization.Apply(_media, FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language)); } catch (Exception) { }
+            SetUpdateTexts();
+            return;
+        }
         if (lc == "tdmd:clos") { FrontendSounds.Play("mdstop"); CloseMedia(); return; }   // Ende der Schließ-Animation: Fernseher aus
+        // Kanal wechseln (sounds.ini "mdswitch" = Med_shift_01; die übrigen md*-Töne schickt der Film selbst als sndp:md…)
         if (lc.StartsWith("tdmd:") && lc.EndsWith(":open")) FrontendSounds.Play("mdswitch");
-        if (lc.StartsWith("tdmd:weat:")) { SetWeather(); return; }
-        if (lc == "dlci" || lc.StartsWith("tdmd:virt:") || lc.StartsWith("tdmd:cdlc:") || lc.StartsWith("tdmd:surv:")) return;
+        if (lc.StartsWith("tdmd:weat:")) { SetWeather(); return; }          // Wetter-Kanal auf/zu
+        if (lc == "dlci") return;                                               // Kauf-Anfrage des DLC-Kanals: gibt es nicht
+        if (lc.StartsWith("tdmd:virt:") || lc.StartsWith("tdmd:surv:")) return; // Umfrage-Kanal ausgelassen
+        if (lc.StartsWith("tdmd:cdlc:"))
+        {
+            if (lc.EndsWith(":open")) { _updatesMode = true; SetUpdateTabFlags(); return; }
+            if (lc.EndsWith(":clos")) { LeaveUpdates(); return; }
+            int us = _newsList != null ? _newsList.Selected : 0;
+            if (lc.Contains("del") && _updatesMode && us >= 0 && us < _news.Count)
+            {
+                _news.RemoveAt(us);
+                if (_newsList != null) { FillNews(_newsList); _media.ListRefresh(_newsList); }
+            }
+            if (_updatesMode) ShowNews(us);
+            return;
+        }
         if (lc.StartsWith("tdmd:news:"))
         {
-            if (lc.EndsWith(":open")) { SetNewsTabFlags(); BuildNews(); return; }
+            if (lc.EndsWith(":open")) { SetNewsTabFlags(); BuildNews(); TDU2News.MarkSeen(); return; }
             if (lc.EndsWith(":clos")) { BuildNews(); return; }
+            // Auswahl (cmd_select) bzw. Löschen (cmd_del) einer Meldung
             int sel = _newsList != null ? _newsList.Selected : 0;
             if (lc.Contains("del") && sel >= 0 && sel < _news.Count)
             {
@@ -1542,47 +1989,99 @@ public class GAME_MODE_LIVING : InteriorUtils
         }
     }
 
+    // ------------------------------------------------------------------ News
     internal static void BuildNews()
     {
         _news.Clear();
-        // Unity: Server-News (Community) und Freundes-Meldungen vom Server – gibt es in der Engine noch nicht
-        if (_newsTab == "game_progress")
+        var now = DateTime.Now;
+        // Server-News (Web-Panel), neueste zuerst
+        foreach (var e in TDU2News.Items)
         {
-            var now = DateTime.Now;
-            var save = TDU2Session.Save;
-            if (save != null)
-                _news.Add(new News
-                {
-                    Date = now,
-                    Title = _german ? "Dein Profil" : "Your profile",
-                    Text = _german
-                        ? $"{TDU2Session.Nick}: {save.ownedCars?.Count ?? 0} Autos in der Garage, Kontostand {save.money:N0} $."
-                        : $"{TDU2Session.Nick}: {save.ownedCars?.Count ?? 0} cars in the garage, balance ${save.money:N0}.",
-                });
+            if (e == null) continue;
+            bool update = TDU2News.IsUpdate(e);
+            if (update != _updatesMode) continue;               // Patch-Notes nur im Updates-Kanal, News nur im News-Kanal
+            if (update && UpdateCat(e) != _updCat) continue;    // Reiter des Updates-Kanals
+            if (!update && _newsTab != "community") continue;   // Server-News im Reiter Community
+            DateTime d = now;
+            if (!string.IsNullOrEmpty(e.created) && DateTime.TryParse(e.created, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt)) d = dt.ToLocalTime();
+            _news.Add(new News { Title = e.header ?? "", Text = e.message ?? "", Icon = e.icon ?? "", Version = e.version ?? "", Date = d, ServerId = e.id, Entry = e });
         }
-        if (_media != null)
+        if (_updatesMode) { FinishNews(); return; }
+        // Community: Server-News + Freundes-Meldungen, zusammen nach Datum (neueste zuerst). Club: nur Club-Meldungen (noch keine).
+        if (_newsTab == "community")
         {
-            _media.SetVariable("/:NbNews", _news.Count.ToString(CultureInfo.InvariantCulture));
-            if (_newsList != null) { FillNews(_newsList); _media.ListRefresh(_newsList); }
+            AddFriendNews();
+            var sorted = new List<News>(_news);
+            sorted.Sort((a, b) => b.Date.CompareTo(a.Date));
+            _news.Clear(); _news.AddRange(sorted);
         }
+        if (_newsTab == "game_progress") AddPlayerNews(now);
+        // keine Meldungen: leere Liste (kein Platzhalter-Eintrag)
+        FinishNews();
     }
 
-    internal static void SetNewsTabFlags()
+    /// <summary>
+    /// Reiter Community: Meldungen der Freundesliste (Friends – Anfrage erhalten/gesendet, neuer Freund) mit den
+    /// Original-Texten der Spieldatenbank, neueste zuerst. Beim Ansehen gelten sie als gelesen ("Neu"-Markierung des Reiters).
+    /// </summary>
+    internal static void AddFriendNews()
     {
-        _media!.SetValue("/:IsNewsGameProgress", false);
-        _media.SetValue("/:IsNewsCommunity", false);
-        _media.SetValue("/:IsNewsClub", false);
-        _media.SetValue("/:IsNewsDLC", false);
+        foreach (var n in Friends.News)
+        {
+            Friends.NewsText(n, out var title, out var text);
+            _news.Add(new News { Date = Friends.NewsDate(n), Title = title, Text = text });
+        }
+        Friends.MarkNewsRead();
+    }
+
+    /// <summary>Reiter Spielfortschritt: Profil (Unity zusätzlich "Nächster Schritt" der Geschichte – folgt mit der Geschichte, Checkliste 27).</summary>
+    internal static void AddPlayerNews(DateTime now)
+    {
+        var save = TDU2Session.Save;
+        if (save != null)
+            _news.Add(new News
+            {
+                Date = now,
+                Title = _german ? "Dein Profil" : "Your profile",
+                Text = _german
+                    ? $"{TDU2Session.Nick}: {save.ownedCars?.Count ?? 0} Autos in der Garage, Kontostand {save.money:N0} $."
+                    : $"{TDU2Session.Nick}: {save.ownedCars?.Count ?? 0} cars in the garage, balance ${save.money:N0}.",
+            });
+    }
+
+    internal static void FinishNews()
+    {
+        if (_media == null) return;
+        _media.SetVariable("/:NbNews", _news.Count.ToString(CultureInfo.InvariantCulture));
+        if (_newsList != null) { FillNews(_newsList); _media.ListRefresh(_newsList); }
     }
 
     internal static void OnMediaListCreated(VmfPlayer.FlashList l)
     {
         if (_media == null) return;
+        string path = VmfPlayer.PathOf(l.Owner) ?? "";
         string lname = l.Name ?? "";
+        Log.Debug($"TDU Media Liste {lname} ({path}) Zeilen {l.ViewSize}");
+        // Updates-Kanal (Original-DLC-Kanal): je Reiter eine Liste "dlc_<reiter>"
+        if (lname.StartsWith("dlc_", StringComparison.OrdinalIgnoreCase))
+        {
+            _updatesMode = true;
+            _updCat = lname.Substring(4).ToLowerInvariant();
+            if (Array.IndexOf(UpdateCats, _updCat) < 0) _updCat = "gmodes";
+            _newsList = l; _shownNews = -1;
+            BuildNews();
+            _media.ListRefresh(l);
+            _media.ListLoaded(l);
+            ShowNews(0);
+            _updatesSeenPending = true;   // gelesen merken erst beim Verlassen (Markierungen bleiben während des Besuchs sichtbar)
+            return;
+        }
+        // News-Kanal: native Liste im Clip news_list
         if (lname.StartsWith("news_", StringComparison.OrdinalIgnoreCase))
         {
             _newsTab = lname.Substring(5).ToLowerInvariant();
             if (_newsTab != "community" && _newsTab != "club") _newsTab = "game_progress";
+            _updatesMode = false;
             _newsList = l; _shownNews = -1;
             BuildNews();
             _media.ListRefresh(l);
@@ -1590,11 +2089,11 @@ public class GAME_MODE_LIVING : InteriorUtils
             ShowNews(0);
             return;
         }
-        string path = VmfPlayer.PathOf(l.Owner) ?? "";
         bool news = path.IndexOf("news", StringComparison.OrdinalIgnoreCase) >= 0 || lname.IndexOf("news", StringComparison.OrdinalIgnoreCase) >= 0
-                    || string.Equals(_media.GetVariable("/:CurrentChannel"), "news", StringComparison.OrdinalIgnoreCase);
+                    || string.Equals(_media.GetVariable("/:CurrentChannel"), "news", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(_media.GetVariable("/:NextChannel"), "news", StringComparison.OrdinalIgnoreCase);
         if (news) { _newsList = l; FillNews(l); }
-        else l.Rows.Clear();   // DLC-/Updates-Listen bleiben leer (kein Server)
+        else l.Rows.Clear();
         _media.ListRefresh(l);
         _media.ListLoaded(l);
         if (news) ShowNews(0);
@@ -1614,9 +2113,19 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         if (_newsList == null || _media == null) return;
         if (_newsList.Selected != _shownNews) ShowNews(_newsList.Selected);
-        // Textlage halten (ohne Bild: "pictured" = Text über die ganze Breite)
+        // Bild/Textlage halten (der Film setzt die Detailansicht beim Blättern selbst um)
         string l = _media.Label(DetailPath);
-        if (l != null && l != "pictured") _media.GotoLabel(DetailPath, "pictured", false);
+        if (l != null && l != _detailLabel) ApplyDetailLayout();
+    }
+
+    internal static void ApplyDetailLayout()
+    {
+        _media!.GotoLabel(DetailPath, _detailLabel, false);
+        if (_detailLabel == "default")
+        {
+            _media.SetVisible(DetailPath + "/ps_store", false);
+            _media.SetClipTexture(DetailPath + "/img/lure", _detailTex);
+        }
     }
 
     internal static void ShowNews(int i)
@@ -1624,10 +2133,103 @@ public class GAME_MODE_LIVING : InteriorUtils
         if (_media == null) return;
         _shownNews = i;
         var n = i >= 0 && i < _news.Count ? _news[i] : null;
-        if (_newsList != null) _media.GotoLabel(DetailPath, "pictured", false);
+        // Bild der Server-News (kommt es erst noch, zeigt OnServerNews die Meldung danach neu an)
+        _detailTex = n?.Entry != null ? TDU2News.Image(n.Entry) : null;
+        _detailLabel = _detailTex != null ? "default" : "pictured";
+        if (_newsList != null) ApplyDetailLayout();
         _media.SetVariable("/:NewsTitle", n?.Title ?? "");
         _media.SetVariable("/:NewsDescription", n?.Text ?? "");
         _media.SetVariable("/:CurrentNewsIndex", (_news.Count == 0 ? 0 : Math.Max(0, i) + 1).ToString(CultureInfo.InvariantCulture));
         _media.SetVariable("/:NbNews", _news.Count.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // ------------------------------------------------------------------ Listen-Ansicht: Kopfzeile, Reiter, Hilfe
+    internal const string HeaderPath = "/lists/#244";   // statischer Text "NEWS & DLC" der Listen-Ansicht
+    internal static int _tabsShown = -1;
+
+    /// <summary>
+    /// Je Kanal: Kopfzeile, Anzahl der Reiter (News 3 ohne "DLC", Updates alle 5) und Hilfeleiste (Updates: nur Zurück statt
+    /// "DLC kaufen"). Jedes Bild, weil der Film Reiter/Hilfe beim Kanal- und Reiterwechsel neu setzt.
+    /// </summary>
+    internal static void UpdateListChrome()
+    {
+        var f = _media!;
+        string ch = f.GetVariable("/:CurrentChannel") ?? "";
+        bool news = string.Equals(ch, "news", StringComparison.OrdinalIgnoreCase), dlc = string.Equals(ch, "dlc", StringComparison.OrdinalIgnoreCase);
+        if (!news && !dlc) { if (_tabsShown != -1) { ShowTabs(5); _tabsShown = -1; } return; }
+        f.SetObjectText(HeaderPath, dlc ? "UPDATES" : "NEWS");
+        int tabs = news ? 3 : 5;
+        if (tabs < 5)
+        {
+            string? len = f.GetScriptValue("/lists", "setTab.length");
+            if (len != null && int.TryParse(len, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) && n > tabs)
+                f.SetScriptValue("/lists", "setTab.length", tabs);
+            if (f.GetScriptValue("/lists", "lastTab") != (tabs - 1).ToString(CultureInfo.InvariantCulture))
+            {
+                f.SetScriptValue("/lists", "lastTab", tabs - 1);
+                f.SetScriptValue("/lists", "nbTabs", tabs);
+            }
+        }
+        if (_tabsShown != tabs) { ShowTabs(tabs); _tabsShown = tabs; }
+        if (dlc)
+        {
+            string hl = f.Label("/help/content");
+            if (hl != null && hl != "back") f.GotoLabel("/help/content", "back", false);
+        }
+    }
+
+    internal static void ShowTabs(int count)
+    {
+        for (int i = 0; i < 5; i++) _media!.ForceVisible("/lists/tabs/tab" + i, i < count ? (bool?)null : false);
+    }
+
+    /// <summary>"Neu"-Markierung der News-Reiter (Community = ungelesene Server-News oder Freundes-Meldungen), vor dem Aufbau der Reiter.</summary>
+    internal static void SetNewsTabFlags()
+    {
+        bool unread = false;
+        foreach (var e in TDU2News.Items) if (e != null && !TDU2News.IsUpdate(e) && TDU2News.IsUnread(e)) { unread = true; break; }
+        _media!.SetValue("/:IsNewsGameProgress", false);
+        _media.SetValue("/:IsNewsCommunity", unread || Friends.HasUnreadNews);
+        _media.SetValue("/:IsNewsClub", false);
+        _media.SetValue("/:IsNewsDLC", false);
+    }
+
+    // ------------------------------------------------------------------ Updates (Original-DLC-Kanal)
+    /// <summary>Kategorie (= Reiter) einer Patch-Note; leer/unbekannt = Packs.</summary>
+    internal static string UpdateCat(NewsEntry? e)
+    {
+        string c = (e?.category ?? "").Trim().ToLowerInvariant();
+        return Array.IndexOf(UpdateCats, c) >= 0 ? c : "gmodes";
+    }
+
+    /// <summary>Titel des Kanals und Hilfetext (statt "DLC kaufen").</summary>
+    internal static void SetUpdateTexts()
+    {
+        if (_media == null) return;
+        _media.SetVariable("/:m_DLCChannel", UpdatesTitle);
+        _media.SetVariable("/:m_BuyDLCHelp_", _german ? "Lesen" : "Read");
+        _media.SetVariable("/:m_NoOffer_", _german ? "Keine Einträge in dieser Kategorie." : "No entries in this category.");
+    }
+
+    /// <summary>"Neu"-Markierung der Reiter: ungelesene Patch-Notes je Kategorie (vor dem Aufbau der Reiter gesetzt).</summary>
+    internal static void SetUpdateTabFlags()
+    {
+        if (_media == null) return;
+        for (int c = 0; c < UpdateCats.Length; c++)
+        {
+            bool unread = false;
+            foreach (var e in TDU2News.Items)
+                if (e != null && TDU2News.IsUpdate(e) && UpdateCat(e) == UpdateCats[c] && TDU2News.IsUnread(e)) { unread = true; break; }
+            _media.SetValue("/:" + UpdateCatVars[c], unread);
+        }
+    }
+
+    internal static void LeaveUpdates()
+    {
+        if (!_updatesMode) return;
+        _updatesMode = false; _shownNews = -1;
+        if (_updatesSeenPending) { _updatesSeenPending = false; TDU2News.MarkUpdatesSeen(); }
+        SetUpdateTabFlags();
+        BuildNews();
     }
 }

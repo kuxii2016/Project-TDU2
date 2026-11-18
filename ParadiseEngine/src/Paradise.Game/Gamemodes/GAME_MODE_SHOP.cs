@@ -17,7 +17,7 @@ namespace Paradise.Game.Gamemodes;
 /// Fahrzeugmenü des Händlers (Mini-Menü SetMiniMenu, Daten, Vergleichen, Einsteigen, Testfahrt).
 /// Gemeinsam mit der Garage (wortgleich): Fahrzeugdaten schreiben (FillCarData), Einsteigen/Cockpit/Motor, Anvisieren – Utils/InteriorUtils.
 /// </summary>
-public class GAME_MODE_SHOP : InteriorUtils
+public partial class GAME_MODE_SHOP : InteriorUtils
 {
     public override Gamemode Mode => Gamemode.GAME_MODE_SHOP;
     static readonly ScreenDef[] _screens = { ScreenDefs.Dealer };

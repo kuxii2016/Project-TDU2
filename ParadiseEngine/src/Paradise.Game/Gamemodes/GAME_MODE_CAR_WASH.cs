@@ -64,7 +64,7 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
         vm.Despawn();
         InteriorUtils._v.Suspended = true;
         _phase = Phase.Loading;
-        TDU2LoadingScreen.Show("Waschanlage " + s.Code, () => _phase != Phase.Loading, 0.5f, false);
+        LoadingScreen.Show("Waschanlage " + s.Code, () => _phase != Phase.Loading, 0.5f, false);
         Log.Info($"Waschanlage {s.Code}: Auto {_car.FileName}, Schmutz {CarDirt.GetSaved(_car):0.00}, Preis {_price} $");
         GameMode.Set(Gamemode.GAME_MODE_CAR_WASH);
         return true;

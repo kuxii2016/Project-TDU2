@@ -23,6 +23,14 @@ public static class TrafficConfig
     /// <summary>Impact (m/s relative speed) at which a car is removed from the AI.</summary>
     public static float CrashSpeed = 3.5f;
 
+    // Multiplayer (Unity TDU2Traffic "Multiplayer"): every car belongs to one player who simulates it; the others see it interpolated
+    /// <summary>Sync traffic between players (Online/Multiplayer.SendTraffic).</summary>
+    public static bool Sync = true;
+    /// <summary>Traffic packets per second.</summary>
+    public static float SendRate = 8f;
+    /// <summary>Only send own cars when another player is this close (m).</summary>
+    public static float RelevantDistance = 900f;
+
     public static bool Sounds = true;
     public static int SoundMax = 3;
     public static float SoundRadius = 70f;

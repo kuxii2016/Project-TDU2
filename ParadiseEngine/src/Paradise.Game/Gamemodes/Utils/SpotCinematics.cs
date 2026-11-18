@@ -8,6 +8,7 @@ using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
 using System.Numerics;
+using Vector4 = System.Numerics.Vector4;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -35,6 +36,10 @@ internal sealed class SpotCinematics : IDisposable
         public string Name = "";
         public CinData Cin = null!;
         public readonly List<CinScene?> Scenes = new();
+        /// <summary>entities.xmb CinProps (Unity TDU2StoryScene.Definition): Bit 1 Schleife, Bit 4 keine Kamera (nur Darsteller).</summary>
+        public uint CinProps;
+        public bool Loop => (CinProps & 0x2) != 0;
+        public bool NoCamera => (CinProps & 0x10) != 0;
     }
 
     sealed class Playing
@@ -45,7 +50,20 @@ internal sealed class SpotCinematics : IDisposable
         public readonly List<AudioVoice> Voices = new();   // gestartete Kino-Töne (Musik, Fx, Stimmen)
     }
 
-    sealed class Pnj { public ulong Hc; public string Config = ""; public AvatarModel? Avatar; public bool Shown; public Matrix4x4 Pose; public AnmClip? Clip; public float T; }
+    sealed class Pnj { public ulong Hc; public string Config = ""; public AvatarModel? Avatar; public bool Shown; public Matrix4x4 Pose; public Anim Anim; }
+
+    /// <summary>
+    /// Abgetasteter Animationszustand eines Darstellers (Unity TDU2StoryScene.Animate/ApplyKey): Clip mit gewrappter
+    /// Clipzeit und Gewicht, dazu der vorherige Clip während des Crossfades (Blend-in f7 der Animation-Spur).
+    /// </summary>
+    struct Anim
+    {
+        public AnmClip? Clip;
+        public float Time;
+        public float Weight;
+        public AnmClip? PrevClip;
+        public float PrevTime;
+    }
 
     readonly IRenderer _r;
     readonly BnkArchive _bank;
@@ -62,7 +80,7 @@ internal sealed class SpotCinematics : IDisposable
 
     // Spieler-Avatar
     AvatarModel? _player;
-    bool _playerShown; Matrix4x4 _playerPose; AnmClip? _playerClip; float _playerT;
+    bool _playerShown; Matrix4x4 _playerPose; Anim _playerAnim;
     int _sex;
 
     // Spielerauto ("PLAYER_CAR")
@@ -126,8 +144,17 @@ internal sealed class SpotCinematics : IDisposable
         var et = root.Get("ExportType_Entity");
         if (et == null) return;
         var names = new List<string>();
+        var props = new Dictionary<string, uint>(StringComparer.Ordinal);
         var cine = et.Get("ArrayOf_Entity__Cinematic");
-        if (cine != null) foreach (var it in cine.Items) { var n = it.S("__Name", "") ?? ""; if (n.Length > 0) names.Add(n); }
+        if (cine != null)
+            foreach (var it in cine.Items)
+            {
+                var n = it.S("__Name", "") ?? "";
+                if (n.Length == 0) continue;
+                names.Add(n);
+                var cp = it.Get("CinProps");
+                if (cp != null && cp.Items.Count > 0) props[n] = (uint)cp.Items[0].AsInt();
+            }
         // Figuren (Entity__PNJ mit ConfigName = DBPNJ._configid)
         foreach (var arr in et.Children)
         {
@@ -164,7 +191,7 @@ internal sealed class SpotCinematics : IDisposable
             if (hit == null) { Log.Debug("Cinematics " + BankName + ": keine .cin zu " + n); continue; }
             var cin = CinData.Parse(_bank.Read(hit), hit.Name);
             if (cin == null) continue;
-            var def = new Def { Name = n, Cin = cin };
+            var def = new Def { Name = n, Cin = cin, CinProps = props.TryGetValue(n, out uint cpv) ? cpv : 0u };
             for (int s = 0; s < cin.SceneReferences.Count; s++)
             {
                 string? file = cin.SceneFile(s);
@@ -198,6 +225,18 @@ internal sealed class SpotCinematics : IDisposable
         return true;
     }
 
+    /// <summary>Haupt-Cinematic wie Unity TDU2StoryScene.PlayMain: Schleife und Kamera aus CinProps der Definition.</summary>
+    public bool PlayMainProps(string name)
+    {
+        var d = Find(name);
+        if (d == null) { Log.Warn("Cinematics " + BankName + ": " + name + " fehlt"); return false; }
+        StopVoices(_main);
+        _main = new Playing { Def = d, Loop = d.Loop, Camera = !d.NoCamera };
+        Launch(_main);
+        Log.Info($"Cinematic {name} ({d.Cin.Duration:0.0} s, {d.Cin.Shots.Count} Shots{(d.Loop ? ", Schleife" : "")}{(d.NoCamera ? ", ohne Kamera" : "")})");
+        return true;
+    }
+
     /// <summary>Hintergrund-Cinematic (Figuren in Schleife, ohne Kamera).</summary>
     public bool PlayBackground(string name, bool loop = true)
     {
@@ -213,6 +252,81 @@ internal sealed class SpotCinematics : IDisposable
 
     public void StopMain() { StopVoices(_main); _main = null; }
     public void StopBackground() { foreach (var b in _background) StopVoices(b); _background.Clear(); }
+    public void StopBackground(string name)
+    {
+        foreach (var b in _background) if (string.Equals(b.Def.Name, name, StringComparison.OrdinalIgnoreCase)) StopVoices(b);
+        _background.RemoveAll(b => string.Equals(b.Def.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+    public bool IsBackgroundPlaying(string name) => _background.Exists(b => string.Equals(b.Def.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    // ------------------------------------------------------------------ Story-Szenen (Unity TDU2StoryScene)
+    /// <summary>Nachrichten der Haupt-Cinematic (flsh:, weat:, wmod:, snd:…), Unity TDU2StoryScene.ProcessMessages.</summary>
+    public event Action<string, float>? Message;
+
+    /// <summary>Darsteller-Name des Autos (Unity SetCar cinCarEntity: "PLAYER_CAR", Garage "CIN_CAR"); __Hc der Entity__CinCar.</summary>
+    public string CarActor = "PLAYER_CAR";
+    public ulong CarActorHc;
+    /// <summary>Ruhelage des Autos (Bankrahmen, z.B. Entity__PosCam D_CAR), wenn keine Szene es bewegt; null = nur in Szenen sichtbar.</summary>
+    public Matrix4x4? CarRest;
+
+    AvatarConfig? _playerCfg;
+    /// <summary>Spieler-Avatar mit eigener Konfiguration (Story: AVT_Male_Intro …) statt AvatarConfigs.Local.</summary>
+    public void SetPlayer(AvatarConfig? cfg)
+    {
+        _playerCfg = cfg;
+        _player?.Dispose(); _player = null;
+        EnsurePlayer();
+    }
+
+    /// <summary>Entity__Fx der Bank abspielen (Unity PlayEmitter), loop = Schleife (Party-Musik).</summary>
+    public bool PlayEmitter(string name, float offset = 0f, bool loop = false, List<AudioVoice>? into = null)
+    {
+        if (_audio == null) PollAudio();
+        if (_audio == null) return false;
+        Vector3? eye = Camera(out var e, out _, out _, out _) ? e : null;
+        return _audio.PlayEmitter(name, offset, loop, Frame, eye, into ?? _misc);
+    }
+
+    /// <summary>Fx__Root nach Name 2D abspielen (Stimmen wie "EVTE_to_player_01"); Rückgabe Dauer (0 = nicht gefunden).</summary>
+    public float PlayFx(string rootName)
+    {
+        if (_audio == null) PollAudio();
+        if (_audio == null) return 0f;
+        ulong hc = _audio.FindRootByName(rootName);
+        return hc == 0 ? 0f : _audio.PlayRoot2D(hc, _misc);
+    }
+
+    readonly List<AudioVoice> _misc = new();
+    public void StopMisc() => CinematicAudio.Stop(_misc);
+
+    /// <summary>Einblenden aus einer Farbe am Anfang eines Shots (Shot-Übergang Typ 1) der Haupt-Cinematic.</summary>
+    public bool ShotFade(out float alpha, out Vector4 color)
+    {
+        alpha = 0f; color = new Vector4(0f, 0f, 0f, 1f);
+        var p = _main;
+        if (p == null || !p.Camera) return false;
+        var shot = p.Def.Cin.ShotAt(p.Time);
+        if (shot == null || shot.FadeType != 1 || shot.FadeDuration <= 0f) return false;
+        float el = p.Time - shot.Start;
+        if (el < 0f || el >= shot.FadeDuration) return false;
+        alpha = 1f - el / shot.FadeDuration; color = shot.FadeColor;
+        return true;
+    }
+
+    void Messages(Playing p, float from, float to)
+    {
+        if (Message == null) return;
+        var cin = p.Def.Cin;
+        foreach (var e in cin.Messages)
+        {
+            bool hit = (e.Time > from && e.Time <= to) || (from < 0f && e.Time <= 0f && to >= 0f);
+            if (!hit) continue;
+            string? m = cin.MessageText(e);
+            if (string.IsNullOrEmpty(m)) continue;
+            try { Message(m, MathF.Max(to - e.Time, 0f)); }
+            catch (Exception ex) { Log.Warn("Cinematic-Nachricht " + m + ": " + ex.Message); }
+        }
+    }
 
     /// <summary>Kino-Töne geladen (Spielmodi warten darauf im Ladebildschirm, sonst fehlen die Töne am Kinoanfang).</summary>
     public bool AudioReady => _audioTask == null || _audioTask.IsCompleted;
@@ -239,11 +353,10 @@ internal sealed class SpotCinematics : IDisposable
         }
         foreach (var b in _background) Pose(b);
         if (_main != null) Pose(_main);
+        if (!_carShown && CarRest.HasValue) { _carShown = true; _carPose = CarRest.Value; }
         AnimateProps();
         _player?.Update();
         foreach (var p in _pnjs) p.Avatar?.Update();
-        if (_playerShown) _playerT += dt;
-        foreach (var p in _pnjs) if (p.Shown) p.T += dt;
     }
 
     // Wie Unity TDU2StoryScene.Advance: Töne im Intervall (Prev, Time]; Schleifen-Neustart (Exe FUN_00b402f0) beginnt die Töne von
@@ -292,6 +405,7 @@ internal sealed class SpotCinematics : IDisposable
     /// <summary>Töne: Fx-Ereignisse des .cin und Fx-Spuren der Darsteller der aktuellen Szene (OpenTDU2 IntroCinematic::updateFx).</summary>
     void UpdateFx(Playing p, float from, float to)
     {
+        if (p.Camera) Messages(p, from, to);
         if (_audio == null) PollAudio();
         if (_audio == null || !_audio.HasSounds) return;
         var cin = p.Def.Cin;
@@ -325,16 +439,14 @@ internal sealed class SpotCinematics : IDisposable
         {
             if (o.IsCamera || !o.VisibleAt(st)) continue;
             var m = Matrix4x4.CreateFromQuaternion(sc.OriginRotation * o.SampleRotation(st)) * Matrix4x4.CreateTranslation(sc.ToGame(o.SamplePosition(st)));
-            int refIdx = o.AnimationRefAt(st, out float keyTime);
-            string? clipName = refIdx >= 0 ? sc.ReferenceName(refIdx) : null;
             if (string.Equals(o.Name, "Avatar", StringComparison.OrdinalIgnoreCase))
             {
                 if (!CastPlayer) continue;
                 EnsurePlayer();
                 _playerShown = true; _playerPose = m;
-                SetClip(ref _playerClip, ref _playerT, SexClip(clipName), st - keyTime);
+                _playerAnim = SampleAnim(sc, o, st, true);
             }
-            else if (string.Equals(o.Name, "PLAYER_CAR", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(o.Name, CarActor, StringComparison.OrdinalIgnoreCase) || (CarActorHc != 0 && o.EntityHashcode == CarActorHc))
             {
                 _carShown = true; _carPose = m;
             }
@@ -345,17 +457,64 @@ internal sealed class SpotCinematics : IDisposable
                 EnsurePnj(pnj);
                 pnj.Shown = true; pnj.Pose = m;
                 ActiveActors.Add(pnj.Hc);
-                SetClip(ref pnj.Clip, ref pnj.T, clipName, st - keyTime);
+                pnj.Anim = SampleAnim(sc, o, st, false);
             }
         }
     }
 
-    void SetClip(ref AnmClip? clip, ref float t, string? name, float since)
+    /// <summary>
+    /// Animation-Spur eines Darstellers abtasten – 1:1 wie Unity TDU2StoryScene.Animate/ApplyKey: letzten Key k wählen,
+    /// Clipzeit u = f2 − f7 + (t − T_k) auf die Clip-Länge wrappen (Loop) und während f7 vom vorherigen Key crossfaden.
+    /// Ohne das Wrappen hält ParadiseEngine nach clip.Length die letzte Pose („Animation läuft nicht“).
+    /// </summary>
+    Anim SampleAnim(CinScene sc, CinObject o, float st, bool player)
     {
-        var c = Clip(name);
-        if (c == null) return;
-        // Clip läuft ab seinem Schlüssel in der Szene (Szenenzeit - Schlüsselzeit)
-        clip = c; t = MathF.Max(0f, since);
+        var a = default(Anim);
+        var tr = o.Find(CinIds.TrackAnimation);
+        if (tr == null || tr.Components < 8 || tr.Times.Length == 0) return a;
+        int c = tr.Components;
+        int k = 0;
+        for (int i = 0; i < tr.Times.Length; i++) if (tr.Times[i] <= st) k = i;
+        float blendIn = tr.Values[k * c + 7];
+        float since = st - tr.Times[k];
+        bool cross = k > 0 && blendIn > 0f && since < blendIn;
+        if (cross)
+        {
+            a.PrevClip = KeyClip(sc, tr, k - 1, player);
+            a.PrevTime = a.PrevClip != null ? ClipTime(tr, k - 1, st, a.PrevClip) : 0f;
+        }
+        a.Clip = KeyClip(sc, tr, k, player);
+        a.Time = a.Clip != null ? ClipTime(tr, k, st, a.Clip) : 0f;
+        a.Weight = cross ? Math.Clamp(since / blendIn, 0f, 1f) : 1f;
+        return a;
+    }
+
+    AnmClip? KeyClip(CinScene sc, CinTrack tr, int k, bool player)
+    {
+        int refIdx = (int)tr.Raw[k * tr.Components];
+        if (refIdx < 0 || refIdx >= sc.References.Count) return null;
+        string? name = sc.ReferenceName(refIdx);
+        return Clip(player ? SexClip(name) : name);
+    }
+
+    /// <summary>Unity Mathf.Repeat: u = f2 − f7 + (t − T_k), auf max(0.05f, clip.Length) gewrappt.</summary>
+    static float ClipTime(CinTrack tr, int k, float st, AnmClip clip)
+    {
+        int c = tr.Components;
+        float u = tr.Values[k * c + 2] - tr.Values[k * c + 7] + (st - tr.Times[k]);
+        float len = MathF.Max(0.05f, clip.Length);
+        return u - MathF.Floor(u / len) * len;
+    }
+
+    /// <summary>Requisiten: gleiche Clipzeit wie ApplyKey; ohne Animationsspur am Szenenzeitpunkt.</summary>
+    static float ClipTimeAt(CinObject o, float st, AnmClip clip)
+    {
+        var tr = o.Find(CinIds.TrackAnimation);
+        if (tr == null || tr.Components < 8 || tr.Times.Length == 0)
+            return Math.Clamp(st, 0f, MathF.Max(0.05f, clip.Length));
+        int k = 0;
+        for (int i = 0; i < tr.Times.Length; i++) if (tr.Times[i] <= st) k = i;
+        return ClipTime(tr, k, st, clip);
     }
 
     string? SexClip(string? name)
@@ -378,7 +537,7 @@ internal sealed class SpotCinematics : IDisposable
     void EnsurePlayer()
     {
         if (_player != null || !AvatarLibrary.Ready) return;
-        var cfg = AvatarConfigs.Local;
+        var cfg = _playerCfg ?? AvatarConfigs.Local;
         _sex = cfg.Sex;
         _player = AvatarModel.Create(_r, cfg);
     }
@@ -541,15 +700,15 @@ internal sealed class SpotCinematics : IDisposable
                 p.Pose = Matrix4x4.CreateFromQuaternion(sc.OriginRotation * o.SampleRotation(st)) * Matrix4x4.CreateTranslation(sc.ToGame(o.SamplePosition(st)));
                 // Wurzelbewegung aus dem Clip des Darstellers (Ruhe der Wurzel heraus, Clip-Lage hinein)
                 p.Anim = Matrix4x4.Identity;
-                int ri = o.AnimationRefAt(st, out float kt);
+                int ri = o.AnimationRefAt(st, out _);
                 var clip = p.Skel != null && p.Root >= 0 && ri >= 0 ? Clip(sc.ReferenceName(ri)) : null;
                 if (clip != null)
                 {
                     uint rh = p.Skel!.Hash[p.Root];
+                    float ct = ClipTimeAt(o, st, clip);
                     foreach (var tr in clip.Tracks)
                     {
                         if (tr.Hash != rh) continue;
-                        float ct = System.Math.Clamp(st - kt, 0f, clip.Length);
                         var rot = tr.Rot != null ? tr.Rot.SampleRot(ct) : p.Skel.Rot[p.Root];
                         var pos = tr.Pos != null ? tr.Pos.SampleVec(ct) : p.Skel.Pos[p.Root];
                         p.Anim = p.RestRootInv * (Matrix4x4.CreateFromQuaternion(rot) * Matrix4x4.CreateTranslation(pos));
@@ -598,8 +757,8 @@ internal sealed class SpotCinematics : IDisposable
     public void Render(Matrix4x4 gameToRender)
     {
         var toRender = Frame * gameToRender;
-        if (_playerShown) DrawAvatar(_player, _playerClip, _playerT, _playerPose * toRender);
-        foreach (var p in _pnjs) if (p.Shown) DrawAvatar(p.Avatar, p.Clip, p.T, p.Pose * toRender);
+        if (_playerShown) DrawAvatar(_player, _playerAnim, _playerPose * toRender);
+        foreach (var p in _pnjs) if (p.Shown) DrawAvatar(p.Avatar, p.Anim, p.Pose * toRender);
         if (_carShown && _car != null)
         {
             _car.UpdateTransforms(_carPose * toRender);
@@ -607,16 +766,13 @@ internal sealed class SpotCinematics : IDisposable
         }
     }
 
-    void DrawAvatar(AvatarModel? a, AnmClip? clip, float t, Matrix4x4 model)
+    void DrawAvatar(AvatarModel? a, Anim anim, Matrix4x4 model)
     {
         if (a == null || !a.Ready || a.Rig == null) return;
         if (a.Indoor != _indoor) a.Indoor = _indoor;
         a.Rig.BeginPose();
-        if (clip != null)
-        {
-            float len = MathF.Max(0.05f, clip.Length);
-            a.Rig.ApplyClip(clip, MathF.Min(t, len), 1f, true);   // Cinematic-Clips nicht schleifen: letzte Pose halten
-        }
+        if (anim.PrevClip != null) a.Rig.ApplyClip(anim.PrevClip, anim.PrevTime, 1f, true);
+        if (anim.Clip != null) a.Rig.ApplyClip(anim.Clip, anim.Time, anim.Weight, true);
         a.Draw(model);
     }
 
@@ -624,7 +780,7 @@ internal sealed class SpotCinematics : IDisposable
     {
         _player?.Dispose(); _player = null;
         foreach (var p in _pnjs) { p.Avatar?.Dispose(); p.Avatar = null; }
-        StopVoices(_main); foreach (var b in _background) StopVoices(b);
+        StopVoices(_main); foreach (var b in _background) StopVoices(b); StopMisc();
         _audio?.StopAll(); _audio = null; _audioTask = null;
         _main = null; _background.Clear(); _ended.Clear(); ActiveActors.Clear();
         _car?.Destroy(); _car = null; _carAssets?.DestroyTextures(); _carAssets = null; _carTask = null;
