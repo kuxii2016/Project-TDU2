@@ -27,6 +27,14 @@ The goal is to regain full control over rendering, performance, resource managem
   <img src="./Screenshots/stickershop.PNG" width="49%" alt="Sticker Shop"/>
   <img src="./Screenshots/tuner.PNG" width="49%" alt="Tuner Shop"/>
 </p>
+
+
+<p align="center">
+  <img src="./drivingshool/stickershop.PNG" width="49%" alt="Driving Shool"/>
+  <img src="./Screenshots/cups.PNG" width="49%" alt="Cups Unlocked"/>
+</p>
+
+Used Modded Games files so map roads have other Colors
 ---
 
 ## Why a Custom Engine?
