@@ -74,7 +74,7 @@ namespace Paradise.Core.Vehicles
         {
             // Unity Input.GetAxis("Mouse X/Y"): Mausweg * 0,1, Y nach oben positiv
             float mx = (_input?.MouseDeltaX ?? 0f) * 0.1f, my = -(_input?.MouseDeltaY ?? 0f) * 0.1f;
-            if (Paradise.Core.Audio.TDU2Radio.IsOpen) return;
+            if (Paradise.Core.Audio.Radio.IsOpen) return;
             float kx = 0, ky = 0;
             // Gamepad: rechter Stick = Blickrichtung (Ausschlag = Winkel, wie im Spiel), loslassen -> zurück zur Mitte
             var look = PadLook?.Invoke() ?? Vector2.Zero;

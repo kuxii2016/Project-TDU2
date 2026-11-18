@@ -2,7 +2,7 @@
 
 namespace Paradise.Core.Formats;
 
-/// <summary>Verweis einer Instanz auf ein OBJ (eine LOD-Stufe).</summary>
+/// <summary>A reference from an instance to an OBJ (a LOD level).</summary>
 public struct LodRef
 {
     public ulong ObjKey;      // Key des OBJ = Key der Geometrie im .3dg (GEOA-Hash)
@@ -38,24 +38,24 @@ public struct HeightmapInfo
     public int Tiles;          // 16
     public float Spacing;      // 3 / 24 / 384 m
     /// <summary>
-    /// Kacheln (Tiles×Tiles, Index = Z-Kachel·Tiles + X-Kachel), die das Original nicht als Höhenraster zeichnet:
-    /// HMAP-Kachelsatz (24 Byte: 4 float LOD-Fehler, float Mittelhöhe, u32) mit Fehler −1. Dort liegt das Gelände als
-    /// Objekt "BLOCK" im Sektor (Tunnelportale; dessen Material wird wie TD_Ground mit der Sektortextur gezeichnet).
+    /// Tiles (Tiles×Tiles, Index = Z-Tile·Tiles + X-Tile) that the original does not render as a heightmap:
+    /// HMAP tile set (24 bytes: 4 float LOD errors, float average height, u32) with an error of −1. The terrain is represented there as
+    /// “BLOCK” object in the sector (tunnel portals; its material is rendered with the sector texture, just like TD_Ground).
     /// </summary>
     public bool[]? HoleTiles;
 }
 
 /// <summary>
-/// .3dd = Szenenbeschreibung. Portiert aus dem Unity-Projekt.
-///   MBNA: Liste von MBNK (Material-Banken: je 16 Byte {u64 materialKey, 8 Byte pad})
-///   OBJA: HASH + OBJ. (payload: 3x u32 0, u32 primCount, float4 sphere) – oder HMAP beim Terrain
-///   INSA: HASH + INS. (payload 160 Byte):
-///         +0  float4x4 Matrix (D3D, Zeilenvektoren, Translation in Zeile 3)
-///         +68 u32 Offset des MBNK, +78 u16 Anzahl LODs
-///         +80 LOD-Einträge à 20 Byte {u32 Zeiger auf OBJA-Hash-Eintrag, float Distanz, 12 Byte 0}
-///   HIEA: HASH + HIE. (payload 16 Byte: u32 0, u32 INS-Offset, u16 Kinder, u16 'AP', u32 Eltern-HIE-Offset)
-/// Matrizen: Unity transponierte auf Spaltenvektoren; System.Numerics nutzt Zeilenvektoren
-/// wie D3D -> die Datei wird unverändert übernommen, Produkte drehen sich entsprechend um.
+/// .3dd = Scene description. Ported from the Unity project.
+///   MBNA: List of MBNKs (material banks: 16 bytes each {u64 materialKey, 8 bytes pad})
+///   OBJA: HASH + OBJ. (payload: 3x u32 0, u32 primCount, float4 sphere) – or HMAP for terrain
+///   INSA: HASH + INS. (payload 160 bytes):
+///         +0  float4x4 matrix (D3D, row vectors, translation in row 3)
+///         +68 u32 MBNK offset, +78 u16 number of LODs
+///         +80 LOD entries, 20 bytes each {u32 pointer to OBJA hash entry, float distance, 12 bytes of 0}
+///   HIEA: HASH + HIE. (payload 16 bytes: u32 0, u32 INS offset, u16 children, u16 ‘AP’, u32 parent HIE offset)
+/// Matrices: Unity transposes to column vectors; System.Numerics uses row vectors
+/// like D3D -> the file is imported unchanged, products are rotated accordingly.
 /// </summary>
 public sealed class Scene3DD
 {
@@ -193,7 +193,7 @@ public sealed class Scene3DD
         return r;
     }
 
-    /// <summary>Materialliste (MBNK) einer Instanz. Index = PRIM.materialIndex.</summary>
+    /// <summary>Material list (MBNK) for an instance. Index = PRIM.materialIndex.</summary>
     public ulong[] ReadMaterialBank(int mbnkOffset)
     {
         var d = Data;
@@ -207,7 +207,7 @@ public sealed class Scene3DD
         return r;
     }
 
-    /// <summary>Weltmatrix eines HIE-Knotens (Produkt über die Elternkette, Zeilenvektoren: Kind * Eltern).</summary>
+    /// <summary>World matrix of an HIE node (product over the parent chain, row vectors: child * parent).</summary>
     public Matrix4x4 WorldMatrix(HieRecord h, Dictionary<int, HieRecord> byOffset)
     {
         var m = GetIns(h.InsOffset).Matrix;
@@ -221,7 +221,7 @@ public sealed class Scene3DD
         return m;
     }
 
-    /// <summary>Matrix des obersten Vorfahren (Wurzel der Hierarchie) eines HIE-Knotens.</summary>
+    /// <summary>Matrix of the top-level ancestor (root of the hierarchy) of an HIE node.</summary>
     public Matrix4x4 RootMatrix(HieRecord h, Dictionary<int, HieRecord> byOffset)
     {
         var cur = h;

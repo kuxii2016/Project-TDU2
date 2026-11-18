@@ -1,14 +1,13 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfMovie.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Formats;
 using Paradise.Core.Math;
 
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Inhalt eines VMF-Films (siehe Docs/TDU2_VMF_Flash_Format.md): Charaktere (Shapes, Sprites, Bitmaps, Textfelder)
-    /// und die Hauptzeitleiste. Thread-sicher ladbar (keine Unity-Objekte).
-    /// Koordinaten in Pixeln (Twips / 20), Bühne 1280 x 960.
+    /// Contents of a VMF movie (see Docs/TDU2_VMF_Flash_Format.md): characters (shapes, sprites, bitmaps, text fields)
+    /// and the main timeline. Can be loaded thread-safely (no Unity objects).
+    /// Coordinates in pixels (Twips / 20), stage 1280 x 960.
     /// </summary>
     public sealed class VmfMovie
     {
@@ -40,9 +39,9 @@ namespace Paradise.Core.Flash
         public sealed class Bitmap : Character { public int Width, Height; public float U0, V0, U1, V1; public int Page = -1; public string TextureName; }
 
         /// <summary>
-        /// Tag 125 (Eden-Font): u16 id, u16 texId (0 -> fla_&lt;id&gt;), u8 flags, Name\0, u16 n, u16 nTex,
-        /// nTex Glyphen à 26 Byte {u16 code, f32 u0, u1, v0, v1, s16 w, h, xoff, top (1/1024 em)}, danach weitere Tabellen.
-        /// Glyphen-Textur: weiß auf schwarz (Luminanz = Deckkraft).
+        /// Tag 125 (Eden font): u16 id, u16 texId (0 -> fla_&lt;id&gt;), u8 flags, Name\0, u16 n, u16 nTex,
+        /// nTex glyphs, 26 bytes each {u16 code, f32 u0, u1, v0, v1, s16 w, h, xoff, top (1/1024 em)}, followed by additional tables.
+        /// Glyph texture: white on black (luminance = opacity).
         /// </summary>
         public sealed class Font : Character
         {
@@ -63,7 +62,7 @@ namespace Paradise.Core.Flash
             public float LeftMargin, RightMargin, Indent, Leading;
         }
 
-        /// <summary>Zeitleiste (Hauptfilm oder Sprite): je Frame die Steuer-Tags (PlaceObject2, RemoveObject2, DoAction).</summary>
+        /// <summary>Timeline (main movie or sprite): the control tags (PlaceObject2, RemoveObject2, DoAction) for each frame.</summary>
         public sealed class Timeline : Character
         {
             public readonly List<List<FrameOp>> Frames = new List<List<FrameOp>>();
@@ -82,14 +81,14 @@ namespace Paradise.Core.Flash
             public byte[] Actions;
         }
 
-        /// <summary>DefineButton2 (Tag 34): Zustands-Datensätze (Up/Over/Down/Hit) und Bedingungsaktionen (rollOver, release ...).</summary>
+        /// <summary>DefineButton2 (Day 34): State records (Up/Over/Down/Hit) and conditional actions (rollOver, release ...).</summary>
         public sealed class Button : Character
         {
             public readonly List<ButtonRecord> Records = new List<ButtonRecord>();
             public readonly List<ButtonAction> Actions = new List<ButtonAction>();
         }
         public sealed class ButtonRecord { public int States, CharId, Depth; public Matrix2D Matrix = Matrix2D.Identity; public ColorTransform Cx = ColorTransform.Identity; }
-        /// <summary>Bedingungen (u16): 0x01 IdleToOverUp (rollOver), 0x02 OverUpToIdle (rollOut), 0x04 OverUpToOverDown (press),
+        /// <summary>Conditions (u16): 0x01 IdleToOverUp (rollOver), 0x02 OverUpToIdle (rollOut), 0x04 OverUpToOverDown (press),
         /// 0x08 OverDownToOverUp (release), 0x10 OverDownToOutDown (dragOut), 0x20 OutDownToOverDown (dragOver), 0x40 OutDownToIdle (releaseOutside), 0x80 IdleToOverDown.</summary>
         public sealed class ButtonAction { public int Conditions; public byte[] Code; }
 
@@ -97,7 +96,7 @@ namespace Paradise.Core.Flash
         public Timeline Root = new Timeline { Id = -1 };
         public float FrameRate = 30f;
         public readonly Dictionary<int, int> PageOf = new Dictionary<int, int>();
-        /// <summary>ExportAssets (Tag 56): Verknüpfungsname -> Charakter-ID (für attachMovie).</summary>
+        /// <summary>ExportAssets (Day 56): Link Name -> Character ID (for attachMovie).</summary>
         public readonly Dictionary<string, int> Exports = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         // ---------------------------------------------------------------- Laden
@@ -240,7 +239,6 @@ namespace Paradise.Core.Flash
             return op;
         }
 
-        // ---------------------------------------------------------------- Shapes
         static List<FillStyle> ReadFills(BitReader br, int ver, bool morph)
         {
             int n = br.U8(); if (n == 0xFF && ver >= 2) n = br.U16();
@@ -258,7 +256,7 @@ namespace Paradise.Core.Flash
                     if (fs.Type == 0x13) br.U16();
                 }
                 else if (fs.Type >= 0x40 && fs.Type <= 0x43) { fs.BitmapId = br.U16(); fs.Matrix = br.Matrix(); if (morph) br.Matrix(); }
-                else throw new FormatException("Füllstil " + fs.Type);
+                else throw new FormatException("Fillstyle " + fs.Type);
                 list.Add(fs);
             }
             return list;
@@ -280,9 +278,9 @@ namespace Paradise.Core.Flash
         }
 
         /// <summary>
-        /// VMF-Shape: Kopf/Stile wie SWF, die Geometrie aber als einfache Pfadliste:
-        /// u16 n; je Pfad: u8 Linienstil, u16 fill0, u16 fill1, i32 x, i32 y (Twips), u16 Kanten,
-        /// je Kante i32 cx, cy, ax, ay (Quadratic Bezier, gerade wenn c == a), u8 Flag.
+        /// VMF shape: Header/styles like SWF, but the geometry is a simple path list:
+        /// u16 n; for each path: u8 line style, u16 fill0, u16 fill1, i32 x, i32 y (twips), u16 edges,
+        /// for each edge: i32 cx, cy, ax, ay (quadratic Bézier; straight if c == a), u8 flag.
         /// </summary>
         void ReadShape(byte[] d, int p, int len, int ver)
         {
@@ -321,7 +319,7 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>DefineMorphShape: Stile wie SWF, Kanten als normale SWF-Shape-Records (Startform wird verwendet).</summary>
+        /// <summary>DefineMorphShape: Styles like SWF, edges as normal SWF shape records (the start shape is used).</summary>
         void ReadMorph(byte[] d, int p, int len)
         {
             var br = new BitReader(d, p);
@@ -471,7 +469,7 @@ namespace Paradise.Core.Flash
         }
     }
 
-    /// <summary>2D-Affinmatrix wie SWF: x' = A x + C y + Tx, y' = B x + D y + Ty.</summary>
+    /// <summary>2D affine matrix as in SWF: x' = A x + C y + Tx, y' = B x + D y + Ty.</summary>
     public struct Matrix2D
     {
         public float A, B, C, D, Tx, Ty;
@@ -512,7 +510,7 @@ namespace Paradise.Core.Flash
         };
     }
 
-    /// <summary>Bit-Leser für SWF-Strukturen (RECT, MATRIX, CXFORM).</summary>
+    /// <summary>Bit reader for SWF structures (RECT, MATRIX, CXFORM).</summary>
     public sealed class BitReader
     {
         readonly byte[] _d; int _p, _b;

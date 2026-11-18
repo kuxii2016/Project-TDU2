@@ -97,9 +97,7 @@ namespace Paradise.Core.Vehicles
                     var m = Matrix4x4.Identity;
                     for (var c = node; c != null; c = c.Parent) { m *= c.Local; if (c == model.Visual) break; }
                     _exhaust.Add((m, null, null));
-                    Log.Info($"[FX] {name}: Modellraum Pos {m.Translation}, Y-Achse {Vector3.Normalize(new Vector3(m.M21, m.M22, m.M23))}");
                 }
-            Log.Info($"[FX] Auspuffpunkte: {_exhaust.Count}, Effekte geladen: {_lib?.Count ?? 0}");
         }
 
         /// <summary>Werte aus carfx.xmb bei km/h (zwischen INIT/MIN/MED/MAX linear); null = unter der INIT-Schwelle.</summary>
@@ -232,7 +230,6 @@ namespace Paradise.Core.Vehicles
             if (now >= _diagAt && _live.Count > 0)
             {
                 _diagAt = now + 5f;
-                Log.Info("[FX] " + string.Join(", ", _live.Select(f => $"{f.Name}={f.Particles}")));
             }
         }
 

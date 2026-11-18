@@ -1,6 +1,4 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Cinematics/TDU2TitleScene.cs). Unterschiede: kein MonoBehaviour – der Login ruft
-// Update (Kamera) und Render (Auto) auf; alles im Spielraum (ohne gespiegeltes MapRoot), Kamera über die Freiflug-Kamera der Welt.
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
@@ -13,19 +11,19 @@ using System.Numerics;
 namespace Paradise.Core.Cinematics
 {
     /// <summary>
-    /// 3D-Hintergrund des "Press Start"-Bildschirms wie im Original (GMLogin; nach OpenTDU2 game/bootmenu/title_scene.cpp):
-    /// eines der Press-Start-Kinos der Insel (islands/&lt;insel&gt;/scenarics/press_start.bnk).
-    ///   - entities.xmb: Entity__Cinematic ohne "C_LIFE" (Zufall, -FORCELOGINCINEINDEX n überschreibt), die letzten 4 Ziffern
-    ///     des Namens wählen die .cin ("C_01_3332" -> *_3332.cin); Entity__CinCar CIN_CAR_xx -> id_car -> DBCarPhysicsData
-    ///   - .cin: Shots über eine .sce (Kameras, Auto CIN_CAR_xx), Nachrichten "weat:" / "wmod:" je Schnitt
-    ///   - Wetter: fx/cinematic_weathers.xmb (+ cinematic_modifiers.xmb) über <see cref="WorldWeather.Override"/>
-    /// Die Insel wird um die Kinokamera gestreamt. Schleife über die Kinodauer.
+    /// 3D background of the “Press Start” screen as in the original:
+    /// one of the “Press Start” cinematic scenes from the island (islands/&lt;island&gt;/scenarics/press_start.bnk).
+    ///   - entities.xmb: Entity__Cinematic without “C_LIFE” (random; -FORCELOGINCINEINDEX n overrides it); the last 4 digits
+    ///     of the name determine the .cin file (“C_01_3332” -> *_3332.cin); Entity__CinCar CIN_CAR_xx -> id_car -> DBCarPhysicsData
+    ///   - .cin: Shots via a .sce (cameras, car CIN_CAR_xx), “weat:” / “wmod:” messages per cut
+    ///   - Weather: fx/cinematic_weathers.xmb (+ cinematic_modifiers.xmb) via <see cref="WorldWeather.Override"/>
+    /// The island is streamed around the cinema camera. Loop over the duration of the scene.
     /// </summary>
-    public sealed class TDU2TitleScene
+    public sealed class TitleScene
     {
         /// <summary>Läuft gerade ein Titel-Kino?</summary>
         public static bool Playing => _inst != null && _inst._loaded;
-        static TDU2TitleScene _inst;
+        static TitleScene _inst;
 
         VehicleManager _mgr;
         MapStreamer _streamer;
@@ -60,13 +58,13 @@ namespace Paradise.Core.Cinematics
         public Vector3 CameraUp { get; private set; } = Vector3.UnitY;
         public float CameraFov { get; private set; } = 60f;
 
-        public static TDU2TitleScene Current => _inst;
+        public static TitleScene Current => _inst;
 
-        /// <summary>Titel-Kino starten (cinematicIndex &lt; 0: Zufall wie im Original).</summary>
-        public static TDU2TitleScene Begin(VehicleManager mgr, MapStreamer streamer, IRenderer r, int cinematicIndex = -1)
+        /// <summary>Titel-Kino starten (cinematicIndex 0: Zufall wie im Original).</summary>
+        public static TitleScene Begin(VehicleManager mgr, MapStreamer streamer, IRenderer r, int cinematicIndex = -1)
         {
             if (mgr == null || streamer == null) return null;
-            _inst ??= new TDU2TitleScene();
+            _inst ??= new TitleScene();
             _inst._mgr = mgr; _inst._streamer = streamer; _inst._r = r;
             if (!_inst.Load(cinematicIndex)) { _inst.Unload(); return null; }
             return _inst;
@@ -80,7 +78,6 @@ namespace Paradise.Core.Cinematics
             _inst = null;
         }
 
-        /// <summary>Nächstes Press-Start-Kino (OpenTDU2-Taste R).</summary>
         public static void Next()
         {
             if (_inst == null || _inst._count <= 0) return;
@@ -99,7 +96,7 @@ namespace Paradise.Core.Cinematics
             string bankPath = Path.Combine(islandDir, "scenarics", "press_start.bnk");
             if (!GameFiles.Exists(bankPath))
             {
-                Log.Warn("Titel-Kino: " + bankPath + " fehlt");
+                Log.Warn("Cinematic: " + bankPath + " missing");
                 return false;
             }
             try
@@ -118,7 +115,8 @@ namespace Paradise.Core.Cinematics
                     var cars = et.Get("ArrayOf_Entity__CinCar");
                     if (cars != null) foreach (var it in cars.Items) cinCars[it.S("__Name", "")] = it.I("id_car", -1);
                 }
-                if (names.Count == 0) { Log.Warn("Titel-Kino: keine Press-Start-Kinos"); return false; }
+                if (names.Count == 0) { 
+                    Log.Warn("Title Cinema: No “Press Start” Theaters"); return false; }
                 int idx = cinematicIndex >= 0 && cinematicIndex < names.Count ? cinematicIndex : _rnd.Next(names.Count);
                 int forced = ForcedIndex();
                 if (cinematicIndex < 0 && forced >= 0 && forced < names.Count) idx = forced;
@@ -131,13 +129,15 @@ namespace Paradise.Core.Cinematics
                     if (stem.EndsWith("_" + digits, StringComparison.OrdinalIgnoreCase)) { cinEntry = e; break; }
                 }
                 _cin = cinEntry != null ? CinData.Parse(bank.Read(cinEntry), cinEntry.Name) : null;
-                if (_cin == null) { Log.Warn("Titel-Kino: .cin zu " + _cinName + " fehlt"); return false; }
+                if (_cin == null) { 
+                    Log.Warn("Title Cinema: .cin for " + _cinName + " is missing"); return false; }
                 for (int s = 0; s < _cin.SceneReferences.Count; s++)
                 {
                     string file = _cin.SceneFile(s);
                     var se = file != null ? bank.Find(file + ".sce") : null;
                     _scenes.Add(se != null ? CinScene.Parse(bank.Read(se), se.Name) : null);
-                    if (se == null) Log.Warn("Titel-Kino: Szene " + file + " fehlt");
+                    if (se == null) 
+                        Log.Warn("Title Cinema: Scene " + file + " is missing");
                 }
                 if (_scenes.Count == 0 || _scenes[0] == null || _scenes[0].Objects.Count == 0) return false;
                 // Auto der Szene: Darsteller "CIN_CAR_xx" -> Entity__CinCar id_car -> DBCarPhysicsData
@@ -151,11 +151,10 @@ namespace Paradise.Core.Cinematics
                 _carId = _carObj != null && cinCars.TryGetValue(_carObj.Name, out int idCar) ? idCar : -1;
                 _carResolved = false; _carFallbackTried = false;
                 LoadWeathers(islandDir);
-                Log.Info($"Titel-Kino {_cinName} ({idx + 1}/{names.Count}): {_cin.Shots.Count} Shots, {_cin.Duration:0} s, Auto-Id {_carId}");
             }
             catch (Exception ex)
             {
-                Log.Error("Titel-Kino: " + ex.Message);
+                Log.Error("Title Cinema: " + ex.Message);
                 return false;
             }
             _time = 0f; _started = false; _waitSince = _clock; _carGrounded = false;
@@ -173,7 +172,7 @@ namespace Paradise.Core.Cinematics
             _car = _carId >= 0 ? _mgr.Database.Cars.Find(c => c.Id == _carId) : null;
             if (_car != null && _mgr.Available.Count > 0 && !_mgr.Available.Exists(c => c.Id == _car.Id))
             {
-                Log.Info($"Titel-Kino: Auto {_car.ModelName} ({_carId}) nicht installiert – Ersatz");
+                Log.Info($"Title: {_car.ModelName} ({_carId}) not installed – Replacement");
                 _car = null;
             }
             if (_car == null) { _car = FallbackCar(); _carFallbackTried = true; }
@@ -192,7 +191,6 @@ namespace Paradise.Core.Cinematics
             if (_car == null) return;
             string bnk = _mgr.BnkDir; var db = _mgr.Database; var car = _car;
             _carTask = Task.Run(() => CarAssets.Load(bnk, db, car, 0, false));
-            Log.Debug("Titel-Kino Auto: " + car.ModelName);
         }
 
         static int ForcedIndex()
@@ -208,9 +206,11 @@ namespace Paradise.Core.Cinematics
             _weathers = null;
             string path = Path.Combine(islandDir, "fx", "cinematic_weathers.xmb");
             try { if (GameFiles.Exists(path)) _weathers = WeatherData.Load(path); }
-            catch (Exception ex) { Log.Warn("cinematic_weathers.xmb: " + ex.Message); }
+            catch (Exception ex) { 
+                Log.Error("cinematic_weathers.xmb: " + ex.Message); }
             try { _weathers?.LoadModifiers(Path.Combine(islandDir, "fx", "cinematic_modifiers.xmb")); }
-            catch (Exception ex) { Log.Warn("cinematic_modifiers.xmb: " + ex.Message); }
+            catch (Exception ex) { 
+                Log.Error("cinematic_modifiers.xmb: " + ex.Message); }
         }
 
         void Unload()
@@ -223,15 +223,10 @@ namespace Paradise.Core.Cinematics
             _carTask = null; _hubs.Clear(); _carGrounded = false;
             WorldWeather.Override = null;
             _weather = ""; _modifier = "";
-            // Unity TDU2SceneReflection.Release: Szenen-Sonde weg (die Fahrzeugsonde setzt ProbeOn jedes Bild selbst)
             RenderFx.ProbeOn = false;
             RenderFx.ProbeFar = 600f;
         }
 
-        /// <summary>
-        /// Jedes Bild (Unity LateUpdate): Kinozeit, Kamera (Spielraum) und Kino-Wetter. Erst laufen lassen, wenn die Welt um die
-        /// Kamera steht (sonst sieht man das Nachladen); spätestens nach 10 s. false = keine Kamera.
-        /// </summary>
         public bool Update(float dt)
         {
             _clock += dt;
@@ -291,12 +286,12 @@ namespace Paradise.Core.Cinematics
                     }
                     catch (Exception ex)
                     {
-                        Log.Error("Titel-Kino Auto: " + ex.Message);
+                        Log.Error("Title: Movies, Cars: " + ex.Message);
                         _carModel?.Destroy(); _carModel = null;
                         _carAssets?.DestroyTextures(); _carAssets = null;
                     }
                 }
-                else if (task.Exception != null) Log.Error("Titel-Kino Auto: " + task.Exception.GetBaseException().Message);
+                else if (task.Exception != null) Log.Error("Title: Movies, Cars: " + task.Exception.GetBaseException().Message);
                 // Laden fehlgeschlagen: einmal mit einem vorhandenen Auto
                 if (_carModel == null && _loaded && !_carFallbackTried)
                 {
@@ -317,9 +312,6 @@ namespace Paradise.Core.Cinematics
         public void Render(Matrix4x4 gameToRender)
         {
             if (!_loaded) return;
-            // Unity TDU2SceneReflection (Acquire beim Laden): Echtzeit-Sonde an der Kamera für Szenen ohne Spieler-Auto,
-            // sonst haben Lack und Glas keine Spiegelung. Seiten einzeln je Bild, far 2000 (Meer bis zum Horizont).
-            // Läuft nach VehicleManager.Render (ScreenModule nach VehicleModule) und ersetzt dessen „aus“.
             RenderFx.ProbeOn = true;
             RenderFx.ProbeStatic = false;
             RenderFx.ProbeFar = 2000f;

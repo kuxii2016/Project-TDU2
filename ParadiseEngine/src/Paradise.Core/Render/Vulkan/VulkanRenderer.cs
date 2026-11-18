@@ -143,6 +143,26 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _opaque.Clear();
         _opaque.AddRange(_opaqueTmp);
     }
+
+    /// <summary>Additive Overlays nach Pipeline/Material/Mesh sortieren – Insertion-invariante Blende erlaubt Batching.</summary>
+    private void SortAdditive()
+    {
+        int n = _additive.Count;
+        if (n < 2) return;
+        if (_additiveKeys.Length < n) _additiveKeys = new OpaqueKey[System.Math.Max(n, _additiveKeys.Length * 2)];
+        var src = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_additive);
+        for (int i = 0; i < n; i++)
+        {
+            ref var e = ref src[i];
+            _additiveKeys[i] = new OpaqueKey { Pipe = (int)PipeFor(e.mat), Set = e.mat.Set.Handle, Vb = e.mesh.VertexBuffer.Handle, Index = i };
+        }
+        Array.Sort(_additiveKeys, 0, n);
+        _additiveTmp.Clear();
+        for (int i = 0; i < n; i++) _additiveTmp.Add(src[_additiveKeys[i].Index]);
+        _additive.Clear();
+        _additive.AddRange(_additiveTmp);
+    }
+
     private static readonly Comparison<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, PipeId pipe, Vector4 sphere)> ShadowOrder = (a, b) =>
     {
         int c = ((int)a.pipe).CompareTo((int)b.pipe);
@@ -225,11 +245,16 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private long _dgGui, _dgOther, _dgSrgb, _dgLin;
     private long _dgLast;
     private readonly RenderStats _stats = new();
-    private int _cDraw, _cTris, _cBinds, _cTransp, _cOverlay;
+    private int _cDraw, _cTris, _cBinds, _cTransp, _cAdditive, _cOverlay;
     private FrameGlobals _globals = FrameGlobals.Default;
     private PipeId? _boundPipeline;
     private int _boundCull;   // 0 beidseitig, 1 Culling, 2 Culling gespiegelt (gilt zusammen mit _boundPipeline)
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, float dist)> _transparent = new();
+    // Additive Checkpoint-Overlays sind reihenfolgeunabhängig (SrcAlpha/One, kein Tiefenschreiben):
+    // diese können wie opake Objekte nach Material/Mesh sortiert und instanziert werden.
+    private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _additive = new();
+    private OpaqueKey[] _additiveKeys = Array.Empty<OpaqueKey>();
+    private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _additiveTmp = new();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _background = new();
 
     private CommandPool _commandPool;
@@ -295,7 +320,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreateShadowCommandBuffers();
         CreateSyncObjects();
 
-        Log.Info($"Vulkan initialisiert auf '{DeviceName}', Swapchain {_extent.Width}x{_extent.Height} ({_format}), {_images.Length} Images, Aniso={(_anisotropy ? _maxAniso : 0)}.");
+        Log.Info($"Vulkan initialized to ‘{DeviceName}’, swapchain {_extent.Width}x{_extent.Height} ({_format}), {_images.Length} images, Aniso={(_anisotropy ? _maxAniso : 0)}.");
     }
 
     public void Resize(int width, int height)
@@ -310,18 +335,16 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         fixed (Fence* pFence = &_inFlight[_currentFrame])
             _vk.WaitForFences(_device, 1, pFence, true, ulong.MaxValue);
-        PerfLog.Add("Warten auf GPU", System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds);
+        PollSceneCapture();   // Bildaufnahme dieses Bildes im Flug fertig (VulkanRendererCapture)
         long tq = System.Diagnostics.Stopwatch.GetTimestamp();
         ReadTimestamps();
         RunPendingDestroys(_frameCounter);
-        PerfLog.Add("BeginFrame: Zeitstempel/Freigaben", System.Diagnostics.Stopwatch.GetElapsedTime(tq).TotalMilliseconds);
 
         long acqStart = System.Diagnostics.Stopwatch.GetTimestamp();
         Result acquire = _khrSwapchain.AcquireNextImage(_device, _swapchain, ulong.MaxValue, _imageAvailable[_currentFrame], default, ref _imageIndex);
-        PerfLog.Add(_vsync ? "Warten auf Bildwechsel (VSync an)" : "Warten auf Swapchain-Bild", System.Diagnostics.Stopwatch.GetElapsedTime(acqStart).TotalMilliseconds);
         if (acquire == Result.ErrorOutOfDateKhr) { RecreateSwapchain(); _skipFrame = true; return; }
         if (acquire != Result.Success && acquire != Result.SuboptimalKhr)
-            throw new Exception($"AcquireNextImage fehlgeschlagen: {acquire}");
+            throw new Exception($"AcquireNextImage failed: {acquire}");
 
         // Kein CPU-Warten auf das Swapchain-Bild: Command-Buffer, UBO und Instanzpuffer gehören zum Bild im Flug (_currentFrame)
         // und sind durch _inFlight[_currentFrame] oben geschützt; die GPU-Reihenfolge am Bild regelt das Acquire-Semaphor.
@@ -333,10 +356,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.ResetCommandBuffer(cmd, 0);
         var begin = new CommandBufferBeginInfo { SType = StructureType.CommandBufferBeginInfo };
         if (_vk.BeginCommandBuffer(cmd, in begin) != Result.Success)
-            throw new Exception("BeginCommandBuffer fehlgeschlagen.");
+            throw new Exception("BeginCommandBuffer failed.");
 
         _boundPipeline = null;
         _transparent.Clear();
+        _additive.Clear();
         _overlay.Clear();
         foreach (var (om, _) in _overlayTop) om.Dispose();
         _overlayTop.Clear();
@@ -344,13 +368,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _opaque.Clear();
         _shadowOnly.Clear();
         _instUsed = 0; _rCount = 0; _rMesh = null; _rMat = null;
-        _cDraw = _cTris = _cBinds = _cTransp = _cOverlay = _cShadow = 0;
+        _cDraw = _cTris = _cBinds = _cTransp = _cAdditive = _cOverlay = _cShadow = 0;
         _inFrame = true;
         UpdateRainDescriptors(_currentFrame);
         _activeFrameSet = _frameSets[_currentFrame];
         _background.Clear();
         WriteFrameUbo();
-        PerfLog.Add("BeginFrame: Befehlspuffer/UBO", System.Diagnostics.Stopwatch.GetElapsedTime(tq).TotalMilliseconds);
     }
 
     public void SetCamera(Matrix4x4 view, Matrix4x4 projection)
@@ -573,7 +596,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (_frameCounter - _dgLast >= 600 || _dgLast == 0)
         {
             _dgLast = _frameCounter == 0 ? 1 : _frameCounter;
-            Log.Info($"[DIAG Flash] Swapchain {_format}, UI-Durchgang {(_uiActive ? _uiFormat.ToString() : "aus")}, Quads Unity-IMGUI {_dgGui} / ohne {_dgOther}, Texturen sRGB {_dgSrgb} / UNORM {_dgLin} (seit letzter Meldung)");
             _dgGui = _dgOther = _dgSrgb = _dgLin = 0;
         }
         _flashDraws.Clear(); _flashV.Clear(); _flashI.Clear();
@@ -600,7 +622,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (mat.Kind == MaterialKind.Overlay) return;
         if (objectMesh != objectMat)
         {
-            if (!_warnedFormat) { _warnedFormat = true; Log.Warn($"DrawMesh: Material {mat.Kind} passt nicht zum Vertexformat – übersprungen."); }
+            if (!_warnedFormat) { _warnedFormat = true; Log.Warn($"DrawMesh: Material {mat.Kind} does not match the vertex format—skipped."); }
             return;
         }
         if (mat.Kind == MaterialKind.Water)
@@ -642,6 +664,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             // Unity: Queue "Transparent-50" -> vor den übrigen transparenten Objekten, direkt auf dem Boden
             _transparent.Add((vm, mat, model, float.MaxValue));
+            return;
+        }
+        if (mat.Kind == MaterialKind.Transparent && mat.Additive)
+        {
+            // Checkpoint-Tore: keine Entfernungs-Sortierung nötig, dafür sortierbar und instanzierbar.
+            _additive.Add((vm, mat, model));
             return;
         }
         if (mat.Kind is MaterialKind.Transparent or MaterialKind.SpriteGlow or MaterialKind.CarGlass or MaterialKind.Lightning)
@@ -761,11 +789,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         var info = new CommandPoolCreateInfo { SType = StructureType.CommandPoolCreateInfo, QueueFamilyIndex = _graphicsFamily, Flags = CommandPoolCreateFlags.ResetCommandBufferBit };
         if (_vk.CreateCommandPool(_device, in info, null, out _shadowPool) != Result.Success)
-            throw new Exception("CommandPool (Schatten) konnte nicht erstellt werden.");
+            throw new Exception("CommandPool (Shadow) could not be created.");
         var alloc = new CommandBufferAllocateInfo { SType = StructureType.CommandBufferAllocateInfo, CommandPool = _shadowPool, Level = CommandBufferLevel.Primary, CommandBufferCount = MaxFramesInFlight };
         fixed (CommandBuffer* p = _shadowCmds)
             if (_vk.AllocateCommandBuffers(_device, in alloc, p) != Result.Success)
-                throw new Exception("CommandBuffers (Schatten) konnten nicht alloziert werden.");
+                throw new Exception("CommandBuffers (shadows) could not be allocated.");
     }
 
     private void EnsureShadowThread()
@@ -816,9 +844,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         _shadowDone.Wait();
         _shadowRunning = false;
-        PerfLog.Add("Render CPU: Warten auf Schatten-Thread", System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
-        PerfLog.Add("Render CPU: Schatten (eigener Thread)", _srec.Ms);
-        if (_srec.Error != null) throw new Exception("Schatten-Aufzeichnung fehlgeschlagen: " + _srec.Error.Message, _srec.Error);
+        if (_srec.Error != null) throw new Exception("Shadow recording failed: " + _srec.Error.Message, _srec.Error);
         _cShadow = _srec.Draws;
         _cInst += _srec.Inst;
     }
@@ -888,7 +914,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _vk.CmdEndRenderPass(cmd);
         }
         Ts(cmd, 1);
-        if (_vk.EndCommandBuffer(cmd) != Result.Success) throw new Exception("EndCommandBuffer (Schatten) fehlgeschlagen.");
+        if (_vk.EndCommandBuffer(cmd) != Result.Success) throw new Exception("EndCommandBuffer (Shadow) failed.");
         r.Ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
     }
 
@@ -1048,7 +1074,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         => m.M11 * (m.M22 * m.M33 - m.M23 * m.M32) - m.M12 * (m.M21 * m.M33 - m.M23 * m.M31) + m.M13 * (m.M21 * m.M32 - m.M22 * m.M31);
 
     private static bool Instanceable(PipeId id) => id is PipeId.Object or PipeId.Foliage or PipeId.Sprite
-        or PipeId.ShadowObject or PipeId.ShadowFoliage or PipeId.ShadowSprite;
+        or PipeId.ShadowObject or PipeId.ShadowFoliage or PipeId.ShadowSprite
+        or PipeId.TransparentAdd;   // additives Overlay: kommutativ, kein ZWrite -> Reihenfolge egal
 
     private void Batch(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj)
     {
@@ -1108,14 +1135,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         TsBegin(cmdS);
         long tcs = System.Diagnostics.Stopwatch.GetTimestamp();
         SortOpaque();   // gleiche Mesh+Material-Paare hintereinander -> Instanz-Aufrufe (Schatten, Spiegel, Bild)
-        PerfLog.Add("Render CPU: Sortieren", System.Diagnostics.Stopwatch.GetElapsedTime(tcs).TotalMilliseconds);
         _cInst = 0;
         StartShadows(cmdS);   // ab hier zeichnet der Arbeits-Thread die Kaskaden auf (liest _opaque nur)
         WriteFrameUbo();
         _activeFrameSet = _frameSets[_currentFrame];
         tcs = System.Diagnostics.Stopwatch.GetTimestamp();
         RenderEnvironment(cmd0);   // Bodenspiegelung / Reflexionssonde (Unity InteriorMirror, ReflectionProbe)
-        PerfLog.Add("Render CPU: Spiegel/Sonde", System.Diagnostics.Stopwatch.GetElapsedTime(tcs).TotalMilliseconds);
         Ts(cmd0, 2);
         WriteFrameUbo();           // Kennungen Planar/Probe für den Bild-Durchgang
         var clears = stackalloc ClearValue[3];
@@ -1147,6 +1172,18 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         JoinShadows();   // Schatten-Thread fertig, bevor _opaque geleert wird
         _opaque.Clear();
 
+        // Additive Checkpoint-Overlays: wie opake Objekte sortieren/instanzieren statt einzeln DrawNow.
+        // Reihenfolge ist bei SrcAlpha/One ohne ZWrite irrelevant; das spart beim Rennen mehrere ms CPU pro Bild.
+        if (_additive.Count > 0)
+        {
+            SortAdditive();
+            foreach (var (mesh, mat, model) in _additive) Batch(mesh, mat, model, PipeFor(mat), false, _viewProj);
+            FlushBatch();
+            _cTransp += _additive.Count;
+            _cAdditive = _additive.Count;
+            _additive.Clear();
+        }
+
         // Transparente Objekte hinten→vorne (Unity: Queue "Transparent")
         if (_transparent.Count > 0)
         {
@@ -1175,6 +1212,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             DrawOverlay();
             _vk.CmdEndRenderPass(cmd0);
             if (Msaa) CopyResolveToSwapchain(cmd0, true);
+            RecordSceneCapture(cmd0);   // Weltbild auf die CPU (Foto), vor Photoshop/Flash (VulkanRendererCapture)
             bool photoshop = RecordPhotoshop(cmd0);   // Nachbearbeitung wie das Original vor dem HUD (VulkanRendererPostFx)
             var uiBegin = new RenderPassBeginInfo
             {
@@ -1195,6 +1233,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
         else
         {
+            RejectSceneCaptureWithoutUi();
             // Flash-Oberfläche (Menüs/HUD) über der Welt, unter dem Debug-Overlay
             DrawFlashBatches();
             DrawOverlay();
@@ -1205,8 +1244,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _inFrame = false;
         _stats.DrawCalls = _cDraw; _stats.Triangles = _cTris; _stats.PipelineBinds = _cBinds;
         _stats.TransparentDraws = _cTransp; _stats.OverlayDraws = _cOverlay; _stats.ShadowDraws = _cShadow;
-        if (_frameCounter % 600 == 0)
-            Log.Info($"[DIAG Instancing] Aufrufe Bild/Spiegel {_cDraw}, Schatten {_cShadow}, Objekte in Instanz-Aufrufen {_cInst}, Instanzpuffer {_instUsed}/{InstCap}");
         _stats.GpuMemoryAllocated = _alloc.AllocatedBytes;
         _stats.Width = (int)_extent.Width; _stats.Height = (int)_extent.Height;
         int nt = 0, nm = 0, nme = 0;
@@ -1217,9 +1254,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.CmdEndRenderPass(cmd);
         if (Msaa && !uiPassUsed) CopyResolveToSwapchain(cmd, false);
         Ts(cmd, 4);
-        PerfLog.Add("Render CPU (Aufzeichnen)", System.Diagnostics.Stopwatch.GetElapsedTime(recStart).TotalMilliseconds);
         if (_vk.EndCommandBuffer(cmd) != Result.Success)
-            throw new Exception("EndCommandBuffer fehlgeschlagen.");
+            throw new Exception("EndCommandBuffer failed.");
 
         var waitSem = _imageAvailable[_currentFrame];
         var sigSem = _renderFinished[_currentFrame];
@@ -1241,7 +1277,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         fixed (Fence* pFence = &_inFlight[_currentFrame])
             _vk.ResetFences(_device, 1, pFence);
         if (_vk.QueueSubmit(_graphicsQueue, 1, in submit, _inFlight[_currentFrame]) != Result.Success)
-            throw new Exception("QueueSubmit fehlgeschlagen.");
+            throw new Exception("QueueSubmit failed.");
 
         var swapchain = _swapchain;
         uint imageIndex = _imageIndex;
@@ -1262,13 +1298,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
         else if (pr == Result.Success && GraphicsSettingsChanged()) ApplyGraphicsSettings();
         else if (pr != Result.Success)
-            throw new Exception($"QueuePresent fehlgeschlagen: {pr}");
+            throw new Exception($"QueuePresent failed: {pr}");
 
         _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
         _frameCounter++;
     }
 
-    // ------------------------------------------------------------------ Grafik-Einstellungen (GraphicsSettings, Optionsmenü)
 
     SampleCountFlags WantedMsaa()
     {
@@ -1301,8 +1336,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var oldMsaa = _msaa; bool oldVsync = _vsync; uint oldShadow = ShadowSize; int oldTex = _texMipLimit;
         TakeGraphicsSettings();
         bool rebuild = oldMsaa != _msaa || oldVsync != _vsync || oldShadow != ShadowSize;
-        Log.Info($"Grafik: Kantenglättung {(int)_msaa}x, VSync {(_vsync ? "an" : "aus")}, Schatten {ShadowSize}, Texturstufe {_texMipLimit}");
-        if (oldTex != _texMipLimit) Log.Info("Grafik: Texturstufe gilt für neu geladene Texturen (Welt lädt beim Fahren nach).");
         if (!rebuild) return;
         _vk.DeviceWaitIdle(_device);
         if (oldShadow != ShadowSize)
@@ -1331,7 +1364,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         for (int i = _pendingDestroy.Count - 1; i >= 0; i--)
         {
             if (_pendingDestroy[i].frame > frame) continue;
-            try { _pendingDestroy[i].destroy(); } catch (Exception ex) { Log.Warn("GPU-Freigabe: " + ex.Message); }
+            try { _pendingDestroy[i].destroy(); } catch (Exception ex) { Log.Error("GPU Sharing:" + ex.Message); }
             _pendingDestroy.RemoveAt(i);
         }
     }
@@ -1361,12 +1394,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             PpEnabledLayerNames = layers.Count > 0 ? (byte**)SilkMarshal.StringArrayToPtr(layers) : null
         };
         if (_vk.CreateInstance(in createInfo, null, out _instance) != Result.Success)
-            throw new Exception("Vulkan-Instance konnte nicht erstellt werden (Treiber/Loader vorhanden?).");
+            throw new Exception("Unable to create the Vulkan instance (driver/loader present?).");
         if (!_vk.TryGetInstanceExtension(_instance, out _khrSurface))
-            throw new Exception("VK_KHR_surface nicht verfügbar.");
+            throw new Exception("VK_KHR_surface is not available.");
         SilkMarshal.Free((nint)appInfo.PApplicationName);
         SilkMarshal.Free((nint)appInfo.PEngineName);
-        Log.Info($"Vulkan-Instance erstellt (Validation={_validation}).");
     }
 
     private bool ValidationLayerAvailable(string name)
@@ -1383,17 +1415,17 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void CreateSurface()
     {
         if (!_vk.TryGetInstanceExtension(_instance, out KhrWin32Surface win32))
-            throw new Exception("VK_KHR_win32_surface nicht verfügbar.");
+            throw new Exception("VK_KHR_win32_surface is not available.");
         var info = new Win32SurfaceCreateInfoKHR { SType = StructureType.Win32SurfaceCreateInfoKhr, Hinstance = _hinstance, Hwnd = _hwnd };
         if (win32.CreateWin32Surface(_instance, in info, null, out _surface) != Result.Success)
-            throw new Exception("Win32-Surface konnte nicht erstellt werden.");
+            throw new Exception("Win32-Surface could not be created.");
     }
 
     private void PickPhysicalDevice()
     {
         uint count = 0;
         _vk.EnumeratePhysicalDevices(_instance, ref count, null);
-        if (count == 0) throw new Exception("Keine Vulkan-fähige GPU gefunden.");
+        if (count == 0) throw new Exception("No Vulkan-compatible GPU found.");
         var devices = new PhysicalDevice[count];
         fixed (PhysicalDevice* p = devices) _vk.EnumeratePhysicalDevices(_instance, ref count, p);
 
@@ -1406,7 +1438,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             int score = pr.DeviceType == PhysicalDeviceType.DiscreteGpu ? 2 : pr.DeviceType == PhysicalDeviceType.IntegratedGpu ? 1 : 0;
             if (score > bestScore) { best = dev; bestScore = score; }
         }
-        if (best == null) throw new Exception("Keine passende GPU (Grafik + Present + Swapchain) gefunden.");
+        if (best == null) throw new Exception("No suitable GPU (graphics + present + swapchain) found.");
         _physical = best.Value;
         TryFindQueueFamilies(_physical, out _graphicsFamily, out _presentFamily);
         _vk.GetPhysicalDeviceProperties(_physical, out var props);
@@ -1426,7 +1458,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _anisotropy = feats.SamplerAnisotropy;
         _maxAniso = System.Math.Min(4f, props.Limits.MaxSamplerAnisotropy);   // wie Unity anisoLevel = 4
         _msaaCounts = props.Limits.FramebufferColorSampleCounts & props.Limits.FramebufferDepthSampleCounts;
-        if (!feats.TextureCompressionBC) Log.Warn("GPU meldet keine BC-Texturkompression – Texturen evtl. fehlerhaft.");
+        if (!feats.TextureCompressionBC) Log.Warn("GPU does not report BC texture compression—textures may be corrupted.");
     }
 
     private bool TryFindQueueFamilies(PhysicalDevice dev, out uint graphics, out uint present)
@@ -1494,7 +1526,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var extList = new List<string> { KhrSwapchain.ExtensionName };
         _mutableSwap = HasDeviceExtension(_physical, MutableFormatExt);
         if (_mutableSwap) extList.Add(MutableFormatExt);
-        Log.Info($"[DIAG Flash] {MutableFormatExt}: {(_mutableSwap ? "vorhanden – Flash ohne sRGB-Kodierung wie Unity" : "fehlt – Flash nur angenähert")}");
         var deviceExts = extList.ToArray();
         var createInfo = new DeviceCreateInfo
         {
@@ -1506,11 +1537,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExts)
         };
         if (_vk.CreateDevice(_physical, in createInfo, null, out _device) != Result.Success)
-            throw new Exception("Logisches Device konnte nicht erstellt werden.");
+            throw new Exception("The logical device could not be created.");
         _vk.GetDeviceQueue(_device, _graphicsFamily, 0, out _graphicsQueue);
         _vk.GetDeviceQueue(_device, _presentFamily, 0, out _presentQueue);
         if (!_vk.TryGetDeviceExtension(_instance, _device, out _khrSwapchain))
-            throw new Exception("VK_KHR_swapchain nicht verfügbar.");
+            throw new Exception("VK_KHR_swapchain is not available.");
     }
 
     // ------------------------------------------------------------------ Swapchain
@@ -1529,7 +1560,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         var surfaceFormat = ChooseFormat(formats);
         var presentMode = ChoosePresentMode(modes, _vsync);
-        Log.Info($"Swapchain: VSync {(_vsync ? "an" : "aus")}, Darstellungsmodus {presentMode}");
         _extent = ChooseExtent(caps);
         _format = surfaceFormat.Format;
 
@@ -1571,7 +1601,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             info.PNext = &fmtList;
         }
         if (_khrSwapchain.CreateSwapchain(_device, in info, null, out _swapchain) != Result.Success)
-            throw new Exception("Swapchain konnte nicht erstellt werden.");
+            throw new Exception("The swap chain could not be created.");
         uint cnt = 0;
         _khrSwapchain.GetSwapchainImages(_device, _swapchain, ref cnt, null);
         _images = new Image[cnt];
@@ -1587,7 +1617,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             if (f.Format == Format.B8G8R8A8Srgb && f.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr) return f;
         foreach (var f in formats)
             if (f.Format == Format.R8G8B8A8Srgb) return f;
-        Log.Warn("Vulkan: keine sRGB-Swapchain verfügbar – Ausgabe im Gamma-Raum.");
         foreach (var f in formats)
             if (f.Format == Format.B8G8R8A8Unorm && f.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr) return f;
         return formats[0];
@@ -1714,7 +1743,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             SharingMode = SharingMode.Exclusive
         };
         if (_vk.CreateImage(_device, in info, null, out image) != Result.Success)
-            throw new Exception("Image konnte nicht erstellt werden.");
+            throw new Exception("The image could not be created.");
         _vk.GetImageMemoryRequirements(_device, image, out var req);
         mem = _alloc.Allocate(req, MemoryPropertyFlags.DeviceLocalBit, linear: false);
         _vk.BindImageMemory(_device, image, mem.Memory, mem.Offset);
@@ -1731,7 +1760,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             SubresourceRange = new ImageSubresourceRange { AspectMask = aspect, BaseMipLevel = 0, LevelCount = mips, BaseArrayLayer = 0, LayerCount = 1 }
         };
         if (_vk.CreateImageView(_device, in info, null, out var view) != Result.Success)
-            throw new Exception("ImageView konnte nicht erstellt werden.");
+            throw new Exception("Could not create ImageView.");
         return view;
     }
 
@@ -1740,7 +1769,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         var info = new BufferCreateInfo { SType = StructureType.BufferCreateInfo, Size = System.Math.Max(size, 16UL), Usage = usage, SharingMode = SharingMode.Exclusive };
         if (_vk.CreateBuffer(_device, in info, null, out buffer) != Result.Success)
-            throw new Exception("Buffer konnte nicht erstellt werden.");
+            throw new Exception("The buffer could not be created.");
         _vk.GetBufferMemoryRequirements(_device, buffer, out var req);
         mem = _alloc.Allocate(req, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, linear: true);
         _vk.BindBufferMemory(_device, buffer, mem.Memory, mem.Offset);
@@ -1862,7 +1891,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             if (total + s > t.Blocks.Length) break;
             total += s; mips++;
         }
-        if (mips == 0) throw new Exception($"Textur '{t.Name}': zu wenig Daten.");
+        if (mips == 0) throw new Exception($"Texture ‘{t.Name}’: Insufficient data.");
 
         // Texturqualität (Unity QualitySettings.globalTextureMipmapLimit): oberste Stufen weglassen – nur Texturen mit Mip-Kette,
         // nicht kleiner als 64 Pixel, nicht Flash (Deferred)
@@ -1983,7 +2012,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MipLodBias = 0   // trilinear wie Unity
         };
         if (_vk.CreateSampler(_device, in info, null, out s) != Result.Success)
-            throw new Exception("Sampler fehlgeschlagen.");
+            throw new Exception("Sampler failed.");
         _samplers[(u, v)] = s;
         return s;
     }
@@ -2076,7 +2105,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         };
         var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _descriptorPool, DescriptorSetCount = 1, PSetLayouts = &layout };
         if (_vk.AllocateDescriptorSets(_device, in alloc, out var set) != Result.Success)
-            throw new Exception("DescriptorSet-Allokation fehlgeschlagen (Pool voll?).");
+            throw new Exception("DescriptorSet allocation failed (pool full?).");
 
         // Texturen wie im Unity-Shader: Default white/gray/black je Property
         VulkanTexture T(IGpuTexture? t, VulkanTexture def) => t as VulkanTexture ?? def;
@@ -2278,7 +2307,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 mesh.OwnedTexture = (VulkanTexture)CreateTexture(texture);
                 mesh.OwnedMaterial = (VulkanMaterial)CreateMaterial(new MaterialDesc { Kind = MaterialKind.Simple, Main = mesh.OwnedTexture });
             }
-            catch (Exception ex) { Log.Warn($"Textur konnte nicht erstellt werden: {ex.Message}"); }
+            catch (Exception ex) { Log.Error($"Could not create texture: {ex.Message}"); }
         }
         return mesh;
     }
@@ -2428,7 +2457,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         fb[6] = new DescriptorSetLayoutBinding { Binding = 6, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Regen: aktuelles RIPPLE_xx
         var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = 7, PBindings = fb };
         if (_vk.CreateDescriptorSetLayout(_device, in info, null, out _frameSetLayout) != Result.Success)
-            throw new Exception("DescriptorSetLayout (Frame) fehlgeschlagen.");
+            throw new Exception("DescriptorSetLayout (Frame) failed.");
     }
 
     /// <summary>Layout: samplers x Textur (Binding 0..n-1) + Material-Uniform-Buffer (Binding n).</summary>
@@ -2440,7 +2469,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         bindings[samplers] = new DescriptorSetLayoutBinding { Binding = (uint)samplers, DescriptorType = DescriptorType.UniformBuffer, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };
         var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = (uint)(samplers + 1), PBindings = bindings };
         if (_vk.CreateDescriptorSetLayout(_device, in info, null, out var layout) != Result.Success)
-            throw new Exception("DescriptorSetLayout fehlgeschlagen.");
+            throw new Exception("DescriptorSetLayout failed.");
         return layout;
     }
 
@@ -2460,7 +2489,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit
         };
         if (_vk.CreateDescriptorPool(_device, in info, null, out _descriptorPool) != Result.Success)
-            throw new Exception("DescriptorPool fehlgeschlagen.");
+            throw new Exception("DescriptorPool failed.");
     }
 
     private void CreateFrameBuffers()
@@ -2471,7 +2500,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             var layout = _frameSetLayout;
             var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _descriptorPool, DescriptorSetCount = 1, PSetLayouts = &layout };
             if (_vk.AllocateDescriptorSets(_device, in alloc, out _frameSets[i]) != Result.Success)
-                throw new Exception("DescriptorSet (Frame) fehlgeschlagen.");
+                throw new Exception("DescriptorSet (Frame) failed.");
             var bi = new DescriptorBufferInfo { Buffer = _frameUbo[i], Offset = 0, Range = (ulong)sizeof(FrameUbo) };
             var ii = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = _shadowArrayView, Sampler = _shadowSampler };
             CreateHostBuffer((ulong)(InstCap * sizeof(Matrix4x4)), BufferUsageFlags.StorageBufferBit, out _instBuf[i], out _instMem[i]);
@@ -2503,7 +2532,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Samples = SampleCountFlags.Count1Bit,
             SharingMode = SharingMode.Exclusive
         };
-        if (_vk.CreateImage(_device, in ici, null, out _shadowImage) != Result.Success) throw new Exception("Schattenkarte fehlgeschlagen.");
+        if (_vk.CreateImage(_device, in ici, null, out _shadowImage) != Result.Success) throw new Exception("Shadow map failed.");
         _vk.GetImageMemoryRequirements(_device, _shadowImage, out var req);
         _shadowMem = _alloc.Allocate(req, MemoryPropertyFlags.DeviceLocalBit, linear: false);
         _vk.BindImageMemory(_device, _shadowImage, _shadowMem.Memory, _shadowMem.Offset);
@@ -2516,7 +2545,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Format = Format.D32Sfloat,
             SubresourceRange = new ImageSubresourceRange { AspectMask = ImageAspectFlags.DepthBit, BaseMipLevel = 0, LevelCount = 1, BaseArrayLayer = 0, LayerCount = ShadowCascades }
         };
-        if (_vk.CreateImageView(_device, in avi, null, out _shadowArrayView) != Result.Success) throw new Exception("Schatten-View fehlgeschlagen.");
+        if (_vk.CreateImageView(_device, in avi, null, out _shadowArrayView) != Result.Success) throw new Exception("Shadow View failed.");
 
         // Render-Pass: nur Tiefe, danach im Shader lesbar
         var depth = new AttachmentDescription
@@ -2561,7 +2590,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             DependencyCount = 2,
             PDependencies = deps
         };
-        if (_vk.CreateRenderPass(_device, in rpi, null, out _shadowPass) != Result.Success) throw new Exception("Schatten-RenderPass fehlgeschlagen.");
+        if (_vk.CreateRenderPass(_device, in rpi, null, out _shadowPass) != Result.Success) throw new Exception("Shadow RenderPass failed.");
 
         for (int k = 0; k < ShadowCascades; k++)
         {
@@ -2569,7 +2598,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             lvi.ViewType = ImageViewType.Type2D;
             lvi.SubresourceRange.BaseArrayLayer = (uint)k;
             lvi.SubresourceRange.LayerCount = 1;
-            if (_vk.CreateImageView(_device, in lvi, null, out _shadowLayerViews[k]) != Result.Success) throw new Exception("Schatten-View fehlgeschlagen.");
+            if (_vk.CreateImageView(_device, in lvi, null, out _shadowLayerViews[k]) != Result.Success) throw new Exception("Shadow View failed.");
             var view = _shadowLayerViews[k];
             var fbi = new FramebufferCreateInfo
             {
@@ -2581,7 +2610,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 Height = ShadowSize,
                 Layers = 1
             };
-            if (_vk.CreateFramebuffer(_device, in fbi, null, out _shadowFramebuffers[k]) != Result.Success) throw new Exception("Schatten-Framebuffer fehlgeschlagen.");
+            if (_vk.CreateFramebuffer(_device, in fbi, null, out _shadowFramebuffers[k]) != Result.Success) throw new Exception("Shadow framebuffer failed.");
         }
 
         // Vergleichs-Sampler (Hardware-PCF), außerhalb = beleuchtet
@@ -2600,7 +2629,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MinLod = 0,
             MaxLod = 0
         };
-        if (_vk.CreateSampler(_device, in si, null, out _shadowSampler) != Result.Success) throw new Exception("Schatten-Sampler fehlgeschlagen.");
+        if (_vk.CreateSampler(_device, in si, null, out _shadowSampler) != Result.Success) throw new Exception("Shadow sampler failed.");
     }
 
     private void DestroyShadowResources()
@@ -2783,7 +2812,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 PPushConstantRanges = &pushRange
             };
             if (_vk.CreatePipelineLayout(_device, in layoutInfo, null, out _layouts[(int)id]) != Result.Success)
-                throw new Exception("PipelineLayout fehlgeschlagen.");
+                throw new Exception("PipelineLayout failed.");
 
             var pipelineInfo = new GraphicsPipelineCreateInfo
             {
@@ -2803,7 +2832,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 Subpass = 0
             };
             if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _pipelines[(int)id]) != Result.Success)
-                throw new Exception($"GraphicsPipeline '{name}' fehlgeschlagen.");
+                throw new Exception($"GraphicsPipeline ‘{name}’ failed.");
             if (cullVariants)
             {
                 // Geprüft an itun_a: nach StripToList zeigt das Kreuzprodukt (b-a)x(c-a) zu 98 % in Richtung der Vertexnormalen.
@@ -2811,10 +2840,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 // FrontFace bleibt Clockwise (gl_FrontFacing wie bisher), daher wird hier FrontBit (= Vorderseite der Daten von hinten) entfernt.
                 raster.CullMode = CullModeFlags.FrontBit;
                 if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _cullPipes[(int)id]) != Result.Success)
-                    throw new Exception($"GraphicsPipeline '{name}' (Cull) fehlgeschlagen.");
+                    throw new Exception($"Graphics pipeline ‘{name}’ (Cull) failed.");
                 raster.CullMode = CullModeFlags.BackBit;
                 if (_vk.CreateGraphicsPipelines(_device, default, 1, in pipelineInfo, null, out _cullPipesInv[(int)id]) != Result.Success)
-                    throw new Exception($"GraphicsPipeline '{name}' (Cull gespiegelt) fehlgeschlagen.");
+                    throw new Exception($"GraphicsPipeline ‘{name}’ (Cull mirrored) failed.");
             }
         }
         finally
@@ -2831,7 +2860,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             var info = new ShaderModuleCreateInfo { SType = StructureType.ShaderModuleCreateInfo, CodeSize = (nuint)code.Length, PCode = (uint*)p };
             if (_vk.CreateShaderModule(_device, in info, null, out var module) != Result.Success)
-                throw new Exception("ShaderModule konnte nicht erstellt werden.");
+                throw new Exception("The ShaderModule could not be created.");
             return module;
         }
     }
@@ -2909,7 +2938,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             PDependencies = &dependency
         };
         if (_vk.CreateRenderPass(_device, in info, null, out _renderPass) != Result.Success)
-            throw new Exception("RenderPass konnte nicht erstellt werden.");
+            throw new Exception("The RenderPass could not be created.");
         if (_uiViews.Length > 0) CreateUiPass();
     }
 
@@ -2949,7 +2978,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             PDependencies = &dependency
         };
         if (_vk.CreateRenderPass(_device, in info, null, out _uiPass) != Result.Success)
-            throw new Exception("UI-RenderPass konnte nicht erstellt werden.");
+            throw new Exception("UI-RenderPass could not be created.");
     }
 
     private void CreateFramebuffers()
@@ -2971,7 +3000,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 Layers = 1
             };
             if (_vk.CreateFramebuffer(_device, in info, null, out _framebuffers[i]) != Result.Success)
-                throw new Exception("Framebuffer konnte nicht erstellt werden.");
+                throw new Exception("The framebuffer could not be created.");
         }
         _uiFramebuffers = new Framebuffer[_uiViews.Length];
         for (int i = 0; i < _uiViews.Length; i++)
@@ -2988,7 +3017,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 Layers = 1
             };
             if (_vk.CreateFramebuffer(_device, in info, null, out _uiFramebuffers[i]) != Result.Success)
-                throw new Exception("UI-Framebuffer konnte nicht erstellt werden.");
+                throw new Exception("The UI framebuffer could not be created.");
         }
         CreateEnvTargets();   // Bodenspiegelung / Reflexionssonde (Größe, Format und Abtastrate wie die Swapchain)
         CreatePostFx();       // Photoshop-Nachbearbeitung (braucht den UI-Pass und die Bildgröße)
@@ -2998,7 +3027,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         var info = new CommandPoolCreateInfo { SType = StructureType.CommandPoolCreateInfo, QueueFamilyIndex = _graphicsFamily, Flags = CommandPoolCreateFlags.ResetCommandBufferBit };
         if (_vk.CreateCommandPool(_device, in info, null, out _commandPool) != Result.Success)
-            throw new Exception("CommandPool konnte nicht erstellt werden.");
+            throw new Exception("CommandPool could not be created.");
     }
 
     private void CreateCommandBuffers()
@@ -3007,7 +3036,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var alloc = new CommandBufferAllocateInfo { SType = StructureType.CommandBufferAllocateInfo, CommandPool = _commandPool, Level = CommandBufferLevel.Primary, CommandBufferCount = (uint)_commandBuffers.Length };
         fixed (CommandBuffer* p = _commandBuffers)
             if (_vk.AllocateCommandBuffers(_device, in alloc, p) != Result.Success)
-                throw new Exception("CommandBuffers konnten nicht alloziert werden.");
+                throw new Exception("CommandBuffers could not be allocated.");
     }
 
     private void CreateSyncObjects()
@@ -3022,7 +3051,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             if (_vk.CreateSemaphore(_device, in semInfo, null, out _imageAvailable[i]) != Result.Success ||
                 _vk.CreateSemaphore(_device, in semInfo, null, out _renderFinished[i]) != Result.Success ||
                 _vk.CreateFence(_device, in fenceInfo, null, out _inFlight[i]) != Result.Success)
-                throw new Exception("Sync-Objekte konnten nicht erstellt werden.");
+                throw new Exception("Sync objects could not be created.");
     }
 
     // ------------------------------------------------------------------ Recreate / Cleanup
@@ -3045,7 +3074,6 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreateFramebuffers();
         CreateCommandBuffers();
         _imagesInFlight = new Fence[_images.Length];
-        Log.Debug($"Swapchain neu erstellt: {_extent.Width}x{_extent.Height}");
     }
 
     private void CleanupSwapchain()
@@ -3094,6 +3122,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.DeviceWaitIdle(_device);
         foreach (var o in _live.ToArray()) o.Dispose();
         RunPendingDestroys(long.MaxValue);
+        DestroySceneCapture();
         _disposed = true;
 
         CleanupSwapchain();

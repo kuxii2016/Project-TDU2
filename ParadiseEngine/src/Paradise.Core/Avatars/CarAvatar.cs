@@ -6,7 +6,7 @@ using System.Numerics;
 namespace Paradise.Core.Avatars;
 
 /// <summary>
-/// Driver or passenger in the car, as in the game (ported from Unity TDU2CarAvatar; anims/car, driveiklayer): seat pose “stance_turn”,
+/// Driver or passenger in the car, as in the game (anims/car, driveiklayer): seat pose “stance_turn”,
 /// with “turn” based on the steering angle (0 s for a quarter turn to the right, 0.52 s straight ahead, 1.04 s for a quarter turn to the left), then IK of the hands to
 /// the steering wheel grips (HAND_HR_L/_R, children of STEER_HR) and the feet to the pedals (FOOT_HR_L/_R). The clip root (ROOT) is located at
 /// the hip point DVRSEAT_HR (passenger: PSGSEAT_HR, PSGFOOT_HR_*; pose hit_stand_car or sho_stand_car). Motorcycle (D_BIKE):

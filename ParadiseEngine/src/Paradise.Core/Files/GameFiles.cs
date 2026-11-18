@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Paradise.Core.Files;
 
-/// <summary>Verweis auf einen Eintrag in einem Bigfile.</summary>
+/// <summary>Reference to an entry in a Bigfile.</summary>
 public readonly struct BigEntryRef
 {
     public readonly BigArchive Archive;
@@ -17,9 +17,9 @@ public readonly struct BigEntryRef
 }
 
 /// <summary>
-/// Hybrider Dateizugriff auf die TDU2-Spieldaten: lose Dateien unter <c>Euro/Bnk</c> haben Vorrang
-/// (Mods), sonst wird in den <c>*.big</c>-Archiven gesucht (Basisspiel, Updates, DLCs).
-/// Virtuelle Pfade sind immer <c>euro/bnk/…</c> (so lauten die Hashes in den .map-Indizes).
+/// Hybrid file access to TDU2 game data: individual files under <c>Euro/Bnk</c> take precedence
+/// (mods); otherwise, the <c>*.big</c> archives are searched (base game, updates, DLCs).
+/// Virtual paths are always <c>euro/bnk/…</c> (these are the hashes in the .map indexes).
 /// </summary>
 public static class GameFiles
 {
@@ -37,17 +37,17 @@ public static class GameFiles
     private static string? _initRoot;
     private static bool _packed;
 
-    /// <summary>Installationsordner (enthält <c>bigfile_*.big</c> oder <c>Euro/Bnk</c>).</summary>
+    /// <summary>Installation folder (contains <c>bigfile_*.big</c> or <c>Euro/Bnk</c>).</summary>
     public static string? Root => _root;
-    /// <summary>Physischer/logischer Ordner <c>Euro/Bnk</c> (kann bei gepackten Installationen nur Video enthalten).</summary>
+    /// <summary>Physical/logical folder <c>Euro/Bnk</c> (may contain only video files in packaged installations).</summary>
     public static string? BnkDir => _bnkDir;
     public static bool IsPacked => _packed;
     public static int ArchiveCount => Archives.Count;
     public static int NamedEntryCount => Names.Count;
 
     /// <summary>
-    /// Initialisiert die Auflösung. Liefert den normalisierten Wurzelordner zurück.
-    /// Mehrfachaufrufe mit demselben Pfad sind billig.
+    /// Initializes the resolution. Returns the normalized root folder.
+    /// Multiple calls with the same path are inexpensive.
     /// </summary>
     public static string? Init(string? root)
     {
@@ -70,7 +70,6 @@ public static class GameFiles
                 if (a != null) Archives.Add(a);
             }
 
-            // Load-Order: Basisspiel 0, Updates 3..15, Mods 100/1337. Bei gleichem Wert entscheidet der Name.
             Archives.Sort((a, b) =>
             {
                 int c = a.LoadOrder.CompareTo(b.LoadOrder);
@@ -79,16 +78,16 @@ public static class GameFiles
 
             foreach (var a in Archives)
                 for (int i = 0; i < a.Count; i++)
-                    Entries[a.HashAt(i)] = new BigEntryRef(a, i);   // später geladene Archive überschreiben
+                    Entries[a.HashAt(i)] = new BigEntryRef(a, i);
 
             _packed = Archives.Count > 0;
             LoadNames();
             BuildDirs();
 
             if (_packed)
-                Log.Info($"GameFiles: {Archives.Count} Bigfiles, {Entries.Count} Einträge ({Names.Count} benannt) – BnkDir = {_bnkDir}");
+                Log.Info($"GameFiles: {Archives.Count} large files, {Entries.Count} entries ({Names.Count} named) – BnkDir = {_bnkDir}");
             else
-                Log.Info($"GameFiles: lose Dateien (keine Bigfiles) – BnkDir = {_bnkDir}");
+                Log.Info($"GameFiles: individual files (not large files) – BnkDir = {_bnkDir}");
             return _root;
         }
     }
@@ -116,8 +115,6 @@ public static class GameFiles
         if (Directory.Exists(euroBnk)) return euroBnk;
         var bnk = Path.Combine(root, "Bnk");
         if (Directory.Exists(bnk)) return bnk;
-        // Gepackte Installationen haben oft kein Euro/Bnk – der logische Pfad bleibt trotzdem gültig,
-        // weil GameFiles ihn über den Bigfile-Hash auflöst.
         return euroBnk;
     }
 
@@ -165,7 +162,11 @@ public static class GameFiles
         try
         {
             using var s = typeof(GameFiles).Assembly.GetManifestResourceStream(NamesResource);
-            if (s == null) { Log.Warn("GameFiles: bigfile-names.tsv fehlt (keine Verzeichnisnamen)"); return; }
+            if (s == null) 
+            { 
+                Log.Warn("GameFiles: bigfile-names.tsv is missing (no directory names)"); 
+                return;
+            }
             using var r = new StreamReader(s, Encoding.UTF8);
             string? line = r.ReadLine();   // Kopfzeile: hash archive kind path
             while ((line = r.ReadLine()) != null)
@@ -179,7 +180,10 @@ public static class GameFiles
                 if (Entries.ContainsKey(hash)) Names[hash] = path;
             }
         }
-        catch (Exception ex) { Log.Warn("GameFiles: Namen nicht lesbar: " + ex.Message); }
+        catch (Exception ex) 
+        {
+            Log.Error("GameFiles: Names are unreadable: " + ex.Message);
+        }
     }
 
     private static void BuildDirs()
@@ -196,7 +200,7 @@ public static class GameFiles
         }
     }
 
-    /// <summary>Wandelt einen physischen Pfad unter <c>Euro/Bnk</c> in den virtuellen Bigfile-Pfad um.</summary>
+    /// <summary>Converts a physical path under <c>Euro/Bnk</c> to the virtual Bigfile path.</summary>
     public static string? ToVirtual(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || _bnkDirFull == null) return null;
@@ -219,7 +223,7 @@ public static class GameFiles
         return Entries.TryGetValue(BigHash.Hash(v), out entry);
     }
 
-    /// <summary>Existiert die Datei lose oder in einem Bigfile?</summary>
+    /// <summary>Does the file exist as a separate file or as part of a bigfile?</summary>
     public static bool Exists(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
@@ -232,7 +236,7 @@ public static class GameFiles
     {
         if (File.Exists(path)) return File.ReadAllBytes(path);
         if (TryGetEntry(path, out var e)) return e.Read();
-        throw new FileNotFoundException("Spieldatei nicht gefunden (lose oder im Bigfile): " + path, path);
+        throw new FileNotFoundException("Game file not found (separate file or in Bigfile):" + path, path);
     }
 
     public static Stream? OpenRead(string path)
@@ -244,14 +248,14 @@ public static class GameFiles
 
     public static string ReadAllText(string path)
     {
-        using var s = OpenRead(path) ?? throw new FileNotFoundException("Spieldatei nicht gefunden: " + path, path);
+        using var s = OpenRead(path) ?? throw new FileNotFoundException("Game file not found:" + path, path);
         using var r = new StreamReader(s, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         return r.ReadToEnd();
     }
 
     public static string[] ReadAllLines(string path)
     {
-        using var s = OpenRead(path) ?? throw new FileNotFoundException("Spieldatei nicht gefunden: " + path, path);
+        using var s = OpenRead(path) ?? throw new FileNotFoundException("Game file not found:" + path, path);
         using var r = new StreamReader(s, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var lines = new List<string>();
         string? line;
@@ -307,8 +311,7 @@ public static class GameFiles
         }
     }
 
-    public static string[] GetFiles(string dir, string pattern = "*", SearchOption option = SearchOption.TopDirectoryOnly)
-        => EnumerateFiles(dir, pattern, option).ToArray();
+    public static string[] GetFiles(string dir, string pattern = "*", SearchOption option = SearchOption.TopDirectoryOnly) => EnumerateFiles(dir, pattern, option).ToArray();
 
     public static IEnumerable<string> EnumerateDirectories(string dir)
     {
@@ -341,7 +344,7 @@ public static class GameFiles
 
     public static string[] GetDirectories(string dir) => EnumerateDirectories(dir).ToArray();
 
-    /// <summary>Name (virtueller Pfad) zu einem Hash, falls bekannt.</summary>
+    /// <summary>Name (virtual path) of a hash, if known.</summary>
     public static string? NameOf(ulong hash) => Names.TryGetValue(hash, out var p) ? p : null;
 
     private static bool Wildcard(string text, string pattern)

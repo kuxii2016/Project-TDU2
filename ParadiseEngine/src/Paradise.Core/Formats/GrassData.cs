@@ -1,14 +1,13 @@
-// Portiert aus dem Unity-Projekt (Runtime/Formats/GrassData.cs).
 using System.Globalization;
 using System.Xml;
 namespace Paradise.Core.Formats
 {
     /// <summary>
-    /// Sector-...pgr = Grastyp-Karte (RLE).
-    ///   Datei-Header 16 Byte (".RLE"), Chunk "DATA" @0x10, payload @0x20:
-    ///   u16 Breite (1024), u16 Höhe (1024), u32 Anzahl Typen, dann Höhe × u32 Zeilen-Offsets (relativ zu 0x20),
-    ///   Zeilendaten: Paare {u8 (Anzahl-1), u8 Wert}. Wert 255 = kein Gras, sonst Typ = Wert*16 (+ Varianten).
-    ///   Eine Zelle = 768 m / 1024 = 0,75 m. Zeile = Z-Richtung, Spalte = X-Richtung.
+    /// Sector-...pgr = Grass Type Map (RLE).
+    ///   File header 16 bytes (“.RLE”), chunk “DATA” @0x10, payload @0x20:
+    ///   u16 width (1024), u16 width (1024), u32 number of types, then height × u32 row offsets (relative to 0x20),
+    ///   Row data: pairs {u8 (count-1), u8 value}. Value 255 = no grass; otherwise, type = value*16 (+ variants).
+    ///   One cell = 768 m / 1024 = 0.75 m. Row = Z-direction, column = X-direction.
     /// </summary>
     public sealed class GrassMap
     {
@@ -68,8 +67,7 @@ namespace Paradise.Core.Formats
         public GrassLayerDef Grass = new GrassLayerDef();
         public GrassLayerDef Bush = new GrassLayerDef();
     }
-
-    /// <summary>fx/grasstypes.xml der Insel.</summary>
+    /// <summary>fx/grasstypes.xml for the island.</summary>
     public sealed class GrassTypes
     {
         public readonly Dictionary<int, GrassTypeDef> Types = new Dictionary<int, GrassTypeDef>();
@@ -119,8 +117,8 @@ namespace Paradise.Core.Formats
             n.Attributes?[a] != null && float.TryParse(n.Attributes[a]!.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : def;
 
         /// <summary>
-        /// Karte-Wert -> Grastyp. Wert*16 ist die Typ-Familie; die Low-Bits (4/8/12) sind
-        /// Varianten (normal / OffRoad-High/Medium). Bevorzugt den exakten Typ, sonst +4, sonst das erste Mitglied.
+        /// Map value -> Grass type. Value*16 is the type family; the low bits (4/8/12) are
+        /// variants (normal / OffRoad-High/Medium). Prefers the exact type; otherwise, +4; otherwise, the first member.
         /// </summary>
         public GrassTypeDef? Resolve(byte mapValue)
         {

@@ -1,9 +1,9 @@
 namespace Paradise.Core.Config;
 
 /// <summary>
-/// Zentrale Pfade unter Documents\KuxiiSoft\Test Drive Unlimited 2.
-/// Hier liegen Config, Savegames, Logs und Crash-Reports — nicht im
-/// originalen Eden-Games-Ordner, damit das Originalspiel unberührt bleibt.
+/// Main paths under Documents\KuxiiSoft\Test Drive Unlimited 2.
+/// This is where the config files, savegames, logs, and crash reports are located—not in the
+/// original Eden Games folder, so that the original game remains unaffected.
 /// </summary>
 public static class UserPaths
 {

@@ -200,6 +200,11 @@ namespace Paradise.Core.Online
             s.carConfigs ??= new List<CarConfigEntry>();
             s.myLife.boxes ??= new List<string>();
             s.myLife.fields ??= new List<HouseEntry>();
+            s.raceCinSeen ??= new List<string>();
+            s.racing ??= new List<HouseEntry>();
+            s.recentPlayers ??= new List<RecentEntry>();
+            s.friendNews ??= new List<FriendNewsEntry>();
+            s.storyAvatar ??= "";
             s.island ??= ""; s.currentCar ??= ""; s.avatar ??= ""; s.interior ??= ""; s.savedAt ??= "";
         }
 

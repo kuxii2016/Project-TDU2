@@ -11,8 +11,7 @@ public sealed class NullRenderer : IRenderer
 {
     public string DeviceName => "NullRenderer (keine Grafikausgabe)";
 
-    public void Initialize(nint windowHandle, int width, int height)
-        => Log.Info($"NullRenderer init: hwnd=0x{windowHandle:X}, {width}x{height}");
+    public void Initialize(nint windowHandle, int width, int height) => Log.Debug($"NullRenderer init: hwnd=0x{windowHandle:X}, {width}x{height}");
 
     public void Resize(int width, int height) => Log.Debug($"NullRenderer resize: {width}x{height}");
     public void BeginFrame() { }

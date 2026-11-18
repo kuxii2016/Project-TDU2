@@ -21,6 +21,7 @@ public sealed class WorldActorBodies
     sealed class Entry
     {
         public string Sector = "";
+        public string Name = "";
         public RenderObject[] Objs = Array.Empty<RenderObject>();
         public Matrix4x4[] BaseModel = Array.Empty<Matrix4x4>();
         public Vector3[] BaseMin = Array.Empty<Vector3>(), BaseMax = Array.Empty<Vector3>(), BaseCenter = Array.Empty<Vector3>();
@@ -57,6 +58,12 @@ public sealed class WorldActorBodies
     }
 
     public WorldActorBodies(PhysicsWorld w) { _w = w; }
+
+    /// <summary>
+    /// Ein Teil wurde umgefahren (Sektor/Besitzer, Actor-Name, Aufprallgeschwindigkeit m/s) – Unity RacePropHit.OnCollisionEnter
+    /// (relativeVelocity): die Prüfungen geben dafür Zeitstrafen (Game/Racing).
+    /// </summary>
+    public static event Action<string, string, float>? Broken;
 
     /// <summary>Unity WorldActorBody.Physicalize für eine gebaute Instanz. Rückgabe: statischer Box-Kollider (zum Sektor).</summary>
     public StaticCollider? Register(string sector, string actorName, List<RenderObject> objs, Matrix4x4 instWorld)
@@ -110,7 +117,7 @@ public sealed class WorldActorBodies
         var center = Vector3.Transform(centerLocal, instWorld) + Vector3.UnitY * (lift * 0.5f);
         size.Y -= lift;
 
-        var e = new Entry { Sector = sector, Center = center, Rot = Quaternion.Normalize(rot), Size = size };
+        var e = new Entry { Sector = sector, Name = actorName ?? "", Center = center, Rot = Quaternion.Normalize(rot), Size = size };
         var stc = _w.AddStaticMesh(BoxTriangles(center, e.Rot, size), sector + " Actor " + actorName);
         if (stc != null) stc.IgnoreRays = true;
         e.Static = stc;
@@ -192,6 +199,7 @@ public sealed class WorldActorBodies
         Matrix4x4.Invert(Matrix4x4.CreateFromQuaternion(e.Rot) * Matrix4x4.CreateTranslation(e.Center), out e.InvPose0);
         _free.Add(e);
         Log.Info($"World Actor umgefahren: {e.Mass:0} kg bei {hitVel.Length() * 3.6f:0} km/h");
+        Broken?.Invoke(e.Sector, e.Name, hitVel.Length());
     }
 
     /// <summary>Je Bild: Render-Matrizen der gelösten Teile aus den Körpern übernehmen; nach 90 s entfernen.</summary>

@@ -58,6 +58,20 @@ namespace Paradise.Core.Online
         /// <summary>Optionsmenü ("var=wert;…", Unity PlayerPrefs "TDU2.Opt.*") und abweichende Tastenbelegung ("id=taste1,taste2;…").</summary>
         public string options = "";
         public string keys = "";
+        /// <summary>Geschichte: gewählter Intro-Avatar (DBPNJ-Konfiguration, z.B. "AVT_Female_Asia_Intro") und ob die Geschichte das
+        /// Story-Auto (California) gegeben hat (Tess nimmt es an der Solar Crown zurück).</summary>
+        public string storyAvatar = "";
+        public bool storyGaveCar;
+        /// <summary>TDU Media: gelesene News/Updates des Servers (höchste gelesene Id).</summary>
+        public int newsSeen, updatesSeen;
+        /// <summary>Schon gesehene Renn-Kinos (RaceCinematics: Einführungen je Meisterschaft/Prüfung).</summary>
+        public List<string> raceCinSeen = new List<string>();
+        /// <summary>Rennschule und Meisterschaften (RaceProgress): Schlüssel/Wert wie Unity PlayerPrefs "TDU2.School.*"/"TDU2.Cup.*".</summary>
+        public List<HouseEntry> racing = new List<HouseEntry>();
+        /// <summary>Zuletzt gesehene Spieler (Pausemenü recent_players).</summary>
+        public List<RecentEntry> recentPlayers = new List<RecentEntry>();
+        /// <summary>Meldungen der Freunde (TDU Media).</summary>
+        public List<FriendNewsEntry> friendNews = new List<FriendNewsEntry>();
         public string savedAt = "";
     }
 }

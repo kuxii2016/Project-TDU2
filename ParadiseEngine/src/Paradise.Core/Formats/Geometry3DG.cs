@@ -29,8 +29,8 @@ public sealed class VertexData
 }
 
 /// <summary>
-/// Plattformunabhängige Mesh-Daten (mehrere Submeshes, je Materialindex). UV0 = Basis,
-/// UV2 = letzter UV-Satz (Straßen-Detail), UV3 = 3. Satz (Straßen MARKS2). Portiert aus dem Unity-Projekt.
+/// Platform-independent mesh data (multiple submeshes per material index). UV0 = base,
+/// UV2 = last UV set (road detail), UV3 = 3rd set (road MARKS2).
 /// </summary>
 public sealed class MeshData
 {
@@ -53,11 +53,10 @@ public sealed class MeshData
 }
 
 /// <summary>
-/// .3dg = Geometrie.
-///   GEOA: HASH (key -> GEOM-Offset) + GEOM-Chunks; GEOM enthält PRIM-Chunks.
-///   PRIM: +0 u32 DXIB-Offset, +4 u32 DXVB-Offset, +16 u16 Materialindex, +18 u16 Primitivtyp (4=Strip)
-///   VBA. : DXVB-Chunks (Deklaration + Streams). IBA. : DXIB-Chunks (Triangle-Strip, u16).
-/// Portiert aus dem Unity-Projekt.
+/// .3dg = Geometry.
+///   GEOA: HASH (key -> GEOM offset) + GEOM chunks; GEOM contains PRIM chunks.
+///   PRIM: +0 u32 DXIB offset, +4 u32 DXVB offset, +16 u16 material index, +18 u16 primitive type (4=strip)
+///   VBA: DXVB chunks (declaration + streams). IBA: DXIB chunks (triangle strip, u16).
 /// </summary>
 public sealed class Geometry3DG
 {
@@ -242,7 +241,7 @@ public sealed class Geometry3DG
         return v;
     }
 
-    /// <summary>Flagwort 0: jedes Attribut als eigener zusammenhängender Block.</summary>
+    /// <summary>Key phrase 0: Each attribute as its own self-contained block.</summary>
     private VertexData? ReadPlanar(byte[] d, int vbOffset, int n, bool hasNormal, bool hasColor, bool hasColor2, int uvCount, bool hasTangent)
     {
         int end = vbOffset + (int)Bin.U32(d, vbOffset + 8);
@@ -295,7 +294,7 @@ public sealed class Geometry3DG
         return r;
     }
 
-    /// <summary>Triangle-Strip -> Dreiecksliste (degenerierte Dreiecke verworfen, Wicklung wie D3D).</summary>
+    /// <summary>Triangle Strip -> Triangle List (degenerate triangles discarded, winding order as in D3D).</summary>
     public static void StripToList(ushort[] strip, int baseVertex, List<int> outTris)
     {
         for (int i = 0; i + 2 < strip.Length; i++)
@@ -315,7 +314,7 @@ public sealed class Geometry3DG
         }
     }
 
-    /// <summary>Baut MeshData für eine Geometrie (alle PRIMs als Submeshes). null, wenn Key fehlt/leer.</summary>
+    /// <summary>Creates MeshData for a geometry (all PRIMs as submeshes). Returns null if the key is missing or empty.</summary>
     public MeshData? BuildMesh(ulong geoKey, bool skipEmpty = true)
     {
         if (!GeoHash.TryGetValue(geoKey, out int geom)) return null;

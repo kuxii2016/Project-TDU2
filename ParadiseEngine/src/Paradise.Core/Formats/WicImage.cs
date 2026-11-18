@@ -1,13 +1,14 @@
+using Paradise.Core.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// Bilder (JPEG, PNG, BMP …) über die Windows Imaging Component dekodieren – z.B. die Original-Ladebilder in frontend/tips_*.bnk
-/// (Unity: ImageConversion.LoadImage). Ergebnis RGBA8, Zeile 0 = oben.
-/// s97: direkte Vtable-Aufrufe mit HRESULT-Prüfung statt [ComImport]-Interfaces (der .NET-COM-Marshaller ließ das Spiel beim
-/// Dekodieren abstürzen/hängen). Jeder Schritt prüft sein Ergebnis; Fehler = null + Log, nie ein Absturz durch falsche Zeiger.
+/// Decode images (JPEG, PNG, BMP, etc.) using the Windows Imaging Component—e.g., the original loading images in frontend/tips_*.bnk
+/// Result: RGBA8, row 0 = top.
+/// s97: Direct vtable calls with HRESULT checking instead of [ComImport] interfaces (the .NET COM marshaller caused the game to
+/// crash or hang during decoding). Each step checks its result; error = null + log, never a crash due to invalid pointers.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static unsafe class WicImage
@@ -104,7 +105,7 @@ public static unsafe class WicImage
         }
         catch (Exception ex)
         {
-            Diagnostics.Log.Warn($"Bild (WIC) nicht dekodierbar bei {step}: {ex.Message}");
+            Log.Error($"Image (WIC) cannot be decoded at {step}: {ex.Message}");
             return null;
         }
         finally
@@ -115,7 +116,7 @@ public static unsafe class WicImage
 
     static byte[]? Fail(string step, int hr)
     {
-        Diagnostics.Log.Warn($"Bild (WIC) nicht dekodierbar: {step} HRESULT 0x{hr:X8}");
+        Log.Warn($"Image (WIC) cannot be decoded: {step} HRESULT 0x{hr:X8}");
         return null;
     }
 }

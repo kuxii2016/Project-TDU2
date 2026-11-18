@@ -76,7 +76,7 @@ public sealed unsafe partial class VulkanRenderer
         if (_uiPass.Handle == 0) return;                    // ohne UNORM-Sicht kein Durchgang
         if (!Msaa && !_swapTransferSrc)
         {
-            Log.Warn("Photoshop-Nachbearbeitung: Swapchain-Bilder nicht kopierbar (TransferSrc) – Durchgang aus.");
+            Log.Warn("Photoshop Post-Processing: Swapchain images cannot be copied (TransferSrc) – Process complete.");
             return;
         }
         uint w = _extent.Width, h = _extent.Height;
@@ -187,7 +187,6 @@ public sealed unsafe partial class VulkanRenderer
         EndSingleTimeCommands(initCmd);
 
         _pfxReady = true;
-        Log.Info($"Photoshop-Nachbearbeitung bereit: {w}x{h}, Viertel {_pfxQW}x{_pfxQH}, LUT {PfxLutSize}, {fmt}; Zusatz Bloom/AO (AO {_pfxAoW}x{_pfxAoH}{(Msaa ? ", Tiefe MSAA" : "")})");
     }
 
     private void DestroyPostFx()
@@ -399,8 +398,6 @@ public sealed unsafe partial class VulkanRenderer
         if (PostFx.AoEnabled && _frameCounter - _pfxAoLogFrame >= 600)
         {
             _pfxAoLogFrame = _frameCounter;
-            Log.Info($"[DIAG AO] aktiv {ao} (Stärke {PostFx.AoIntensity:0.00}, NoSky {_globals.NoSky}, Proj M33 {_proj.M33:G4} M34 {_proj.M34:G4} M43 {_proj.M43:G4} M11 {_proj.M11:G4} M22 {_proj.M22:G4}), " +
-                     $"Radius {PostFx.AoRadius:0.0} m, Neigung {PostFx.AoBias:0.00}, bis {PostFx.AoMaxDistance:0} m, Ziel {_pfxAoW}x{_pfxAoH}, MSAA {Msaa}, Debug {PostFx.DebugView}");
         }
         _pfxFlags = (ps ? 1 : 0) | (bloom ? 2 : 0) | (ao ? 4 : 0);
         if (_pfxFlags == 0) return false;
@@ -410,7 +407,6 @@ public sealed unsafe partial class VulkanRenderer
         if (ps && PhotoshopFx.CrappyMode && !_pfxCrappyLogged)
         {
             _pfxCrappyLogged = true;
-            Log.Warn("Photoshop: Wetter schaltet die Tiefenunschärfe (photoshop_crappymode_enable) ein – noch nicht umgesetzt, normale Variante läuft.");
         }
 
         CopySceneForPhotoshop(cmd);

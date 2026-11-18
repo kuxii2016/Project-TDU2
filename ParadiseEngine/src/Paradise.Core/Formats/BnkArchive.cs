@@ -1,3 +1,4 @@
+using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 
 namespace Paradise.Core.Formats;
@@ -71,7 +72,7 @@ public sealed class BnkArchive
         else if (GameFiles.TryGetEntry(path, out var entry))
             a._source = new BigEntryBnkSource(entry);
         else
-            throw new FileNotFoundException("Bank nicht gefunden (lose oder im Bigfile): " + path, path);
+            throw new FileNotFoundException("Bank not found (separate or in the Bigfile):" + path, path);
         a.ReadHeader();
         return a;
     }
@@ -89,7 +90,7 @@ public sealed class BnkArchive
         var first = new byte[0x48];
         _source.Read(0, first, 0, first.Length);
         if (!Bin.TagIs(first, 8, "KNAB"))
-            throw new InvalidDataException("Keine TDU2-Bank (KNAB fehlt): " + FilePath);
+            throw new InvalidDataException("No TDU2 bank (KNAB missing):" + FilePath);
         int headerSize = (int)Bin.U32(first, 0x44);
         if (headerSize <= 0x48 || headerSize > _source.Length) headerSize = (int)System.Math.Min(_source.Length, 1 << 20);
         head = new byte[headerSize];
@@ -190,10 +191,10 @@ public sealed class BnkArchive
         }
 
         if (!best.Clean)
-            Diagnostics.Log.Warn(
-                $"Namensbaum unvollständig ({bestName}): {best.Names.Count}/{nFiles} Namen, {best.Error}");
+            Log.Warn(
+                $"Name tree incomplete ({bestName}): {best.Names.Count}/{nFiles} names, {best.Error}");
         else if (!bestPreferred)
-            Diagnostics.Log.Debug($"Namensbaum: Variante {bestName} verwendet ({best.Names.Count} Namen)");
+            Log.Debug($"Name Tree: Variant {bestName} used ({best.Names.Count} names)");
 
         return best.Names;
     }
@@ -230,8 +231,8 @@ public sealed class BnkArchive
         int Rec(int p, int depth)
         {
             if (failed) return end;
-            if (p < 0 || p >= end) { failed = true; error = $"Position 0x{p:X} außerhalb 0x{start:X}..0x{end:X}"; return end; }
-            if (depth > MaxDepth) { failed = true; error = $"Rekursionstiefe > {MaxDepth}"; return end; }
+            if (p < 0 || p >= end) { failed = true; error = $"Position 0x{p:X} is outside the range 0x{start:X}..0x{end:X}"; return end; }
+            if (depth > MaxDepth) { failed = true; error = $"Recursion depth > {MaxDepth}"; return end; }
             if (depth > result.MaxDepth) result.MaxDepth = depth;
 
             byte b = d[p];
@@ -242,7 +243,7 @@ public sealed class BnkArchive
 
                 if (singleByteCount)
                 {
-                    if (q >= end) { failed = true; error = "Kinderzahl fehlt"; return end; }
+                    if (q >= end) { failed = true; error = "Number of children missing"; return end; }
                     count = d[q++];
                 }
                 else
@@ -251,18 +252,18 @@ public sealed class BnkArchive
                     int shift = 0;
                     while (true)
                     {
-                        if (q >= end) { failed = true; error = "Varint läuft über das Bereichsende"; return end; }
+                        if (q >= end) { failed = true; error = "Varint goes over the end of the court"; return end; }
                         byte v = d[q++];
                         count |= (v & 0x7F) << shift;
                         if ((v & 0x80) == 0) break;
                         shift += 7;
-                        if (shift > 21) { failed = true; error = "Varint ungültig"; return end; }
+                        if (shift > 21) { failed = true; error = "Varint invalid"; return end; }
                     }
                 }
 
-                if (len <= 0 || q + len > end) { failed = true; error = "Ordnername läuft über das Bereichsende"; return end; }
+                if (len <= 0 || q + len > end) { failed = true; error = "The folder name extends beyond the end of the section"; return end; }
                 // Jedes Kind belegt mindestens ein Byte; eine größere Zahl ist immer falsch.
-                if (count > end - (q + len)) { failed = true; error = $"Kinderzahl {count} größer als Restbereich {end - (q + len)}"; return end; }
+                if (count > end - (q + len)) { failed = true; error = $"Number of children {count} is greater than the remaining range{end - (q + len)}"; return end; }
 
                 string s = Bin.Latin1(d, q, len);
                 stack.Add(s);
@@ -278,8 +279,8 @@ public sealed class BnkArchive
             else
             {
                 int leafLen = b;
-                if (leafLen <= 0) { failed = true; error = "Dateiname mit Länge 0"; return end; }
-                if (p + 1 + leafLen > end) { failed = true; error = "Dateiname läuft über das Bereichsende"; return end; }
+                if (leafLen <= 0) { failed = true; error = "File name with a length of 0"; return end; }
+                if (p + 1 + leafLen > end) { failed = true; error = "The filename extends beyond the end of the range"; return end; }
                 var full = new string[stack.Count + 1];
                 stack.CopyTo(full);
                 full[stack.Count] = Bin.Latin1(d, p + 1, leafLen);
@@ -294,7 +295,7 @@ public sealed class BnkArchive
             if (d[pos] == 0) { result.Terminated = true; break; }
             int next = Rec(pos, 0);
             if (failed) break;
-            if (next <= pos) { failed = true; error = "Parser macht keinen Fortschritt"; break; }
+            if (next <= pos) { failed = true; error = "The parser isn't making any progress"; break; }
             pos = next;
         }
 
@@ -317,20 +318,20 @@ public sealed class BnkArchive
         int Rec(int p, int depth)
         {
             if (failed) return end;
-            if (p < 0 || p >= end) { failed = true; error = $"Position 0x{p:X} außerhalb 0x{start:X}..0x{end:X}"; return end; }
-            if (depth > MaxDepth) { failed = true; error = $"Rekursionstiefe > {MaxDepth}"; return end; }
+            if (p < 0 || p >= end) { failed = true; error = $"Position 0x{p:X} is outside the range 0x{start:X}..0x{end:X}"; return end; }
+            if (depth > MaxDepth) { failed = true; error = $"Recursion depth > {MaxDepth}"; return end; }
             if (depth > result.MaxDepth) result.MaxDepth = depth;
 
             bool leaf = stack.Count > 0 && stack[^1].StartsWith('.');
             int len = d[p];
-            if (len <= 0) { failed = true; error = "Knoten mit Länge 0"; return end; }
+            if (len <= 0) { failed = true; error = "Nodes with length 0"; return end; }
             // In Variante C sind alle Längen Einzelbytes < 0x80; 0x80+ bedeutet, dass es
             // gar kein V2-Baum ist (dann schlägt der Versuch sauber fehl).
-            if (len >= 0x80) { failed = true; error = "Längenbyte >= 0x80 (kein V2-Baum)"; return end; }
+            if (len >= 0x80) { failed = true; error = "Length byte >= 0x80 (not a V2 tree)"; return end; }
 
             if (leaf)
             {
-                if (p + 1 + len > end) { failed = true; error = "Dateiname läuft über das Bereichsende"; return end; }
+                if (p + 1 + len > end) { failed = true; error = "The filename extends beyond the end of the range"; return end; }
                 var full = new string[stack.Count + 1];
                 stack.CopyTo(full);
                 full[stack.Count] = Bin.Latin1(d, p + 1, len);
@@ -341,15 +342,15 @@ public sealed class BnkArchive
             int q = p + 1, count = 0, shift = 0;
             while (true)
             {
-                if (q >= end) { failed = true; error = "Varint läuft über das Bereichsende"; return end; }
+                if (q >= end) { failed = true; error = "Varint goes over the end of the court"; return end; }
                 byte v = d[q++];
                 count |= (v & 0x7F) << shift;
                 if ((v & 0x80) == 0) break;
                 shift += 7;
-                if (shift > 21) { failed = true; error = "Varint ungültig"; return end; }
+                if (shift > 21) { failed = true; error = "Varint invalid"; return end; }
             }
-            if (q + len > end) { failed = true; error = "Ordnername läuft über das Bereichsende"; return end; }
-            if (count > end - (q + len)) { failed = true; error = $"Kinderzahl {count} größer als Restbereich {end - (q + len)}"; return end; }
+            if (q + len > end) { failed = true; error = "The folder name extends beyond the end of the section"; return end; }
+            if (count > end - (q + len)) { failed = true; error = $"Number of children {count} is greater than the remaining range {end - (q + len)}"; return end; }
 
             stack.Add(Bin.Latin1(d, q, len));
             p = q + len;
@@ -368,7 +369,7 @@ public sealed class BnkArchive
             if (d[pos] == 0) { result.Terminated = true; break; }
             int next = Rec(pos, 0);
             if (failed) break;
-            if (next <= pos) { failed = true; error = "Parser macht keinen Fortschritt"; break; }
+            if (next <= pos) { failed = true; error = "The parser isn't making any progress"; break; }
             pos = next;
         }
 

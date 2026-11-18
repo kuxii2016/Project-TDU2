@@ -1,44 +1,43 @@
 ﻿#nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfPlayerAsync.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Math;
 
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Ruckelfreies erstes Anzeigen der Flash-Filme:
-    ///  - Shapes werden in einem Hintergrund-Thread gerastert (VmfRaster ist reine Rechnerei, ohne Unity-API). Gleich nach dem
-    ///    Laden werden alle Shapes eines Films in der Bühnen-Auflösung vorbereitet ("Prewarm"), die Texturen entstehen danach
-    ///    stückweise im Hauptthread (Zeitbudget je Bild).
-    ///  - Wird eine Shape gebraucht, die noch nicht fertig ist: kleine sofort, große (oder wenn das Bild-Budget aufgebraucht
-    ///    ist) im Hintergrund – bis dahin bleibt sie für wenige Bilder unsichtbar bzw. in der vorhandenen kleineren Stufe.
-    ///    Vorher wurde alles im ersten Bild synchron gerastert -> das Spiel stand bis zu mehrere Sekunden.
-    ///  - Schriften (Glyphen-Texturen) werden nach dem Laden ebenfalls nacheinander erzeugt.
-    ///  - Per Pfad gesetzte Clip-Texturen (SetClipTexture) bleiben erhalten, auch wenn die Zeitleiste den Clip neu anlegt.
+    /// Smooth initial display of Flash movies:
+    ///  - Shapes are rasterized in a background thread (VmfRaster is purely computational, without the Unity API). Immediately after
+    ///    loading, all shapes in a movie are prepared at stage resolution (“Prewarm”); the textures are then generated
+    ///    piece by piece in the main thread (time budget per frame).
+    ///  - If a shape is needed that isn’t ready yet: small ones immediately, large ones (or if the frame budget is exhausted
+    ///    ) in the background—until then, it remains invisible for a few frames or at the existing lower resolution.
+    ///    Previously, everything was rasterized synchronously in the first frame -> the game froze for up to several seconds.
+    ///  - Fonts (glyph textures) are also generated one after another after loading.
+    ///  - Clip textures set via path (SetClipTexture) are preserved, even if the timeline recreates the clip.
     /// </summary>
     public sealed partial class VmfPlayer
     {
-        /// <summary>Shapes im Hintergrund rastern (kein Stillstand beim ersten Anzeigen).</summary>
+        /// <summary>Render shapes in the background (no delay when first displayed).</summary>
         public static bool AsyncRaster = true;
-        /// <summary>Anzahl paralleler Raster-Threads.</summary>
-        public static int RasterThreadCount = System.Math.Max(4, Environment.ProcessorCount);
-        /// <summary>Nach dem Laden alle Shapes vorab rastern.</summary>
+        /// <summary>Number of parallel raster threads.</summary>
+        public static int RasterThreadCount = System.Math.Max(4, (Environment.ProcessorCount / 4));
+        /// <summary>Rasterize all shapes before loading.</summary>
         public static bool PrewarmShapes = true;
-        /// <summary>Höchstens so viele MB Pixel je Film vorab rastern.</summary>
+        /// <summary>Rasterize no more than this many MB of pixels per movie in advance.</summary>
         public static int PrewarmBudgetMB = 12;
-        /// <summary>Shapes bis zu dieser Pixelzahl werden bei Bedarf sofort (synchron) gerastert, größere im Hintergrund.</summary>
+        /// <summary>Shapes up to this number of pixels are rasterized immediately (synchronously) as needed; larger ones are rasterized in the background.</summary>
         public static int SyncRasterMaxPixels = 12000;
-        /// <summary>Zeitbudget (ms) je Bild für das Erzeugen fertiger Texturen: sichtbare Filme / alle unsichtbaren zusammen.</summary>
+        /// <summary>Time budget (ms) per frame for generating final textures: visible films / all invisible ones combined.</summary>
         public static float IntegrateBudgetVisibleMs = 0.1f, IntegrateBudgetHiddenMs = 0.05f;
         const long MaxPendingBytes = 64L * 1024 * 1024;
-        /// <summary>Beim Einblenden höchstens so lange (s) warten, bis alle sichtbaren Shapes fertig sind, statt den Aufbau zu zeigen.</summary>
+        /// <summary>When fading in, wait at most until all visible shapes are ready, rather than showing the construction process.</summary>
         public static float FirstShowHoldSeconds = 0f;
         /// <summary>
-        /// Atomares Einblenden: ein Clip, der neu erscheint (Fenster, Seite, Popup), wird erst gezeigt, wenn alle seine Shapes
-        /// scharf gerastert sind – höchstens so lange (s) angehalten. Seine Zeitleiste steht so lange, die Öffnen-Animation
-        /// läuft danach vollständig ab. 0 = aus (alter Stil: Shapes erscheinen einzeln, sobald sie fertig sind).
+        /// Atomic Fade-In: A clip that appears for the first time (window, page, popup) is not displayed until all of its shapes
+        /// are fully rendered—it is paused for no longer than that. Its timeline remains active until the opening animation
+        /// has completed. 0 = off (old style: Shapes appear individually as soon as they are ready).
         /// </summary>
         public static float RevealHoldSeconds = 0.2f;
-        /// <summary>GPU-Uploads fertiger Shapes je Bild (Anzahl/Zeitbudget ms): sichtbare bzw. unsichtbare Filme.</summary>
+        /// <summary>GPU uploads of finished shapes per image (number/time budget in ms): visible and invisible movies.</summary>
         public static int UploadsPerFrameVisible = 16, UploadsPerFrameHidden = 4;
         public static double UploadBudgetVisibleMs = 2.0, UploadBudgetHiddenMs = 0.5;
         bool _probe, _missing, _wasVisible;
@@ -66,8 +65,8 @@ namespace Paradise.Core.Flash
         }
 
         /// <summary>
-        /// Darf der Clip gezeichnet werden? Beim (Wieder-)Erscheinen einmal prüfen, ob alle Shapes darunter in voller Schärfe
-        /// vorliegen (fehlende werden dabei vorrangig angefordert); solange nicht, Clip auslassen und seine Zeitleiste anhalten.
+        /// Should the clip be drawn? When it (re)appears, check once to see if all shapes beneath it are present in full resolution
+        /// (missing shapes are requested as a priority); if not, skip the clip and pause its timeline.
         /// </summary>
         bool RevealReady(DisplayObject d, Matrix2D mw, ColorTransform cw, string dyn, Texture clipTex)
         {
@@ -110,10 +109,10 @@ namespace Paradise.Core.Flash
         static int _hiddenFrame = -1; static float _hiddenMs;
 
         volatile float _lastBitmapUse;
-        /// <summary>Dekodierte Atlas-Seiten (RGBA, 4 Byte je Pixel) nach so vielen Sekunden ohne Rastern verwerfen – bei Bedarf neu dekodiert.</summary>
+        /// <summary>Discard decoded atlas pages (RGBA, 4 bytes per pixel) after this many seconds without rasterization—redecode if necessary.</summary>
         public static float DecodedBitmapKeepSeconds = 10f;
 
-        /// <summary>Dekodierte Bitmaps (nur fürs Rastern von Bitmapfüllungen gebraucht) freigeben, wenn nichts mehr gerastert wird.</summary>
+        /// <summary>Release decoded bitmaps (used only for rasterizing bitmap fills) when nothing else is being rasterized.</summary>
         void TrimDecodedBitmaps()
         {
             if (Time.realtimeSinceStartup - _lastBitmapUse < DecodedBitmapKeepSeconds) return;
@@ -121,7 +120,7 @@ namespace Paradise.Core.Flash
             lock (_pixels) { if (_pixels.Count > 0) _pixels.Clear(); }
         }
 
-        /// <summary>Speicher dieses Films (Diagnose): Rohdaten der Texturen, dekodierte Bitmaps, gerasterte Shapes (GPU), wartende Rasterungen.</summary>
+        /// <summary>Memory used by this movie (diagnostics): Raw texture data, decoded bitmaps, rasterized shapes (GPU), pending rasterizations.</summary>
         public (long raw, long decoded, int shapes, long shapeGpu, long pending) MemoryStats()
         {
             long raw = 0, dec = 0, sg = 0;
@@ -134,7 +133,7 @@ namespace Paradise.Core.Flash
 
         static long Key(int id, int target) => ((long)id << 16) | (long)(target + 1000);
 
-        /// <summary>Geschätzte Pixelzahl einer Shape in Rasterstufe target.</summary>
+        /// <summary>Estimated number of pixels in a shape at resolution level target.</summary>
         static long EstimatePixels(VmfMovie.Shape s, int target)
         {
             float sc = Mathf.Pow(2f, target * 0.5f);
@@ -142,7 +141,7 @@ namespace Paradise.Core.Flash
             return System.Math.Min(px, 2_500_000L);
         }
 
-        /// <summary>Shape mit Bitmapfüllung, deren Atlas-Seite noch nicht dekodiert ist (Dekodieren einer 2048er Seite dauert spürbar).</summary>
+        /// <summary>Shape with a bitmap fill whose atlas page has not yet been decoded (decoding a 2048-page atlas takes a noticeable amount of time).</summary>
         bool NeedsUndecodedBitmap(VmfMovie.Shape s)
         {
             foreach (var fs in s.Fills)
@@ -188,7 +187,7 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Nach dem Laden: alle Shapes (bis zum Budget) und Schriften vorbereiten.</summary>
+        /// <summary>After loading: prepare all shapes (up to the budget) and fonts.</summary>
         void StartPrewarm()
         {
             if (!AsyncRaster || Movie == null) return;
@@ -197,8 +196,8 @@ namespace Paradise.Core.Flash
             {
                 int target = StageBucket() + 1;
                 long budget = PrewarmBudgetMB * 1024L * 1024L / 4L, sum = 0;
-                // kleine Shapes zuerst (Rahmen, Symbole, Knöpfe – davon gibt es Hunderte): mit demselben Budget sind so viel
-                // mehr Fenster sofort vollständig; die wenigen großen Flächen kommen beim Einblenden schnell nach
+                // Small shapes first (frames, icons, buttons—there are hundreds of them): with the same budget, so many
+                // more windows are immediately complete; the few large areas are quickly added when the window is displayed
                 var list = new List<(VmfMovie.Shape s, long px)>();
                 foreach (var c in Movie.Chars.Values)
                     if (c is VmfMovie.Shape s && s.Paths.Count > 0) list.Add((s, EstimatePixels(s, target)));
@@ -269,7 +268,7 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Fertige Rasterungen als Texturen übernehmen (Hauptthread, mit Zeitbudget).</summary>
+        /// <summary>Apply finished rasterizations as textures (main thread, with time budget).</summary>
         void IntegrateRasters()
         {
             if ((_rasterThreads == null || _rasterThreads.Length == 0) && _fontQueue == null) return;
@@ -320,7 +319,7 @@ namespace Paradise.Core.Flash
             catch { }
         }
 
-        /// <summary>Rasterung als Textur ablegen (ersetzt eine kleinere Stufe).</summary>
+        /// <summary>Save the rasterization as a texture (replaces a smaller step).</summary>
         (Texture2D tex, float ox, float oy, float sc) StoreShape(int id, int target, VmfRaster.Result r)
         {
             Texture2D tex = null;
@@ -341,10 +340,9 @@ namespace Paradise.Core.Flash
             return e;
         }
 
-        // ---------------------------------------------------------------- Clip-Texturen per Pfad
         readonly Dictionary<string, Texture> _clipTex = new Dictionary<string, Texture>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Per Pfad gesetzte Texturen wieder an die (evtl. von der Zeitleiste neu angelegten) Clips hängen.</summary>
+        /// <summary>Reattach textures set via path to the clips (which may have been recreated by the timeline).</summary>
         void ApplyClipTextures()
         {
             if (_clipTex.Count == 0 || Root == null) return;
@@ -364,7 +362,6 @@ namespace Paradise.Core.Flash
             if (rm != null) foreach (var k in rm) _clipTex.Remove(k);
         }
 
-        // ---------------------------------------------------------------- Platzhaltertexte
         public bool HidePlaceholders = true;
         readonly Dictionary<int, bool> _placeholder = new Dictionary<int, bool>();
 
@@ -376,7 +373,7 @@ namespace Paradise.Core.Flash
             return p;
         }
 
-        /// <summary>Starttext ist ein Platzhalter der Entwickler (wird im Spiel immer überschrieben).</summary>
+        /// <summary>“Starttext” is a placeholder created by the developers (it is always overwritten in the game).</summary>
         public static bool IsPlaceholderText(string text, string variable)
         {
             if (string.IsNullOrEmpty(text)) return false;

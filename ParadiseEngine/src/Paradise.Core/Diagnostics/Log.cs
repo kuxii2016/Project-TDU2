@@ -22,7 +22,7 @@ public static class Log
     private const int RingSize = 200;
     public static bool isFullLog { get; set; } = false;
 
-    public static LogLevel MinLevel { get; set; } = LogLevel.Debug;
+    public static LogLevel MinLevel { get; set; } = LogLevel.Info;
 
     public static void Init(string? tag = null)
     {

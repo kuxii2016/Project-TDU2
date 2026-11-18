@@ -59,7 +59,7 @@ namespace Paradise.Core.Audio
     /// Reads the radio configuration: DBRadioStation + DBRadioMessage from db_data.cpr, the song durations
     /// from sound/radio/setup.xmb, and resolves each message into its corresponding bank in sound/radio/{music,jingle,comment,advertising}.
     /// </summary>
-    public sealed class TDU2RadioData
+    public sealed class RadioData
     {
         public readonly Dictionary<int, RadioStationInfo> Stations = new Dictionary<int, RadioStationInfo>();
         public readonly List<RadioMessage> Messages = new List<RadioMessage>();
@@ -111,9 +111,9 @@ namespace Paradise.Core.Audio
             return null;
         }
 
-        public static TDU2RadioData Load(string bnkDir)
+        public static RadioData Load(string bnkDir)
         {
-            var d = new TDU2RadioData { BnkDir = bnkDir, RadioDir = Path.Combine(bnkDir, "sound", "radio") };
+            var d = new RadioData { BnkDir = bnkDir, RadioDir = Path.Combine(bnkDir, "sound", "radio") };
             try
             {
                 d.LoadDatabase(Path.Combine(bnkDir, "database", "db_data.cpr"));

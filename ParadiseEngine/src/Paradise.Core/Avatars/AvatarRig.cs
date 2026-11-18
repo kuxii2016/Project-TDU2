@@ -3,8 +3,8 @@ using System.Numerics;
 
 namespace Paradise.Core.Avatars;
 /// <summary>
-/// Avatar poses and CPU skinning (pose portion of Unity TDU2Avatar: BeginPose / ApplyClip / SolveTwoBone / BlendLocal /
-/// CommitPose; skinning in Unity is handled by the SkinnedMeshRenderer). Everything in avatar space (game space, right-handed, +Z forward),
+/// Avatar poses and CPU skinning (BeginPose / ApplyClip / SolveTwoBone / BlendLocal / CommitPose. 
+/// Everything in avatar space (game space, right-handed, +Z forward),
 /// Matrices for row vectors (System.Numerics): global = local · global(parent), skin = InvBind · global.
 /// </summary>
 public sealed class AvatarRig
@@ -179,7 +179,6 @@ public sealed class AvatarRig
 
     /// <summary>
     /// Write the vertices of a part in its current pose (avatar space) to <paramref name="dst"/> (starting at <paramref name="offset"/>).
-    /// UV0..2 as in Unity (UV1/UV2 fall back to UV0), color white.
     /// </summary>
     public void Skin(SkinPrim pr, ObjectVertex[] dst, int offset)
     {

@@ -5,11 +5,11 @@ using Paradise.Core.Render;
 namespace Paradise.Core.Fx;
 
 /// <summary>
-/// Effekte einer FX-Bank (z. B. fx/vfx_car.bnk): entities.xmb Fx → SourceData → ParticlesList → Particles
-/// (Prt = .prt, rscSubType 18; PrtMat = .2DM (2) + .2db (3)). Ressourcen-Hashes über hashcodes.xmb auf Bankeinträge.
-/// Je Effekt die Partikelknoten mit Textur und Material (MaterialKind.Particle). Aus dem .2DM (MAT.+0x40, D3D-Werte): Byte 8/9 =
-/// SrcBlend/DestBlend (5/6 Alpha, 5/2 additiv), Byte 1 = Beleuchtung (1 = td_particle-VS mit Ambient/DirLight, 2 = unbeleuchtet;
-/// Zuordnung aus den Daten: FX_LIGHT/LightBeam/Flammen 2, Welt und Rauch 1).
+/// Effects from an FX bank (e.g., fx/vfx_car.bnk): entities.xmb Fx → SourceData → ParticlesList → Particles
+/// (Prt = .prt, rscSubType 18; PrtMat = .2DM (2) + .2db (3)). Resource hashes via hashcodes.xmb for bank entries.
+/// For each effect, the particle nodes with texture and material (MaterialKind.Particle). From the .2DM (MAT.+0x40, D3D values): Bytes 8/9 =
+/// SrcBlend/DestBlend (5/6 alpha, 5/2 additive), byte 1 = lighting (1 = td_particle-VS with Ambient/DirLight, 2 = unlit;
+/// Mapping from the data: FX_LIGHT/LightBeam/Flames 2, World and Smoke 1).
 /// </summary>
 public sealed class FxLibrary : IDisposable
 {
@@ -149,8 +149,8 @@ public sealed class FxLibrary : IDisposable
     int _lit, _additive;
 
     /// <summary>
-    /// .bfx: Chunk "SPMC" mit Dauer (float, Tag − 0x0c) und Knotenzahl (Tag − 8), danach je Knoten (u32 Offset, float Start, float Ende).
-    /// Klangknoten (erstes folgendes Tag " DNS" statt "CTRP") zählen nicht zu den Partikeln (VFX_Exhaust_PipeFlame: 4 Partikel, 1 Klang).
+    /// .bfx: “SPMC” chunk with duration (float, tag − 0x0c) and number of nodes (tag − 8), followed by information for each node (u32 offset, float start, float end).
+    /// Sound nodes (first subsequent tag “DNS” instead of “CTRP”) are not counted as particles (VFX_Exhaust_PipeFlame: 4 particles, 1 sound).
     /// </summary>
     static List<(float s, float e)>? ReadTimeline(byte[] b, out float duration)
     {

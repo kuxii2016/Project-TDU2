@@ -26,5 +26,7 @@ namespace Paradise.Core.Online
         public string ep = "";
         public string lep = "";
         public long p2p;
+        /// <summary>My House: Änderungszähler der Einrichtung (Gäste holen per "houseget" nach, wenn anders) – Server erweitert.</summary>
+        public int houseVer;
     }
 }

@@ -85,7 +85,7 @@ namespace Paradise.Core.Vehicles
                     }
                     _lib = lib; _tex = set;
                 }
-                catch (Exception ex) { Log.Warn("common_car.bnk: " + ex.Message); }
+                catch (Exception ex) { Log.Error("common_car.bnk: " + ex.Message); }
             }
         }
 
@@ -615,15 +615,7 @@ namespace Paradise.Core.Vehicles
                 else if (metal > 0.8f) m.Desc.ClearCoat = 0.35f;
             }
             m.Name = string.IsNullOrEmpty(def.Name) ? "Car" : def.Name;
-            if (isPaint)
-            {
-                var ps = new System.Text.StringBuilder();
-                foreach (var kv in src.Params) ps.Append($" {Bin.KeyToString(kv.Key)}=({kv.Value.X:0.###};{kv.Value.Y:0.###};{kv.Value.Z:0.###};{kv.Value.W:0.###})");
-                Log.Info($"LACK {def.Name} (Original-Formel {(m.Desc.TdPaint > 1.5f ? "TD_CarPaint2" : m.Desc.TdPaint > 0.5f ? "TD_CarPaint" : "aus")}, Kind {m.Desc.Kind}, Sticker {(overlay != null ? "ja" : "nein")}):{ps}");
-            }
-            if (wheel)
-                Log.Debug($"FELGE {m.Name}: Shader {m.Desc.Kind}, Farbe ({col.X:0.00},{col.Y:0.00},{col.Z:0.00},{col.W:0.00}), Textur {(tex != null ? tex.Name + " " + tex.Format : "keine")}, "
-                    + $"metallisch {metal:0.00}, glatt {smooth:0.00}, Flags {f[5]}/{f[7]}/{f[8]}/{f[9]}/{f[10]}, Verlauf {m.Desc.RampPow:0.#}");
+
             return m;
         }
 
@@ -1140,7 +1132,6 @@ namespace Paradise.Core.Vehicles
                 score[set] = (float)inRange[set] / total * 2f + area;
             }
             int pick = score[1] > score[0] ? 1 : 0;
-            Log.Info($"Karosserie-UV: Satz {pick} (UV0 {inRange[0] * 100 / total}% in 0..1, UV1 {inRange[1] * 100 / total}%)");
             return pick;
         }
 
@@ -1177,7 +1168,6 @@ namespace Paradise.Core.Vehicles
                 if (sticker != null) { m.Desc.StickerTex = sticker; m.Desc.UseSticker = 1f; }
                 if (dirt != null) { m.Desc.DirtTex = dirt; m.Desc.DirtLevel = 0f; }
             }
-            if (sticker != null) Log.Info("Beklebung " + a.StickerName + " auf " + PaintMaterials.Count + " Lack-Material(ien)");
         }
 
         /// <summary>Lack-Materialien der Karosserie: Paint, Paint2 (zweite Farbe), Paint_LR (LOD), Paint_01 …</summary>

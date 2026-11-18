@@ -19,7 +19,7 @@ public sealed unsafe class ShaderCompiler : IDisposable
     {
         _sc = Shaderc.GetApi();
         _compiler = _sc.CompilerInitialize();
-        if (_compiler == null) throw new Exception("shaderc: Compiler konnte nicht initialisiert werden.");
+        if (_compiler == null) throw new Exception("shaderc: The compiler could not be initialized.");
     }
 
     public byte[] Compile(string source, ShaderKind kind, string name)
@@ -40,7 +40,7 @@ public sealed unsafe class ShaderCompiler : IDisposable
                 if (_sc.ResultGetCompilationStatus(result) != CompilationStatus.Success)
                 {
                     string msg = Marshal.PtrToStringAnsi((nint)_sc.ResultGetErrorMessage(result)) ?? "unbekannt";
-                    throw new Exception($"Shader '{name}' Kompilierfehler:\n{msg}");
+                    throw new Exception($"Shader ‘{name}’ compilation error:\n{msg}");
                 }
                 int len = (int)_sc.ResultGetLength(result);
                 var spirv = new byte[len];

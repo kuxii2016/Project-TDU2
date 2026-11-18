@@ -1,5 +1,4 @@
 ﻿#nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfPlayer.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Formats;
 using Paradise.Core.Math;
 using Paradise.Core.Render;
@@ -9,14 +8,14 @@ using System.Text;
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Spielt einen VMF-Film (Eden-Flash) als Bildschirm-Overlay ab.
-    ///  - Display-List/Zeitleisten (PlaceObject2/RemoveObject2, Sprites, Labels), Bildrate des Films
-    ///  - ActionScript-Teilmenge: Stop, Play, NextFrame, PrevFrame, GotoFrame, GoToLabel, SetTarget
-    ///  - Shapes werden auf der CPU gerastert (VmfRaster) und als Texturen gecacht (je Maßstabsstufe)
-    ///  - Schnittstelle wie im Spiel: Clips per Pfad ("/HUD/compteur_ext/aiguille"), Variablen der Textfelder ("/:Gear")
-    ///  - Dynamische Texturen: Shapes in einem Clip mit registriertem Namen werden durch die Textur ersetzt
-    ///    (z.B. "c_ext" -> EXT_RPM, "aiguille_speed" -> Needle aus der Instrumentenbank des Autos)
-    /// Bühne 1280 x 960, wird auf Bildschirmbreite skaliert und vertikal zentriert (16:9 zeigt y 120..840).
+    /// Plays a VMF movie (Eden Flash) as a screen overlay.
+    ///  - Display lists/timelines (PlaceObject2/RemoveObject2, sprites, labels), movie frame rate
+    ///  - ActionScript subset: Stop, Play, NextFrame, PrevFrame, GotoFrame, GoToLabel, SetTarget
+    ///  - Shapes are rasterized on the CPU (VmfRaster) and cached as textures (per zoom level)
+    ///  - Interface as in the game: clips by path (“/HUD/compteur_ext/aiguille”), text field variables (“/:Gear”)
+    ///  - Dynamic textures: Shapes in a clip with a registered name are replaced by the texture
+    ///    (e.g., “c_ext” → EXT_RPM, “aiguille_speed” → Needle from the car’s instrument panel)
+    /// Stage 1280 x 960, scaled to screen width and centered vertically (16:9 displays y 120–840).
     /// </summary>
     public sealed partial class VmfPlayer : IDisposable
     {
@@ -36,27 +35,26 @@ namespace Paradise.Core.Flash
             public ColorTransform Cx = ColorTransform.Identity;
             public string Name;
             public Instance Sprite;
-            /// <summary>Eigene Textur für alle Shapes dieses Clips (wie das Spiel per "lure" geladene Logos/Bilder); null = Original.</summary>
+            /// <summary>Custom texture for all shapes in this clip (such as logos/images loaded by the game via “lure”); null = original.</summary>
             public Texture DynTex;
             public Instance Parent;
             public bool Visible = true;
             public float? Rotation;      // vom Spiel gesetzt (Grad, zusätzlich zur Zeitleisten-Matrix)
             public Vector2? Position;    // vom Spiel gesetzt (Bühnenkoordinaten relativ zum Eltern-Clip, ersetzt Tx/Ty)
-            /// <summary>Wie in Flash: nachdem ein Skript _x/_y/_xscale/_rotation bzw. _alpha gesetzt hat, ignoriert die Zeitleiste Matrix bzw. Farbe.</summary>
+            /// <summary>Just like in Flash: after a script has set _x, _y, _xscale, _rotation, or _alpha, the timeline ignores the matrix and color.</summary>
             public bool ScriptMatrix, ScriptCx;
-            /// <summary>Korrekturen (VmfPatches / Flash Debugger): zusätzlich zur Zeitleiste – Versatz (Bühnenpixel im Eltern-Clip),
-            /// Skalierung (Faktor je Achse), eigener Text für Textfelder (null = Variable/Starttext).</summary>
+            /// <summary>Corrections (VmfPatches / Flash Debugger): in addition to the timeline – offset (stage pixels in the parent clip),
+            /// scaling (factor per axis), custom text for text fields (null = variable/default text).</summary>
             public Vector2 Offset;
             public Vector2 ScaleMul = Vector2.one;
             public string TextOverride;
-            /// <summary>Atomares Einblenden (VmfPlayerAsync.cs): Nummer des letzten Zeichnens, vollständig gezeigt, wartet seit,
-            /// Zeitleiste angehalten bis (solange die Shapes des neu erscheinenden Clips noch gerastert werden).</summary>
+            /// <summary>Atomic Fade-In (VmfPlayerAsync.cs): Number of the last character fully displayed; has been waiting since
+            /// the timeline was paused until (while the shapes of the newly appearing clip are still being rasterized).</summary>
             internal int SeenDraw = -10;
             internal bool Revealed;
             internal float RevealSince, FrozenUntil;
         }
 
-        // Flash profiling
         [NonSerialized] public static float LastFrameTimeMs;
         [NonSerialized] public static float LastDrawTimeMs;
         [NonSerialized] public static float LastTickTimeMs;
@@ -114,7 +112,7 @@ namespace Paradise.Core.Flash
             catch { }
         }
 
-        /// <summary>Begrenzung eines Clips im Koordinatensystem seines Eltern-Clips (für _width/_height); null = leer.</summary>
+        /// <summary>Restrict a clip to the coordinate system of its parent clip (for _width/_height); null = empty.</summary>
         public Rect? LocalBounds(DisplayObject d, int depth = 0)
         {
             if (d == null || depth > 12) return null;
@@ -165,9 +163,8 @@ namespace Paradise.Core.Flash
         static int StageBucket() => Mathf.RoundToInt(Mathf.Log(Mathf.Max(0.05f, Screen.width / VmfMovie.StageWidth), 2f) * 2f);
         float _accum;
 
-        // ---------------------------------------------------------------- Laden
-        /// <summary>Lädt den Film aus einer Frontend-Bank (z.B. Euro/Bnk/frontend/hires/gauges.bnk).</summary>
-        /// <summary>Geladene Bank (für Anzeige/Debugger).</summary>
+        /// <summary>Loads the movie from a front-end bank (e.g., Euro/Bnk/frontend/hires/gauges.bnk).</summary>
+        /// <summary>Loaded bank (for display/debugger).</summary>
         public string BankPath { get; private set; }
 
         public void Load(string bankPath)
@@ -192,8 +189,8 @@ namespace Paradise.Core.Flash
         }
 
         /// <summary>
-        /// Banken mit mehreren Atlas-Seiten (hud.vmf: page_001 2048×1024, page_002 128×128, page_003 512×512):
-        /// Die Seite ergibt sich aus Bitmapgröße / UV-Ausschnitt (w / (u1 - u0) = Seitenbreite), nicht aus der Kopftabelle.
+        /// Banks with multiple Atlas pages (hud.vmf: page_001 2048×1024, page_002 128×128, page_003 512×512):
+        /// The page is determined by the bitmap size divided by the UV section (w / (u1 - u0) = page width), not by the header table.
         /// </summary>
         void AssignPagesBySize()
         {
@@ -203,7 +200,6 @@ namespace Paradise.Core.Flash
             foreach (var c in Movie.Chars.Values)
             {
                 if (!(c is VmfMovie.Bitmap b) || b.TextureName == null || !b.TextureName.StartsWith("page_", StringComparison.OrdinalIgnoreCase)) continue;
-                // Kopftabelle zählt Seiten ab 1 (shopscar: Wert 1 = page_001, einzige Seite) – Seite immer über die Größe bestimmen
                 if (pages.Count == 1) { b.TextureName = pages[0].Name; continue; }
                 float du = Mathf.Abs(b.U1 - b.U0), dv = Mathf.Abs(b.V1 - b.V0);
                 if (du < 1e-6f || dv < 1e-6f) continue;
@@ -217,16 +213,16 @@ namespace Paradise.Core.Flash
         }
 
         public void SetDynamicTexture(string clipName, Texture2D tex) { SetDynamicTexture(clipName, tex, false); }
-        /// <summary>Ersetzt die Shapes im Clip clipName durch tex. upright = true für RenderTextures (v = 0 unten).</summary>
+        /// <summary>Replaces the shapes in the clip clipName with tex. upright = true for render textures (v = 0 at the bottom).</summary>
         public void SetDynamicTexture(string clipName, Texture tex, bool upright)
         {
             if (tex != null) _dynamic[clipName] = tex; else _dynamic.Remove(clipName);
             if (upright && tex != null) _dynamicUpright.Add(clipName); else _dynamicUpright.Remove(clipName);
         }
         /// <summary>
-        /// Variable setzen. Schreibweisen wie im Spiel: "/:Title" (Wurzel), "/car_datas/datas_base:cur_power" (Clip),
-        /// "_root.MyMoneyStr" (= "/:MyMoneyStr"), "name" (= Wurzel). Textfelder lösen ihre (auch relativen) Variablennamen
-        /// ("../../:cur_power", "_parent.num_contest", "val") auf denselben absoluten Schlüssel auf.
+        /// Set variable. Notation as in the game: “/:Title” (root), “/car_datas/datas_base:cur_power” (clip),
+        /// “_root.MyMoneyStr” (= “/:MyMoneyStr”), “name” (= root). Text fields resolve their (including relative) variable names
+        /// (“../../:cur_power”, “_parent.num_contest”, “val”) to the same absolute key.
         /// </summary>
         public void SetVariable(string name, string value)
         {
@@ -235,7 +231,7 @@ namespace Paradise.Core.Flash
         }
         public string GetVariable(string name) => _vars.TryGetValue(ResolveVar(null, name), out var v) ? v : (_vars.TryGetValue(name, out v) ? v : null);
 
-        /// <summary>Absoluter Pfad einer Instanz ("/" = Wurzel, sonst "/a/b"; unbenannte Clips als "#Tiefe").</summary>
+        /// <summary>Absolute path of an instance (“/” = root, otherwise “/a/b”; unnamed clips as “#Depth”).</summary>
         public static string PathOf(Instance inst)
         {
             var parts = new List<string>();
@@ -244,7 +240,7 @@ namespace Paradise.Core.Flash
             return "/" + string.Join("/", parts);
         }
 
-        /// <summary>Variablenname (relativ zu ctx, null = Wurzel) -> kanonischer Schlüssel "/pfad:name" (Wurzel "/:name").</summary>
+        /// <summary>Variable name (relative to ctx, null = root) -> canonical key “/path:name” (root “/:name”).</summary>
         public static string ResolveVar(Instance ctx, string v)
         {
             if (string.IsNullOrEmpty(v)) return v;
@@ -273,7 +269,7 @@ namespace Paradise.Core.Flash
             return "/" + string.Join("/", segs) + ":" + name;
         }
 
-        /// <summary>Clip auf eine Bildnummer setzen (0-basiert), z.B. Balkenanzeigen mit 101 Bildern (0..100 %).</summary>
+        /// <summary>Set the clip to a frame number (0-based), e.g., bar graphs with 101 frames (0..100 %).</summary>
         public bool GotoFrameNumber(string path, int frame, bool play = false)
         {
             if (!play && AutoPin) return PinFrame(path, frame + 1);
@@ -290,8 +286,8 @@ namespace Paradise.Core.Flash
         }
 
         /// <summary>
-        /// Sprite (Charakter-ID) als benannte Instanz unter parentPath anhängen (wie attachMovie) – z.B. Spot-Icons der Minimap.
-        /// Liefert das DisplayObject (bereits vorhanden: dasselbe).
+        /// Attach a sprite (character ID) as a named instance under parentPath (like attachMovie) – e.g., spot icons on the minimap.
+        /// Returns the DisplayObject (already exists: the same one).
         /// </summary>
         public DisplayObject AttachSprite(string parentPath, int charId, string name, int depth)
         {
@@ -330,8 +326,7 @@ namespace Paradise.Core.Flash
             parent?.List.Remove(depth);
         }
 
-        // ---------------------------------------------------------------- Pfade
-        /// <summary>Clip per Pfad: "/HUD/compteur_ext/aiguille" (absolut) oder "HUD.compteur_ext" (relativ zur Wurzel).</summary>
+        /// <summary>Clip by path: “/HUD/compteur_ext/aiguille” (absolute) or “HUD.compteur_ext” (relative to the root).</summary>
         public DisplayObject Find(string path, Instance from = null)
         {
             if (Root == null || string.IsNullOrEmpty(path)) return null;
@@ -364,9 +359,9 @@ namespace Paradise.Core.Flash
         public void SetVisible(string path, bool visible) { var d = Find(path); if (d != null) d.Visible = visible; }
         public void SetRotation(string path, float deg) { var d = Find(path); if (d != null) d.Rotation = deg; }
         public void SetPosition(string path, Vector2 pos) { var d = Find(path); if (d != null) d.Position = pos; }
-        /// <summary>Textur nur für diesen einen Clip (Pfad) setzen – z.B. Markenlogo in "/HUD/minimap/spot_0/ic/logo/lure".</summary>
-        /// <param name="onTop">Bild nach dem ganzen Film zeichnen (über allem). Nur für Vorschaubilder, die im Film von höher
-        /// liegenden Fenster-Teilen verdeckt würden (Händler-Kauffenster); sonst normal in der Ebenenfolge (Karten-Tooltip).</param>
+        /// <summary>Set a texture only for this one clip (path) – e.g., brand logo in “/HUD/minimap/spot_0/ic/logo/lure”.</summary>
+        /// <param name="onTop">Draw the image after the entire movie (on top of everything). Only for preview images that would be obscured in the movie by
+        /// higher-level window elements (merchant purchase window); otherwise, follow the normal layer order (map tooltip).</param>
         public bool SetClipTexture(string path, Texture tex, bool onTop = false)
         {
             if (tex != null) { if (onTop) _topTextures.Add(tex); else _topTextures.Remove(tex); }
@@ -375,7 +370,7 @@ namespace Paradise.Core.Flash
             var d = Find(path); if (d == null) return false; d.DynTex = tex; return true;
         }
 
-        /// <summary>Bildschirm-Rechteck (GUI-Pixel, y nach unten) eines Clips anhand der Bounds seiner Shapes; null wenn unsichtbar/fehlend.</summary>
+        /// <summary>Screen rectangle (GUI pixels, y-axis down) of a clip based on the bounds of its shapes; null if invisible or missing.</summary>
         public Rect? ScreenRect(string path)
         {
             if (Root == null) return null;
@@ -419,9 +414,6 @@ namespace Paradise.Core.Flash
             return mm;
         }
 
-        // ---------------------------------------------------------------- Zeitleiste
-        // ---------------------------------------------------------------- Maus (Flash-Buttons)
-        [Tooltip("Maus auf Flash-Buttons (rollOver/press/release) auswerten – für Menüs, nicht fürs HUD")]
         public bool MouseEnabled;
         DisplayObject _hoverBtn, _pressBtn; bool _mouseDown;
         // startDrag
@@ -444,7 +436,7 @@ namespace Paradise.Core.Flash
 #endif
         }
 
-        /// <summary>Gesamtmatrix (Bühne -> GUI-Pixel) eines Clips.</summary>
+        /// <summary>Overall matrix (stage -> GUI pixels) of a clip.</summary>
         Matrix2D WorldOf(Instance inst)
         {
             var chain = new List<DisplayObject>();
@@ -454,30 +446,37 @@ namespace Paradise.Core.Flash
             return m;
         }
 
-        /// <summary>Mausposition im Koordinatensystem des Eltern-Clips von d (wie _parent._xmouse/_ymouse).</summary>
+        /// <summary>Mouse position in the parent clip's coordinate system (such as _parent._xmouse/_ymouse).</summary>
         Vector2 MouseInParent(DisplayObject d) => WorldOf(d.Parent).Inverse().Apply(MouseGui());
 
-        /// <summary>Maus steht über einem Flash-Button (Klick gehört dem Film).</summary>
+        /// <summary>The mouse is hovering over a Flash button (the click is part of the movie).</summary>
         public bool MouseOverButton => _hoverBtn != null;
         /// <summary>
-        /// Clips, deren Buttons die Maus nicht treffen soll (Pfade wie in Find), z.B. der Kartencursor /curseur, der selbst
-        /// unter der Maus liegt: sonst meldet er sich als "Maus über Knopf" und flackert mit dem Mauszeiger.
+        /// Clips whose buttons the mouse should not hit (paths as in Find), e.g., the map cursor /curseur, which is itself
+        /// located under the mouse: otherwise, it reports “mouse over button” and flickers with the mouse pointer.
         /// </summary>
         public readonly HashSet<string> MouseIgnore = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         readonly HashSet<DisplayObject> _mouseIgnoreObjs = new HashSet<DisplayObject>();
 
         /// <summary>
-        /// Textbreite (Bühnenpixel) des Werts einer Textvariable in der Schrift ihres Textfelds – Ersatz für die native
-        /// Spielfunktion getTextLength("_root.player_car"), mit der z.B. Laufschriften entscheiden, ob sie scrollen.
+        /// Text width (stage pixels) of a text variable's value in the font of its text field—a replacement for the native
+        /// game function getTextLength(“_root.player_car”), which, for example, allows scrolling text to determine whether to scroll.
         /// </summary>
-        public float MeasureVarText(string variable)
+        public float MeasureVarText(string variable) => MeasureVarText(variable, variable);
+
+        /// <summary>
+        /// Same as <see cref="MeasureVarText(string)"/>; value from <paramref name="variable"/> (absolute, e.g., “/av_name_09:av_name”); font
+        /// of the text field containing the variable name <paramref name="fieldVariable"/> (“av_name”) – getTextLength in duplicated clips
+        /// (name tags general.bnk, Game/Online/NameTags).
+        /// </summary>
+        public float MeasureVarText(string variable, string fieldVariable)
         {
             if (Movie == null || string.IsNullOrEmpty(variable)) return 0f;
             string s = null;
             if (!_vars.TryGetValue(ResolveVar(null, variable), out s)) _vars.TryGetValue(variable, out s);
             VmfMovie.EditText field = null;
             foreach (var ch in Movie.Chars.Values)
-                if (ch is VmfMovie.EditText et && string.Equals(et.Variable, variable, StringComparison.OrdinalIgnoreCase)) { field = et; break; }
+                if (ch is VmfMovie.EditText et && string.Equals(et.Variable, fieldVariable, StringComparison.OrdinalIgnoreCase)) { field = et; break; }
             if (s == null) s = field?.Text ?? "";
             float size = field != null && field.Height > 0 ? field.Height : 12f;
             s = PlainText(s, field != null && field.Html);
@@ -491,7 +490,7 @@ namespace Paradise.Core.Flash
             return s.Length * size * 0.5f;
         }
 
-        /// <summary>GUI-Pixel (y nach unten) -> Koordinaten im Clip parentPath ("/" = Bühne); für SetPosition von Kindern.</summary>
+        /// <summary>GUI pixel (y down) -> coordinates in the clip's parentPath (“/” = stage); for SetPosition of children.</summary>
         public Vector2? GuiToLocal(string parentPath, Vector2 gui)
         {
             var p = string.IsNullOrEmpty(parentPath) || parentPath == "/" ? Root : Find(parentPath)?.Sprite;
@@ -545,9 +544,6 @@ namespace Paradise.Core.Flash
             if (FlashInput.GetMouseButtonDown(0))
             {
                 _mouseDown = true; _pressBtn = _hoverBtn;
-                // Linksklick: wie im Spiel _root.WhatMouseButton = 0 – bei JEDEM Linksklick, nicht nur in nativen Listen. Die Profilzeilen
-                // (main.vmf Button 274) prüfen "WhatMouseButton == 0 ? A() : Profil löschen/gesperrt"; ungesetzt (undefined) landete jeder
-                // Klick auf ein Profil im Dialog "lock_profile" (Sperrton, Menü weg).
                 StoreClipVar(Root, "WhatMouseButton", 0.0);
                 if (_hoverBtn != null) RunButton(_hoverBtn, 0x04);
             }
@@ -580,7 +576,7 @@ namespace Paradise.Core.Flash
 #endif
         }
 
-        /// <summary>Oberster sichtbarer Button unter dem Punkt (GUI-Pixel); Treffer über die Hit-Datensätze (sonst Up).</summary>
+        /// <summary>Topmost visible button under the item (GUI pixels); hit based on the hit records (otherwise Up).</summary>
         DisplayObject HitButton(Instance inst, Matrix2D m, Vector2 pt)
         {
             var list = RentList(inst);
@@ -620,7 +616,7 @@ namespace Paradise.Core.Flash
             if (ev != null) CallButtonHandler(d, ev);
         }
 
-        // Wiederverwendbare Listen für Durchläufe (sonst Garbage je Bild -> GC-Ruckler)
+        // Reusable lists for iterations (otherwise, garbage per frame -> GC stuttering)
         readonly Stack<List<DisplayObject>> _listPool = new Stack<List<DisplayObject>>();
         List<DisplayObject> RentList(Instance inst)
         {
@@ -630,7 +626,7 @@ namespace Paradise.Core.Flash
         }
         void ReturnList(List<DisplayObject> l) { l.Clear(); _listPool.Push(l); }
 
-        /// <summary>Je Bild vom Host aufgerufen (Unity: MonoBehaviour.Update).</summary>
+        /// <summary>Called by the host for each frame (Unity: MonoBehaviour.Update).</summary>
         public void Update()
         {
             if (Root == null) return;
@@ -749,7 +745,6 @@ namespace Paradise.Core.Flash
             }
         }
 
-        // ---------------------------------------------------------------- ActionScript (Teilmenge)
         void RunActions(Instance self, byte[] a)
         {
             var target = self;
@@ -805,11 +800,10 @@ namespace Paradise.Core.Flash
             return new string(c);
         }
 
-        // ---------------------------------------------------------------- Rendering
         readonly List<(DisplayObject d, Matrix2D m, ColorTransform c)> _dynTop = new List<(DisplayObject, Matrix2D, ColorTransform)>();
         readonly HashSet<Texture> _topTextures = new HashSet<Texture>();
 
-        /// <summary>Je Bild vom Host aufgerufen, nach Update (Unity: OnGUI/Repaint). Zeichnet über <see cref="FlashHost.Renderer"/>.</summary>
+        /// <summary>Called by the host for each image. Draws over <see cref="FlashHost.Renderer"/>.</summary>
         public void Render()
         {
             if (!Visible || Root == null || FlashHost.Renderer == null) return;
@@ -853,10 +847,10 @@ namespace Paradise.Core.Flash
             PushFlashMetric(LastFrameTimeMs, LastDrawTimeMs, LastTickTimeMs, LastDrawCalls);
         }
 
-        /// <summary>Debug: dieses Objekt im Spielbild rot umrahmen (Flash Debugger).</summary>
+        /// <summary>Debug: Outline this object in red on the game screen (Flash Debugger).</summary>
         [NonSerialized] public DisplayObject Highlight;
 
-        /// <summary>Bildschirmrechteck (GUI-Pixel) eines Objekts samt Inhalt; null wenn leer.</summary>
+        /// <summary>Screen rectangle (GUI pixels) of an object, including its contents; null if empty.</summary>
         public Rect? ScreenBounds(DisplayObject d)
         {
             if (d == null || d.Parent == null) return null;
@@ -916,8 +910,8 @@ namespace Paradise.Core.Flash
                 if (maskUntil >= 0 && d.Depth > maskUntil) { _clip = outerClip; _maskTex = outerMask; _maskRect = outerMaskRect; maskUntil = -1; }
                 if (d.ClipDepth > 0)
                 {
-                    // Maskenebene: Objekte bis ClipDepth nur innerhalb ihrer Form zeichnen
-                    // (Rechteck als Vorfilter, Form per Alpha-Test der gerasterten Masken-Shape)
+                    // Mask layer: Draw objects up to ClipDepth only within their shape
+                    // (Rectangle as a prefilter; shape determined by an alpha test of the rasterized mask shape)
                     var mr = MaskRect(d, m);
                     if (mr.HasValue)
                     {
@@ -930,8 +924,8 @@ namespace Paradise.Core.Flash
                 }
                 if (!d.Visible) continue;
                 var mw = m * LocalMatrix(d);
-                // Clip mit Spieltextur (z.B. shopscar window_buy/lure, Vorschaukamera): im Film steht der Platzhalter mit Alpha 0 –
-                // das Spiel setzt dort sein Bild ein. Eigene Farb-/Alpha-Transformation des Clips daher nicht anwenden (nur die der Eltern).
+                // Clip with in-game texture (e.g., shopscar window_buy/lure, preview camera): In the movie, the placeholder has an alpha value of 0 –
+                // the game inserts its own image there. Therefore, do not apply your own color/alpha transformations to the clip (only those of the parent).
                 var cw = d.DynTex != null ? cx : cx * d.Cx;
                 if (cw.Mul.w <= 0.003f && cw.Add.w <= 0.003f) continue;
                 if (d.CharId == -2 && d.Sprite != null) { Draw(d.Sprite, mw, cw, dynamicClip, d.DynTex ?? clipTex); continue; }   // createEmptyMovieClip
@@ -940,9 +934,9 @@ namespace Paradise.Core.Flash
                 {
                     case VmfMovie.Timeline _:
                         string dyn = d.Name != null && _dynamic.ContainsKey(d.Name) ? d.Name : dynamicClip;
-                        if (!_probe && !RevealReady(d, mw, cw, dyn, d.DynTex ?? clipTex)) break;   // noch nicht vollständig gerastert
-                        // Clip mit Spielbild (z.B. Vorschaukamera window_buy/lure): zuletzt über den Film zeichnen – im Spiel setzt
-                        // die Engine das Bild selbst ein; Hintergrundflächen höherer Tiefe würden es sonst verdecken
+                        if (!_probe && !RevealReady(d, mw, cw, dyn, d.DynTex ?? clipTex)) break;   // Not yet fully rasterized
+                        // Clip with in-game image (e.g., preview camera window_buy/lure): Draw over the film last—in the game,
+                        // the engine inserts the image itself; otherwise, background areas at greater depths would cover it up
                         if (d.DynTex != null && !_probe && _dynTop != null && _topTextures.Contains(d.DynTex)) { _dynTop.Add((d, mw, cw)); break; }
                         Draw(d.Sprite, mw, cw, dyn, d.DynTex ?? clipTex);
                         break;
@@ -955,16 +949,16 @@ namespace Paradise.Core.Flash
                         DrawText(t, mw, cw, inst, d.TextOverride ?? CaretText(t));
                         break;
                     case VmfMovie.Button:
-                        // Knöpfe (DefineButton2) zeichnet edFlash nicht – sie sind nur Trefferflächen für Maus/Tasten. Belegt: in
-                        // shopscar/main/shopsavatar haben die Knöpfe keine sichtbaren Zustände, in general.bnk tragen 104 von 159 nur
-                        // die Platzhalterfarben des Flash-Editors (Up 0,204,255 @57, Over 153,0,0 @80) – im Spiel nicht zu sehen.
+                        // edFlash does not draw buttons (DefineButton2)—they are merely click targets for the mouse or keys. Note: In
+                        // shopscar/main/shopsavatar, the buttons have no visible states; in general.bnk, 104 out of 159 only have
+                        // the placeholder colors from the Flash editor (Up 0,204,255 @57, Over 153,0,0 @80)—not visible in the game.
                         break;
                 }
             }
             _clip = outerClip; _maskTex = outerMask; _maskRect = outerMaskRect;
         }
 
-        /// <summary>Maskenform setzen, wenn die Maske aus genau einer (nicht gedrehten) Shape besteht; sonst nur das Rechteck.</summary>
+        /// <summary>Set the mask shape if the mask consists of exactly one (unrotated) shape; otherwise, use only the rectangle.</summary>
         void SetMaskShape(DisplayObject d, Matrix2D m)
         {
             var mw = m * LocalMatrix(d);
@@ -985,8 +979,8 @@ namespace Paradise.Core.Flash
             _maskRect = new Vector4(a.x, a.y, b.x, b.y);   // Texturzeile oben (v = 1) liegt bei rect.yMin
         }
 
-        /// <summary>Bildschirm-Begrenzung aller Shapes eines Masken-Objekts (GUI-Pixel).</summary>
-        /// <summary>Begrenzung einer Shape; bei Morph-Shapes zwischen Start- und Endform nach Ratio (Masken von Balken-Animationen).</summary>
+        /// <summary>Screen boundary of all shapes in a mask object (GUI pixels).
+        /// Boundary of a shape; for morph shapes, between the start and end forms according to the ratio (masks for bar animations).</summary>
         static Rect MorphBounds(VmfMovie.Shape s, DisplayObject d)
         {
             if (!s.Morph || d == null) return s.Bounds;
@@ -1028,27 +1022,22 @@ namespace Paradise.Core.Flash
             DrawTexture(tex, rect, m, cx, false);
         }
 
-        /// <summary>Gerasterte Shape (Cache je Größenstufe) und ihr Rechteck in Shape-Koordinaten.</summary>
+        /// <summary>Rasterized shape (cache by size level) and its rectangle in shape coordinates.</summary>
         (Texture2D tex, Rect rect) ShapeTexture(VmfMovie.Shape s, Matrix2D m)
         {
             float scale = Mathf.Max(0.05f, m.ScaleEstimate);
             int bucket = Mathf.RoundToInt(Mathf.Log(scale, 2f) * 2f);
-            // Vorhandene Rasterung gleicher oder größerer Auflösung weiterverwenden (Mipmaps verkleinern sauber) –
-            // sonst würde jede Skalier-Animation (Menü auf/zu) die Shapes Stufe für Stufe neu rastern -> Ruckler
             (Texture2D tex, float ox, float oy, float sc) e = default; bool found = false;
             if (_shapeBest.TryGetValue(s.Id, out int best) && best >= bucket && _shapeCache.TryGetValue((s.Id, best), out e)) found = true;
             if (!found)
             {
                 if (Time.frameCount != _rasterFrame) { _rasterFrame = Time.frameCount; _rasterMs = 0; }
                 bool haveSmaller = _shapeBest.TryGetValue(s.Id, out best) && _shapeCache.TryGetValue((s.Id, best), out e);
-                int target = Mathf.Max(bucket + 1, StageBucket() + 1);   // etwas Reserve nach oben
-                // Große Shapes bzw. aufgebrauchtes Bild-Budget: im Hintergrund rastern (VmfPlayerAsync.cs), bis dahin die
-                // kleinere Stufe zeigen bzw. die Shape kurz auslassen – statt das ganze Spiel anzuhalten
+                int target = Mathf.Max(bucket + 1, StageBucket() + 1);
                 bool background = AsyncRaster && (_rasterMs > RasterBudgetMs || EstimatePixels(s, target) > SyncRasterMaxPixels || NeedsUndecodedBitmap(s));
                 if (background)
                 {
                     RequestRaster(s.Id, target, true);
-                    // Wenn schon eine kleinere Stufe da ist, sofort zeigen
                     if (haveSmaller) { found = true; }
                     else { _missing = true; return (null, default); }
                 }
@@ -1067,8 +1056,6 @@ namespace Paradise.Core.Flash
             return (e.tex, new Rect(e.ox, e.oy, e.tex.width / e.sc, e.tex.height / e.sc));
         }
 
-        // ---- Zeichnen in Stapeln: aufeinanderfolgende Quads mit gleichem Materialzustand (z.B. alle Buchstaben eines
-        //      Textfelds) teilen sich ein SetPass/GL.Begin – vorher je Quad ein Zustandswechsel
         bool _batchOpen; Texture _bTex, _bMaskTex; Vector4 _bMul, _bAdd, _bClip, _bMaskRect; float _bLum;
         readonly List<ObjectVertex> _bVerts = new List<ObjectVertex>(1024);
 
@@ -1081,9 +1068,8 @@ namespace Paradise.Core.Flash
             _batchOpen = true;
         }
 
-        /// <summary>GL.TexCoord2 + GL.Vertex3 (Pixel, 0,0 links oben).</summary>
-        void Q(float u, float v, float x, float y)
-            => _bVerts.Add(new ObjectVertex { Position = new System.Numerics.Vector3(x, y, 0f), Uv0 = new System.Numerics.Vector2(u, v) });
+        /// <summary>GL.TexCoord2 + GL.Vertex3 (pixel, 0,0 top-left).</summary>
+        void Q(float u, float v, float x, float y) => _bVerts.Add(new ObjectVertex { Position = new System.Numerics.Vector3(x, y, 0f), Uv0 = new System.Numerics.Vector2(u, v) });
 
         void FlushBatch()
         {
@@ -1158,16 +1144,13 @@ namespace Paradise.Core.Flash
                 var stex = owner.FontTexture(shared, false);
                 if (stex != null)
                 {
-                    if (_sharedFontLogged.Add(t.FontId)) DebugManager.Info($"[DIAG Font] {Path.GetFileName(BankPath)}: Font {t.FontId} '{named}' ohne Glyphen -> '{shared.Name}' aus {Path.GetFileName(owner.BankPath)} ({shared.Glyphs.Count} Zeichen)");
                     DrawTextLaidOut(t, shared, stex, s, size, m, cMul, cx);
                     return;
                 }
             }
-            if (_noFontWarned.Add(t.FontId)) DebugManager.Warning($"[DIAG Font] {Path.GetFileName(BankPath)}: Textfeld '{t.Variable}' Font {t.FontId} '{named}' ohne Glyphen, keine gleichnamige Schrift geladen – nicht dargestellt. Geladen: {string.Join(", ", RegisteredFonts())}");
         }
         readonly HashSet<int> _sharedFontLogged = new HashSet<int>();
 
-        // ---- gemeinsame Schriften aller geladenen Filme (Name -> Film mit den meisten Glyphen)
         static readonly Dictionary<string, (VmfPlayer owner, VmfMovie.Font font)> _fontsByName = new Dictionary<string, (VmfPlayer, VmfMovie.Font)>(StringComparer.OrdinalIgnoreCase);
 
         void RegisterFonts()
@@ -1180,7 +1163,6 @@ namespace Paradise.Core.Flash
                 lock (_fontsByName)
                     if (!_fontsByName.TryGetValue(f.Name, out var have) || have.font.Glyphs.Count < f.Glyphs.Count) _fontsByName[f.Name] = (this, f);
             }
-            if (list.Count > 0) DebugManager.Info($"[DIAG Font] {Path.GetFileName(BankPath)}: {string.Join("; ", list)}");
         }
 
         void UnregisterFonts()
@@ -1198,7 +1180,7 @@ namespace Paradise.Core.Flash
             lock (_fontsByName) { var r = new List<string>(); foreach (var kv in _fontsByName) r.Add(kv.Key + "@" + Path.GetFileName(kv.Value.owner.BankPath)); return r; }
         }
 
-        /// <summary>Gleichnamige Schrift mit Glyphen aus einem geladenen Film (sonst die erste vorhandene mit Glyphen).</summary>
+        /// <summary>Font with the same name and glyphs from a loaded movie (otherwise, the first available font with glyphs).</summary>
         static bool SharedFont(string name, out VmfPlayer owner, out VmfMovie.Font font)
         {
             owner = null; font = null;
@@ -1211,8 +1193,8 @@ namespace Paradise.Core.Flash
         readonly HashSet<int> _noFontWarned = new HashSet<int>();
 
         /// <summary>
-        /// Oberlänge (1/1024 em). Bei manchen Eden-Fonts ist der Kopfwert unbrauchbar (z.B. 15810) – dann aus der Höhe der
-        /// Großbuchstaben geschätzt (Ascent ≈ 1,27 × Versalhöhe, gemessen an Berlin Sans 914/720 und Lucida Sans 950/747).
+        /// Ascender height (1/1024 em). For some Eden fonts, the header value is unusable (e.g., 15810)—in such cases, it is estimated based on the height of the
+        /// uppercase letters (Ascent ≈ 1.27 × cap height, measured using Berlin Sans 914/720 and Lucida Sans 950/747).
         /// </summary>
         static float FontAscent(VmfMovie.Font f)
         {
@@ -1272,7 +1254,6 @@ namespace Paradise.Core.Flash
             return (img, b);
         }
 
-        /// <summary>Unity: OnDestroy.</summary>
         public void Dispose()
         {
             UnregisterFonts();

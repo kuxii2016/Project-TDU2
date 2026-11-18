@@ -1,6 +1,7 @@
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
+using System.Text.RegularExpressions;
 
 namespace Paradise.Core.Audio;
 
@@ -12,7 +13,7 @@ namespace Paradise.Core.Audio;
 /// WAV name = &lt;Name_Resource&gt; in lowercase + “.wav” in the same folder (spec 1, FUN_00cbf3e0).
 /// Thunder: Lightning[] (eclair_*), a random entry upon impact (0x657340, see <cref=“PlayLightning”/>).
 /// </summary>
-public sealed class TDU2Ambience : IDisposable
+public sealed class Ambience : IDisposable
 {
     sealed class Env
     {
@@ -20,7 +21,7 @@ public sealed class TDU2Ambience : IDisposable
         public string Name = "", Day = "", Night = "";
         public float Volume = .5f, Pitch = 1f, Priority = 1f;
     }
-
+    public const float maxAmbienceVolume = .35f;
     public const float CrossFade = 2.5f;
     /// <summary>Overall ambient volume (Game/Config/AudioConfig.Ambience).</summary>
     public float Volume = 0.6f;
@@ -46,19 +47,23 @@ public sealed class TDU2Ambience : IDisposable
     public string Island { get; }
     public int CurrentType { get; private set; } = -1;
 
-    TDU2Ambience(string dir, string island) { _dir = dir; Island = island; }
+    Ambience(string dir, string island) { _dir = dir; Island = island; }
 
     /// <summary>Load the island's ambiences.xmb (null if none exists).</summary>
-    public static TDU2Ambience? Load(string? bnkDir, string island)
+    public static Ambience? Load(string? bnkDir, string island)
     {
         if (string.IsNullOrEmpty(bnkDir)) return null;
         var dir = Path.Combine(bnkDir, "islands", island, "sound", "ambience");
         var file = Path.Combine(dir, "ambiences.xmb");
-        if (!GameFiles.Exists(file)) { Log.Info($"Umgebung: {file} fehlt – keine Umgebungsgeräusche."); return null; }
+        if (!GameFiles.Exists(file)) 
+        { 
+            Log.Warn($"Ambience: {file} is missing – no ambient sounds."); 
+            return null; 
+        }
         try
         {
             var root = XmbFile.Parse(GameFiles.ReadAllBytes(file));
-            var a = new TDU2Ambience(dir, island);
+            var a = new Ambience(dir, island);
             var envs = root["Environments"];
             if (envs != null)
                 foreach (var e in envs.Items)
@@ -69,7 +74,7 @@ public sealed class TDU2Ambience : IDisposable
                         Name = e.S("TypeName", "") ?? "",
                         Day = e.S("Name_Resource_Day", "") ?? "",
                         Night = e.S("Name_Resource_Night", "") ?? "",
-                        Volume = e.F("Volume", .5f),
+                        Volume = MathF.Min(e.F("Volume", .5f), maxAmbienceVolume),
                         Pitch = e.F("Pitch", 1f),
                         Priority = e.F("PriorityFactor", 1f),
                     };
@@ -92,11 +97,13 @@ public sealed class TDU2Ambience : IDisposable
                     var n = l.S("Name", "") ?? "";
                     if (n.Length > 0) a._thunder.Add((n, l.F("Volume", 1f)));
                 }
-            Log.Info($"Umgebung: {island}: {a._thunder.Count} Donner ({string.Join(", ", a._thunder.Select(t => t.name))})");
-            Log.Info($"Umgebung: {island}: {a._envs.Count} Einträge ({string.Join(", ", a._envs.Values.Select(v => v.Type + "=" + v.Name))}), Regen '{a._rainName}'");
             return a;
         }
-        catch (Exception ex) { Log.Warn($"Umgebung: {file}: {ex.Message}"); return null; }
+        catch (Exception ex) 
+        { 
+            Log.Error($"Ambience: {file}: {ex.Message}"); 
+            return null; 
+        }
     }
 
     AudioClip? Clip(string name)
@@ -105,7 +112,8 @@ public sealed class TDU2Ambience : IDisposable
         if (_clips.TryGetValue(name, out var c)) return c;
         var path = Path.Combine(_dir, name.ToLowerInvariant() + ".wav");
         c = GameFiles.Exists(path) ? AudioClip.FromWav(name, GameFiles.ReadAllBytes(path)) : null;
-        if (c == null) Log.Warn($"Umgebung: {path} fehlt oder ist kein lesbares WAV.");
+        if (c == null) 
+            Log.Warn($"Ambience: {path} is missing or is not a readable WAV file.");
         _clips[name] = c;
         return c;
     }
@@ -197,7 +205,6 @@ public sealed class TDU2Ambience : IDisposable
         v.Play();
         v.FadeTo(Volume * env.Volume, CrossFade);
         _slot[0] = v;
-        Log.Info($"Umgebung: {env.Name} ({name})");
     }
 
     public void Dispose()

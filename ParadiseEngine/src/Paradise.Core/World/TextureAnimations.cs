@@ -129,6 +129,16 @@ public static class TextureAnimations
     }
 
     /// <summary>
+    /// Animation von einem Material auf ein ersetztes übertragen (z.B. Unity ConvertMaterials der Renn-Tore:
+    /// BuildScene bindet die .uva an das 2dm-Material, danach tauscht RaceProps es gegen das Checkpoint-Overlay).
+    /// </summary>
+    public static void Transfer(IGpuMaterial from, IGpuMaterial to)
+    {
+        if (ReferenceEquals(from, to) || !_items.TryGetValue(from, out var it)) return;
+        _items[to] = new Item { Mat = to, Bank = it.Bank, Main = it.Main, Detail = it.Detail };
+    }
+
+    /// <summary>
     /// Material wurde mit nachgereichten Texturen neu aufgebaut (MaterialFactory.RetryPendingTextures): Zuordnung neu treffen –
     /// fehlte die Detail- oder Haupttextur beim ersten Bau, lief die Animation sonst auf der falschen Ebene.
     /// </summary>

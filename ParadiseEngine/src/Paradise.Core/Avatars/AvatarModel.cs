@@ -6,7 +6,7 @@ using System.Numerics;
 namespace Paradise.Core.Avatars;
 
 /// <summary>
-/// Avatar shader lighting, shared by all avatars (Unity: Shader.SetGlobal* from TDU2Interiors.SetAvatarIndoor and the
+/// Avatar shader lighting
 /// fine-tuning in the developer menu: _TDU2AvRampAdd/_TDU2AvRampRow/_TDU2AvAddMix/_TDU2AvAmbAdd/_TDU2AvHairSheen, 0 = original).
 /// Default values: Game/Config/LightingConfig.cs. Call <see cref="Changed"/> after making changes (avatars will update their materials).
 /// </summary>
@@ -20,7 +20,7 @@ public static class AvatarLight
     public static void Changed() => Version++;
 }
 
-/// <summary>Resources from the Avatar shader sets for TDU2/Avatar and TDU2/AvatarBlend (ported from Unity AvatarMaterials).</summary>
+/// <summary>Resources from the Avatar shader sets for TDU2/Avatar and TDU2/AvatarBlend</summary>
 public static class AvatarMaterials
 {
     static readonly ulong SemSkin = MaterialDef.KeyFromName("SKIN"), SemNormal = MaterialDef.KeyFromName("NORMAL"),
@@ -207,7 +207,10 @@ public sealed class AvatarModel : IDisposable
                 if (ci.Sex == 1 && cfg.Sex == 0 || ci.Sex == 2 && cfg.Sex == 1) continue;   // falsches Geschlecht
                 AvatarPartData? data = null;
                 try { data = AvatarLibrary.LoadClothe(ci, i < cfg.Colors.Count ? cfg.Colors[i] : 0, hat); }
-                catch (Exception ex) { Log.Warn("Kleidung " + ci.File + ": " + ex.Message); }
+                catch (Exception ex) 
+                { 
+                    Log.Error("Clothes " + ci.File + ": " + ex.Message); 
+                }
                 clothes.Add((ci, data));
             }
             return (skel, body, clothes);
@@ -219,14 +222,25 @@ public sealed class AvatarModel : IDisposable
     {
         if (_load == null || !_load.IsCompleted) return;
         var t = _load; _load = null;
-        if (t.IsFaulted) { Log.Warn("Avatar laden: " + t.Exception?.GetBaseException().Message); return; }
+        if (t.IsFaulted) 
+        { 
+            Log.Warn("Avatar loading: " + t.Exception?.GetBaseException().Message); 
+            return; 
+        }
         try { Build(t.Result.skel, t.Result.body, t.Result.clothes); }
-        catch (Exception ex) { Log.Warn("Avatar aufbauen: " + ex); }
+        catch (Exception ex) 
+        { 
+            Log.Error("Avatar Create: " + ex); 
+        }
     }
 
     void Build(XsbSkeleton? skel, List<AvatarPartData> body, List<(ClotheInfo info, AvatarPartData? data)> clothes)
     {
-        if (skel == null) { Log.Warn("Avatar: Skelett fehlt (avatar/common_bodies.bnk?)"); return; }
+        if (skel == null) 
+        { 
+            Log.Warn("Avatar: missing skeleton (avatar/common_bodies.bnk?)"); 
+            return; 
+        }
         Rig = new AvatarRig(skel);
         // Sichtbare Körperteile: ein Teil bleibt sichtbar, solange kein getragenes Stück es verdeckt
         var visible = new Dictionary<ulong, bool>();
@@ -249,7 +263,7 @@ public sealed class AvatarModel : IDisposable
         _verts = new ObjectVertex[nv];
         ApplyBrowColor();
         Ready = true;
-        try { Built?.Invoke(this); } catch (Exception ex) { Log.Warn("Avatar Built: " + ex.Message); }
+        try { Built?.Invoke(this); } catch (Exception ex) { Log.Error("Avatar Build: " + ex.Message); }
     }
 
     void AddPart(AvatarPartData part, Dictionary<ulong, bool>? visible, bool head)

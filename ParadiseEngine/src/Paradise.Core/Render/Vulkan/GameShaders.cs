@@ -158,7 +158,7 @@ vec3 TDU2Sky(vec3 dir) {
 }
 ";
 
-    // ------------------------------------------------------------------ Simple (Fallback)
+    // Simple (Fallback)
     public const string SimpleVert = Common + @"
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -185,7 +185,7 @@ void main() {
     outColor = vec4(c.rgb * (fr.sunColor.rgb * ndl + fr.ambient.rgb), 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/MapTerrain (TDU2MapTerrain.shader) – Vertex wie Simple
+    // MapTerrain – Vertex wie Simple
     public const string MapTerrainFrag = Common + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;   // _MainTex Colormap
 layout(set = 0, binding = 1) uniform Mat { vec4 color; vec4 p0; } m;   // p0.x _Brightness, p0.y _Relief
@@ -200,7 +200,7 @@ void main() {
     outColor = vec4(c, 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/Terrain (TDU2Terrain.shader)
+    // Terrain 
     public const string TerrainVert = Common + @"
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -249,7 +249,7 @@ void main() {
     outColor = vec4(TDU2Fog(lit, vWorld), 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/Object (TDU2Object.shader)
+    // Object
     // Instancing (nur Vertex-Shader): gleiche Mesh+Material-Läufe in einem Aufruf; Modellmatrizen im Instanzpuffer (set 1, binding 4).
     // pc.model[3][3] == 0 kennzeichnet einen Instanz-Aufruf (normale Modellmatrizen haben dort 1).
     private const string Instancing = @"
@@ -462,7 +462,7 @@ void main() {
     outColor = vec4(TDU2Fog(TDU2Planar(lit, vWorld), vWorld), glowA);
 }";
 
-    // ------------------------------------------------------------------ TDU2/ObjectTransparent (TDU2ObjectTransparent.shader)
+    // ObjectTransparent
     public const string TransparentVert = Common + ObjectInputs + ObjectMat + @"
 layout(location = 0) out vec4 vUv;      // xy = COLOR, zw = DETAIL
 layout(location = 1) out vec4 vColor;
@@ -500,7 +500,7 @@ void main() {
     outColor = c * nightK;
 }";
 
-    // ------------------------------------------------------------------ TDU2/Foliage (TDU2Foliage.shader)
+    // Foliage
     //  color = _Color
     //  p0: _VertexColorStrength, _NormalUp, _Wrap, _Translucency
     //  p1: _SelfShadow, _UseVertexColor, _WindStrength, _WindSpeed
@@ -557,7 +557,7 @@ void main() {
     outColor = vec4(TDU2Fog(albedo * fr.sunColor.rgb * (wrap + back) * atten + albedo * fr.ambient.rgb, vWorld), 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/Sprite (TDU2Sprite.shader)
+    // Sprite
     //  color = _Color
     //  p0: _Cutoff, _CrownHeight, _CrownOn, _UseVertexColor
     public const string SpriteVert = Common + ObjectInputs + Instancing + ObjectMat + @"
@@ -610,7 +610,7 @@ void main() {
     outColor = vec4(TDU2Fog(albedo * fr.sunColor.rgb * x * TDU2Shadow(vWorld, vNormal) + albedo * fr.ambient.rgb, vWorld), 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/SpriteGlow (TDU2SpriteGlow.shader)
+    // SpriteGlow
     //  color = _Color
     //  p0: _Intensity, _NightOnly
     public const string SpriteGlowVert = Common + ObjectInputs + ObjectMat + @"
@@ -635,7 +635,7 @@ void main() {
     outColor = c;
 }";
 
-    // ------------------------------------------------------------------ Overlay (Debug-UI): Pixel -> NDC über viewProj
+    // Overlay (Debug-UI): Pixel -> NDC über viewProj
     public const string OverlayVert = Common + ObjectInputs + @"
 layout(location = 0) out vec2 vUv;
 layout(location = 1) out vec4 vColor;
@@ -670,7 +670,7 @@ void main() {
     outColor = vec4(ToSrgb(c.rgb), c.a);
 }";
 
-    // ------------------------------------------------------------------ TDU2/FlashQuad (TDU2FlashQuad.shader)
+    // FlashQuad
     //  Pixelkoordinaten (0,0 links oben). Push-Konstanten: viewProj[0][0]/[1][1] Skalierung, [3].xy Versatz,
     //  [2][0] _LumAlpha, [2][1] _MaskOn; model[0] _Mul, [1] _Add, [2] _ClipRect, [3] _MaskRect.
     //  binding 0 _MainTex, 1 _MaskTex. Blend SrcAlpha/OneMinusSrcAlpha, ohne Tiefe.
@@ -712,7 +712,7 @@ void main() {
         outColor.rgb = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }";
 
-    // ------------------------------------------------------------------ TDU2/Grass (TDU2Grass.shader)
+    // Grass 
     //  binding 0 _MainTex (Atlas), 1 _GroundTex (Colormap, UV1), 2 _SplatTex (UV1)
     //  color = _Color
     //  p0: _Cutoff, _Wind, _GroundOn, _GroundBoost
@@ -761,7 +761,7 @@ void main() {
     outColor = vec4(TDU2Fog(albedo * (fr.sunColor.rgb * ndl * TDU2Shadow(vWorld, vec3(0.0, 1.0, 0.0)) + fr.ambient.rgb + TDU2Lamps(vWorld, vec3(0.0, 1.0, 0.0))), vWorld), 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/Water (TDU2Water.shader)
+    // Water
     //  binding 0 _NormalMap
     //  color = _PoolTint
     //  p0: _NMapScale.xy, _NMapWeight.xy
@@ -896,7 +896,7 @@ void main() {
     outColor = vec4(col, alpha);                           // Blend One OneMinusSrcAlpha (vormultipliziert)
 }";
 
-    // ------------------------------------------------------------------ Himmel (Vollbild-Dreieck, viewProj = inverse Rotations-ViewProj)
+    //  Himmel (Vollbild-Dreieck, viewProj = inverse Rotations-ViewProj)
     public const string SkyVert = Common + @"
 layout(location = 0) out vec3 vDir;
 void main() {
@@ -911,7 +911,7 @@ layout(location = 0) in vec3 vDir;
 layout(location = 0) out vec4 outColor;
 void main() { outColor = vec4(TDU2Sky(vDir), 1.0); }";
 
-    // ------------------------------------------------------------------ Schattenkarten (nur Tiefe, Alpha-Test wie im Bild)
+    //  Schattenkarten (nur Tiefe, Alpha-Test wie im Bild)
     public const string ShadowObjectFrag = Common + ObjectMat + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;
 layout(location = 2) in vec2 vUv0;
@@ -939,7 +939,7 @@ void main() {
     gl_Position = pc.viewProj * vec4(wp, 1.0);
 }";
 
-    // ------------------------------------------------------------------ TDU2/Car (TDU2Car.shader), TDU2/CarGlass, TDU2/CarShadow
+    // Car, TDU2/CarGlass, TDU2/CarShadow
     // Material-Properties (binding 6):
     //  c0 _Color, c1 _Color2, c2 _Bicolour,_RampPow,_MainGray,_AlphaFromRed, c3 _Heat,_Glossiness,_Metallic,_Cutoff
     //  c4 _HeatColor, c5 _EmissionTint, c6 _Emission,_EmissionDiff,_SelfIllum,_Occlusion, c7 _ClearCoat,_ClearCoatPower,_Flake,_FlakeScale
@@ -970,7 +970,7 @@ void main() {
     vMirror = determinant(mat3(pc.model)) < 0.0 ? -1.0 : 1.0;
 }";
 
-    // Unity-Standard-Licht (SurfaceOutputStandard): GGX + Schlick, Umgebung = Himmel (unity_SpecCube0 = Skybox)
+    // Standard-Licht (SurfaceOutputStandard): GGX + Schlick, Umgebung = Himmel (unity_SpecCube0 = Skybox)
     // Umgebung der Spiegelungen. Im Unity-Projekt lief eine Echtzeit-Reflexionssonde (TDU2VehicleManager.MirrorReflections):
     // unterhalb des Horizonts spiegeln Boden, Bäume und Häuser (dunkel), nicht der helle Himmelsverlauf.
     private const string CarEnv = @"
@@ -1245,7 +1245,7 @@ void main() {
     outColor = vec4(TDU2Fog(lit, vWorld), glowA);
 }";
 
-    // TDU2/CarGlass: Surface Standard alpha:premul (Diffus x Alpha, Spiegelung bleibt)
+    // CarGlass: Surface Standard alpha:premul (Diffus x Alpha, Spiegelung bleibt)
     public const string CarGlassFrag = Common + CarMat + CarEnv + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;      // DETAIL
 layout(set = 0, binding = 5) uniform sampler2D detail2Tex;   // DETAIL2 (G_I), nur Original-Glas
@@ -1329,7 +1329,7 @@ void main() {
     outColor = vec4(TDU2Fog(col, vWorld) , a);
 }";
 
-    // TDU2/CarShadow: Blend DstColor Zero -> (1-a) dunkelt den Untergrund ab
+    // CarShadow: Blend DstColor Zero -> (1-a) dunkelt den Untergrund ab
     public const string CarShadowFrag = Common + CarMat + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;
 layout(location = 1) in vec2 vUv0;
@@ -1339,7 +1339,7 @@ void main() {
     outColor = vec4(1.0 - a, 1.0 - a, 1.0 - a, 1.0);
 }";
 
-    // Schattenwurf TDU2/Car (addshadow: Alpha-Test mit _Cutoff)
+    // Schattenwurf Car (addshadow: Alpha-Test mit _Cutoff)
     public const string ShadowCarFrag = Common + CarMat + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;
 layout(location = 1) in vec2 vUv0;
@@ -1351,7 +1351,7 @@ void main() {
     }
 }";
 
-    // ------------------------------------------------------------------ TDU2/Avatar, TDU2/AvatarBlend (TDU2Avatar.shader / TDU2AvatarBlend.shader)
+    // Avatar, AvatarBlend
     // Original-Shader-Sets TD_Skin2/TD_Skinface (Modus 0), TD_Clothe2 (1), TD_Avatar (2), TD_Hair (3), TD_Eye (4).
     // Texturen je Modus (binding 0..5): Haut: SKIN, GLOSSDETAILCUT, SPECTRALSCATTERING, NORMAL; Kleidung: OCCLUSION, DETAIL_GRAIN,
     // LAYER1, LAYER2, LAYER3; sonst TEX/HAIR auf 0. Die gehäuteten Vertices kommen im Avatar-Raum (CPU-Häutung, Core/Avatars/AvatarRig).
@@ -1574,7 +1574,7 @@ void main() {
     }
 }";
 
-    // ------------------------------------------------------------------ TDU2/Skidmark, Partikel (Sprites/Default)
+    // Skidmark, Partikel (Sprites/Default)
     public const string FxVert = Common + ObjectInputs + @"
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out vec2 vUv0;
@@ -1587,8 +1587,8 @@ void main() {
     vNormal = mat3(pc.model) * inNormal;
 }";
 
-    // ------------------------------------------------------------------ Sterne (Original td_dome vs @0xc50 / ps @0x1af0)
-    // Dom-Mesh der exe (World/TDU2Stars) um die Kamera; Normal = (u, v, Helligkeit). oT3.w = (normalize(v0).y − Fade.x)·Fade.y,
+    // Sterne (Original td_dome vs @0xc50 / ps @0x1af0)
+    // Dom-Mesh der exe (World/Stars) um die Kamera; Normal = (u, v, Helligkeit). oT3.w = (normalize(v0).y − Fade.x)·Fade.y,
     // oT4.w = |v0|; Sterne = sat(oT3.w)·StarsIntensity·|v0| · Textur(uv).rgb · Helligkeit, zum Himmel addiert (Gamma-Raum).
     public const string SkyStarsVert = Common + ObjectInputs + @"
 layout(location = 0) out vec3 vPos;    // Objektraum (Richtung + Länge)
@@ -1617,8 +1617,8 @@ void main() {
     outColor = vec4(pow(max(col, vec3(0.0)), vec3(2.2)), 1.0);
 }";
 
-    // ------------------------------------------------------------------ Mond (Original td_moon vs @0x4c0 / ps @0xfe0)
-    // Billboard aus World/TDU2Stars.DrawMoon (Modellmatrix = rechts/oben/Achse · Größe), UV = (1 − u, v), Tiefe auf die Fernebene.
+    // Mond (Original td_moon vs @0x4c0 / ps @0xfe0)
+    // Billboard aus World/Stars.DrawMoon (Modellmatrix = rechts/oben/Achse · Größe), UV = (1 − u, v), Tiefe auf die Fernebene.
     public const string MoonVert = Common + ObjectInputs + @"
 layout(location = 0) out vec2 vUv;
 void main() {
@@ -1639,7 +1639,7 @@ void main() {
     outColor = vec4(pow(col, vec3(2.2)), t.a * fr.skyStars.w);
 }";
 
-    // ------------------------------------------------------------------ Wolken (Original TD_CloudMesh, selbst disassembliert)
+    // Wolken (Original TD_CloudMesh)
     // vs @0x760: Höhe · AlphaBlend.z; Sonnenseite = min(sat(−L·n_xz)·1,75; 1)·sat(1 − |L.y|·1,5); Streulicht wie td_dome, aber nur
     // Rayleigh (Phase cos²·0,5 + 2), Weglänge aus der Richtung der Weltposition (Spielkoordinaten), ln(1+x), Sättigung;
     // oT3.w = 0,5·Haze. Die Kuppel (fx/clouds.bnk, Radius ~200 km) liegt jenseits der Fernebene -> Tiefe auf die Fernebene
@@ -1749,7 +1749,7 @@ void main() {
     outColor = c;
 }";
 
-    // TDU2/Flare: tex x _Color x _Intensity (in der Vertexfarbe), Nebel nach Schwarz (UNITY_APPLY_FOG_COLOR(.., 0))
+    // Flare: tex x _Color x _Intensity (in der Vertexfarbe), Nebel nach Schwarz (UNITY_APPLY_FOG_COLOR(.., 0))
     public const string FlareFrag = Common + @"
 layout(set = 0, binding = 0) uniform sampler2D mainTex;
 layout(location = 0) in vec4 vColor;
@@ -1765,7 +1765,7 @@ void main() {
     outColor = vec4(c, clamp(max(c.r, max(c.g, c.b)), 0.0, 1.0));   // Alpha = Bloom-Maske (Blend One/One: Farbe unabhängig vom Alpha)
 }";
 
-    // ------------------------------------------------------------------ Blitz (Original TD_Lightning, selbst disassembliert)
+    // Blitz (Original TD_Lightning, selbst disassembliert)
     // vs: Drehung um Y mit atan2(CamDir_ObjSpace.x, .z) – macht World/Lightning schon in der Modellmatrix, daher FxVert.
     // ps (keine Textur): A = (1 − u²)²·v, B = (1 − clamp(5u, −1, 1)²)·v, Farbe = B·0,1 + A·0,9 (Gamma-Raum), Alpha = Vertexalpha;
     // Blend SRCALPHA/ONE.

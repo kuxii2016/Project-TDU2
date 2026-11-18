@@ -30,18 +30,18 @@ namespace Paradise.Core.Vehicles
 
         public float BlinkHz = 1.5f;
         public bool UnityLights = true;
-        public bool RearPointLights = false;   // aus: die Punktlichter malten rote/weiße Flecken auf die eigene Karosserie
-        public float HeadlightIntensity = 2f;
+        public bool RearPointLights = true;   // aus: die Punktlichter malten rote/weiße Flecken auf die eigene Karosserie
+        public float HeadlightIntensity = 1.5f;
         /// <summary>Reichweite der zusätzlichen hinteren Punktlichter.</summary>
-        public float RearLightRange = 1.5f;
+        public float RearLightRange = .5f;
         /// <summary>Helligkeit der zusätzlichen hinteren Punktlichter.</summary>
-        public float RearLightIntensity = 1f;
+        public float RearLightIntensity = 1.5f;
 
         readonly List<Vector3> _headPos = new List<Vector3>();
         readonly Vector3[] _brakePos = new Vector3[2], _reversePos = new Vector3[2];
         float _brakeOn; bool _reverseOn; int _hlOn;
         public float Brightness = 1.5f;   // Engine ohne Bloom: Flares kräftiger (Unity 0,3)
-        public float LensBrightness = 1f;
+        public float LensBrightness = 2f;
 
         readonly List<(CarMaterial mat, int pos)> _lenses = new List<(CarMaterial, int)>();
         /// <summary>Verkehrsauto-Lampen (Knotenname FA_xx -> Funktion), eigene Materialinstanz je Lampe.</summary>
@@ -248,10 +248,16 @@ namespace Paradise.Core.Vehicles
                     continue;
                 }
 
-                float emission = pos == 0 ? head * 0.9f
-                    : pos == 1 ? Mathf.Max(tail * 0.45f, Mathf.Max(brake * 1.3f, reverse ? 1f : 0f))
-                    : Mathf.Max(head * 0.6f, brake * 1.3f);
-                emission = Mathf.Max(emission, ind * 1.2f);
+
+
+                //float emission = pos == 0 ? head * 0.9f
+                //   : pos == 1 ? Mathf.Max(tail * 0.45f, Mathf.Max(brake * 1.3f, reverse ? 1f : 0f))
+                //   : Mathf.Max(head * 0.6f, brake * 1.3f);
+                //emission = Mathf.Max(emission, ind * 1.5f);
+                //Set(mat, ref mat.Desc.Emission, emission * LensBrightness);
+
+                float emission = pos == 0 ? head * 0.9f : pos == 1 ? Mathf.Max(tail * 1.2f, brake * 3.5f, reverse ? 1.8f : 0f) : Mathf.Max(head * 0.6f, brake * 3.5f);
+                emission = Mathf.Max(emission, ind * 1.5f);
                 Set(mat, ref mat.Desc.Emission, emission * LensBrightness);
             }
 
@@ -318,8 +324,8 @@ namespace Paradise.Core.Vehicles
         static Vector4 FlareColor(Kind kind) => kind switch
         {
             Kind.Head => new Vector4(1f, 0.95f, 0.85f, 1f),
-            Kind.Brake => new Vector4(1f, 0.06f, 0.03f, 1f),
-            Kind.Tail => new Vector4(0.8f, 0.03f, 0.02f, 1f),
+            Kind.Brake => new Vector4(1f, 0.06f, 0.25f, 1f),
+            Kind.Tail => new Vector4(0.8f, 0.03f, .25f, 1f),
             Kind.Reverse => new Vector4(1f, 1f, 1f, 1f),
             _ => new Vector4(1f, 0.45f, 0.02f, 1f),
         };

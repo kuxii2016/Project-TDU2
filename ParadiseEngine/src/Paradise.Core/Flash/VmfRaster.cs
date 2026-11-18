@@ -1,11 +1,10 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfRaster.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Formats;
 using Paradise.Core.Math;
 
 namespace Paradise.Core.Flash
 {
-    /// <summary>CPU-Pixel einer .2db-Textur (DXT1/DXT5 dekodiert), für Bitmapfüllungen beim Rastern.</summary>
+    /// <summary>CPU pixels of a .2db texture (DXT1/DXT5 decoded), for bitmap fills during rasterization.</summary>
     public sealed class PixelImage
     {
         public int Width, Height;
@@ -63,9 +62,9 @@ namespace Paradise.Core.Flash
     }
 
     /// <summary>
-    /// Rastert VMF-Shapes auf der CPU in ein RGBA-Bild (Shape-Koordinaten, Maßstab = Pixel pro Einheit).
-    /// Füllungen: even-odd je Füllstil (Kanten mit fill0 oder fill1 = Stil), 3x3 Supersampling.
-    /// Linien: je Segment ein Rechteck, vereinigt per Maximum.
+    /// Renders VMF shapes on the CPU into an RGBA image (shape coordinates, scale = pixels per unit).
+    /// Fills: even-odd per fill style (edges with fill0 or fill1 = style), 3x3 supersampling.
+    /// Lines: one rectangle per segment, merged using the maximum value.
     /// </summary>
     public static class VmfRaster
     {
@@ -73,16 +72,16 @@ namespace Paradise.Core.Flash
 
         const int SS = 2;
 
-        // Arbeitspuffer je Thread wiederverwenden (Rastern läuft auch im Hintergrund-Thread des VmfPlayer) – sonst je große
-        // Shape zig MB Garbage -> GC-Ruckler im Spiel
+        // Reuse the work buffer for each thread (scrolling also runs in the VmfPlayer background thread) – otherwise, for each large
+        // shape, tens of MB of garbage -> GC stuttering in the game
         [ThreadStatic] static Vector4[] _accBuf;
         [ThreadStatic] static float[] _covBuf, _localBuf;
         static long _bufBytes;
-        /// <summary>Summe der Arbeitspuffer aller Threads (Diagnose).</summary>
+        /// <summary>Sum of the work buffers of all threads (diagnostic).</summary>
         public static long BufferBytes => System.Threading.Interlocked.Read(ref _bufBytes);
         /// <summary>
-        /// Puffer ab dieser Elementzahl (512² Pixel) nach dem Rastern nicht behalten: jeder Raster-Thread jedes Films hielt sonst
-        /// bis zu ~60 MB (Vector4[2,5 Mio] + 2 x float[2,5 Mio]) für immer – bei vielen Threads x Filmen mehrere GB im LOH.
+        /// Do not retain the buffer beyond this number of elements (512² pixels) after rasterization: otherwise, each rasterization thread for each movie would
+        /// hold up to ~60 MB (Vector4[2.5 million] + 2 x float[2.5 million]) indefinitely—resulting in several GB in the LOH with many threads and movies.
         /// </summary>
         public static int KeepBufferMaxElements = 512 * 512;
         static T[] Buf<T>(ref T[] b, int n)
@@ -103,7 +102,7 @@ namespace Paradise.Core.Flash
             System.Threading.Interlocked.Add(ref _bufBytes, -(long)b.Length * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
             b = null;
         }
-        /// <summary>Arbeitspuffer dieses Threads freigeben (Raster-Thread ohne Arbeit, bzw. nach einer großen Shape).</summary>
+        /// <summary>Free up this thread's work buffer (grid thread with no work, or after a large shape).</summary>
         public static void ReleaseThreadBuffers() { Drop(ref _accBuf); Drop(ref _covBuf); Drop(ref _localBuf); }
 
         public static Result Render(VmfMovie.Shape s, float scale, Func<int, (PixelImage img, VmfMovie.Bitmap bmp)> bitmap)
@@ -163,7 +162,6 @@ namespace Paradise.Core.Flash
                 for (int x = 0; x < W; x++)
                 {
                     var c = acc[y * W + x];
-                    // Unity-Texturen: Zeile 0 = unten -> vertikal spiegeln
                     int di = (H - 1 - y) * W + x;
                     if (c.w <= 1e-4f) { px[di] = new Color32(0, 0, 0, 0); continue; }
                     px[di] = new Color32((byte)Mathf.Clamp(c.x / c.w * 255f, 0, 255), (byte)Mathf.Clamp(c.y / c.w * 255f, 0, 255),
@@ -173,7 +171,7 @@ namespace Paradise.Core.Flash
             return new Result { Width = W, Height = H, Pixels = px, OriginX = ox, OriginY = oy, Scale = scale };
         }
 
-        /// <summary>even-odd Abdeckung; union = true: Maximum mit vorhandener Abdeckung (für Linienrechtecke).</summary>
+        /// <summary>even-odd coverage; union = true: Maximum coverage using existing coverage (for line rectangles).</summary>
         static bool Coverage(List<Vector4> edges, int W, int H, float ox, float oy, float sc, float[] cov, bool union)
         {
             int n = edges.Count; if (n == 0) return false;

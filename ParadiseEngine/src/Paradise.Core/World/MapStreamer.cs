@@ -21,7 +21,7 @@ public sealed class MapStreamer : IDisposable
     public string Island = "ibiza";
     public float AreaLoadDistance = 900f;
     public float AreaUnloadMargin = 1000f;
-    public float SectorLoadDistance = 950f;   // Unity: 900 (Objekte/Bäume ploppten zu spät auf)
+    public float SectorLoadDistance = 1500f;   // Unity: 900 (Objekte/Bäume ploppten zu spät auf)
     public float SectorUnloadMargin = 300f;
     public int MaxParallelLoads = 4;
     public bool ShowIslandLod = true;
@@ -60,7 +60,7 @@ public sealed class MapStreamer : IDisposable
     public bool CenterWorld = true;
     public bool StartFromGamePc = true;
     public Vector3 StartPositionGame = new(97f, 8f, 363f);
-    public float DetailTiling = 1;//0.098f;
+    public float DetailTiling = 0.098f;
     public float DetailStrength = 1f;
     public float ShadowMapStrength = 0.6f;
     public float LodDistanceScale = 4f;   // Unity: 3 (LOD-Wechsel später)
@@ -1720,20 +1720,27 @@ public sealed class MapStreamer : IDisposable
             }
         }
 
-        foreach (var sc in Scenes)
+        // Frei platzierte Szenen (Interieurs, Möbel, Renn-Tore) erst NACH der opaken Welt zeichnen.
+        // Unity zeichnet TDU2/Checkpoint mit RenderQueue 3000 (nach allen opaken Objekten); die additiven
+        // Checkpoint-Tore wurden vorher von Straße/Terrain überdeckt und waren dadurch unsichtbar.
+        void DrawScenes()
         {
-            if (!sc.Active) continue;
-            foreach (var o in sc.Objects)
+            foreach (var sc in Scenes)
             {
-                if (!o.Active || !InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
-                var lod = o.SelectLod(cameraGame);
-                if (lod == null) continue;
-                var m = o.Model * root;
-                foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
-                drawn++;
+                if (!sc.Active) continue;
+                foreach (var o in sc.Objects)
+                {
+                    if (!o.Active || !InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
+                    var lod = o.SelectLod(cameraGame);
+                    if (lod == null) continue;
+                    var m = o.Model * root;
+                    foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
+                    drawn++;
+                }
             }
         }
-        if (HideWorld) { DrawnObjects = drawn; return; }
+
+        if (HideWorld) { DrawScenes(); DrawnObjects = drawn; return; }
         foreach (var n in _islandPieces.Values) DrawNode(n);
         foreach (var a in _areas.Values) if (a.Built) foreach (var n in a.Nodes) DrawNode(n);
         // Sektoren: Sichtbarkeit/LOD der Objekte und Platzierungen parallel je Sektor (jeder Sektor hat nur eigenen Zustand),
@@ -1762,6 +1769,7 @@ public sealed class MapStreamer : IDisposable
         if (ShowStars && !WorldWeather.Inside && globals.Sky.On && globals.Sky.MoonPercent > 0f) _stars?.DrawMoon(globals.CameraPosition, globals.SunDirection, globals.Sky.MoonSize);
         if (ShowClouds && !WorldWeather.Inside) _clouds?.Draw(root);
         if (ShowPowerWires) _powerWires.Draw(_renderer, WireSets(), cameraGame, RootOffset, globals.SunDirection);
+        DrawScenes();   // Checkpoint-Tore / Overlays zuletzt (Unity RenderQueue 3000)
         DrawnObjects = drawn;
     }
 

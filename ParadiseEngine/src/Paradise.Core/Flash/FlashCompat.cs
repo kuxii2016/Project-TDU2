@@ -1,11 +1,10 @@
 using Paradise.Core.Render;
 
 namespace Paradise.Core.Flash;
-
 // ============================================================================================================
-// Kleine Ersatztypen für die Unity-Typen, die der Flash-Code (aus dem Unity-Projekt 1:1 übernommen) benutzt.
-// Gleiche Namen und Semantik wie in Unity (x/y klein, Rect mit xMin/yMax …), damit VmfMovie/VmfScript/VmfPlayer
-// ohne inhaltliche Änderungen laufen. Nur im Namensraum Paradise.Core.Flash sichtbar.
+// Small replacement types for the Unity types used by the Flash code (taken directly from the Unity project).
+// Same names and semantics as in Unity (x/y lowercase, Rect with xMin/yMax …) so that VmfMovie/VmfScript/VmfPlayer
+// run without any changes to the code. Visible only in the Paradise.Core.Flash namespace.
 // ============================================================================================================
 
 public struct Vector2 : IEquatable<Vector2>
@@ -116,7 +115,7 @@ public struct Color32
     }
 }
 
-/// <summary>Zeit wie Unity (vom Flash-Host je Frame fortgeschrieben).</summary>
+/// <summary>Time updated by the Flash host every frame.</summary>
 public static class Time
 {
     static readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
@@ -136,14 +135,14 @@ public static class Time
     }
 }
 
-/// <summary>Bildschirmgröße in Pixeln (vom Flash-Host gesetzt).</summary>
+/// <summary>Screen size in pixels (set by the Flash host).</summary>
 public static class Screen
 {
     public static int width { get; internal set; } = 1280;
     public static int height { get; internal set; } = 720;
 }
 
-/// <summary>Maus/Text wie UnityEngine.Input (vom Fenster befüllt, siehe <see cref="FlashHost"/>). mousePosition: y von unten.</summary>
+/// <summary>Mouse/text (populated by the window see <see cref="FlashHost"/>). mousePosition: y from the bottom.</summary>
 public static class FlashInput
 {
     static readonly bool[] _down = new bool[3], _pressed = new bool[3], _released = new bool[3];
@@ -156,7 +155,7 @@ public static class FlashInput
     public static bool GetMouseButton(int b) => b >= 0 && b < 3 && _down[b];
     public static bool GetMouseButtonDown(int b) => b >= 0 && b < 3 && _pressed[b];
     public static bool GetMouseButtonUp(int b) => b >= 0 && b < 3 && _released[b];
-    /// <summary>Mausrad in diesem Bild (Unity Input.mouseScrollDelta.y: + = vom Benutzer weg, eine Raste = 1).</summary>
+    /// <summary>Mouse wheel in this image (Unity Input.mouseScrollDelta.y: + = away from the user, one click = 1).</summary>
     public static float mouseScrollDelta { get; private set; }
     static float _nextWheel;
     public static void OnMouseWheel(float notches) { lock (_nextText) _nextWheel += notches; }
@@ -172,7 +171,7 @@ public static class FlashInput
     }
     public static void OnChar(char c) { lock (_nextText) _nextText.Append(c); }
 
-    /// <summary>Zu Frame-Beginn: gesammelte Ereignisse für diesen Frame übernehmen.</summary>
+    /// <summary>At the start of the frame: apply the collected events for this frame.</summary>
     internal static void BeginFrame()
     {
         for (int i = 0; i < 3; i++) { _pressed[i] = _nextPressed[i]; _released[i] = _nextReleased[i]; _nextPressed[i] = _nextReleased[i] = false; }
@@ -180,7 +179,7 @@ public static class FlashInput
     }
 }
 
-/// <summary>UnityEngine.Random-Ersatz.</summary>
+/// <summary>UnityEngine.Random replacement.</summary>
 public static class FlashRandom
 {
     static readonly Random _r = new();
@@ -191,7 +190,7 @@ public static class FlashRandom
 
 public enum TextureWrapMode { Repeat, Clamp, Mirror }
 
-/// <summary>Textur für den Flash-Player: GPU-Textur (Renderer) + optional CPU-Pixel. Ersetzt UnityEngine.Texture/Texture2D.</summary>
+/// <summary>Texture for the Flash Player: GPU texture (renderer) + optional CPU pixels. Replaces UnityEngine.Texture/Texture2D.</summary>
 public class Texture : IDisposable
 {
     public int width { get; protected set; }
@@ -199,7 +198,7 @@ public class Texture : IDisposable
     public IGpuTexture? Gpu { get; protected set; }
     public virtual void Dispose() { Gpu?.Dispose(); Gpu = null; }
 
-    /// <summary>Fremde GPU-Textur (z.B. Render-Ziel/Minimap) für SetDynamicTexture.</summary>
+    /// <summary>External GPU texture (e.g., render target/minimap) for SetDynamicTexture.</summary>
     public static Texture Wrap(IGpuTexture gpu, int w, int h) => new() { Gpu = gpu, width = w, height = h };
 }
 
@@ -211,7 +210,7 @@ public sealed class Texture2D : Texture
     public Texture2D(int w, int h) { width = w; height = h; }
 
     static Texture2D? _white;
-    /// <summary>1×1 weiß (UnityEngine.Texture2D.whiteTexture).</summary>
+    /// <summary>1×1 white (UnityEngine.Texture2D.whiteTexture).</summary>
     public static Texture2D whiteTexture
     {
         get
@@ -226,7 +225,7 @@ public sealed class Texture2D : Texture
 
     public void SetPixels32(Color32[] px) => _pixels = px;
 
-    /// <summary>Pixel auf die GPU laden (Zeile 0 = v 0, wie Unity).</summary>
+    /// <summary>Load pixels onto the GPU (line 0 = v 0, as in Unity).</summary>
     public void Apply()
     {
         var r = FlashHost.Renderer;
@@ -245,7 +244,7 @@ public sealed class Texture2D : Texture
         _pixels = null;   // nicht lesbar halten (wie Apply(false, true) im Unity-Projekt)
     }
 
-    /// <summary>Textur aus einer fertigen GPU-Upload-Beschreibung (z.B. .2db).</summary>
+    /// <summary>Texture from a completed GPU upload description (e.g., .2db).</summary>
     internal static Texture2D? FromUpload(TextureUpload? up)
     {
         var r = FlashHost.Renderer;
@@ -254,7 +253,7 @@ public sealed class Texture2D : Texture
     }
 }
 
-/// <summary>Ersatz für DebugManager (Unity-Projekt) – Ausgabe ins Paradise-Log.</summary>
+/// <summary>Replacement for DebugManager (Unity project) – Output to the Paradise log.</summary>
 public static class DebugManager
 {
     public static void Info(string s) => Diagnostics.Log.Info(s);
@@ -262,7 +261,7 @@ public static class DebugManager
     public static void Error(string s) => Diagnostics.Log.Error(s);
 }
 
-/// <summary>Ersatz für UnityEngine.Debug.</summary>
+/// <summary>Replacement for UnityEngine.Debug.</summary>
 public static class Debug
 {
     public static void Log(object? s) => Diagnostics.Log.Info(s?.ToString() ?? "");
@@ -270,6 +269,5 @@ public static class Debug
     public static void LogError(object? s) => Diagnostics.Log.Error(s?.ToString() ?? "");
 }
 
-/// <summary>Unity-Inspector-Attribute (hier ohne Wirkung).</summary>
 [AttributeUsage(AttributeTargets.Field)] public sealed class TooltipAttribute : Attribute { public TooltipAttribute(string t) { } }
 [AttributeUsage(AttributeTargets.Field)] public sealed class RangeAttribute : Attribute { public RangeAttribute(float a, float b) { } }

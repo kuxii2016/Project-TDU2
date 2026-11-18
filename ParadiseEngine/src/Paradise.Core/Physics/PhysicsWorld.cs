@@ -11,12 +11,12 @@ using System.Runtime.CompilerServices;
 namespace Paradise.Core.Physics;
 
 /// <summary>
-/// Physikwelt (BepuPhysics2) – Ersatz für die Unity-Physik (PhysX) des Unity-Projekts:
-///  - statische Kollisionsnetze der geladenen Sektoren (Gelände + opake Objekte, wie TDU2MapStreamer.AddColliders/MeshCollider)
-///  - Raycasts (Physics.Raycast: Radkontakte der Fahrzeuge)
-///  - Starrkörper (Rigidbody) für Fahrzeuge (folgt mit Stufe 3)
-/// Koordinaten: Spielkoordinaten (Meter), +Y oben. Intern relativ zu <see cref="Origin"/> (Floating Origin wie im Unity-Projekt:
-/// bei 20 km Weltkoordinaten hat float nur ~2 mm Auflösung – Federwege/Raycasts zittern). Fahrzeuge arbeiten in lokalen Koordinaten.
+/// Physics world (BepuPhysics2) – Replacement for the Unity physics (PhysX) in the Unity project:
+///  - Static collision meshes for the loaded sectors (terrain + opaque objects, such as TDU2MapStreamer.AddColliders/MeshCollider)
+///  - Raycasts (Physics.Raycast: vehicle tire contacts)
+///  - Rigidbodies for vehicles (to follow in Level 3)
+/// Coordinates: Game coordinates (meters), +Y up. Internally relative to <see cref="Origin"/> (floating origin as in the Unity project:
+/// at 20 km world coordinates, float has only ~2 mm resolution – suspension travel/raycasts jitter). Vehicles operate in local coordinates.
 /// </summary>
 public sealed class PhysicsWorld : IDisposable
 {
@@ -35,8 +35,8 @@ public sealed class PhysicsWorld : IDisposable
     readonly List<BodyHandle> _bodies = new();
 
     /// <summary>
-    /// Weltursprung verschieben (Unity: FloatingOrigin.Shift): alle statischen Kollider und Körper werden umgesetzt.
-    /// newOrigin wird auf ganze Meter gerundet.
+    /// Shift world origin (Unity: FloatingOrigin.Shift): All static colliders and bodies are shifted.
+    /// newOrigin is rounded to the nearest whole meter.
     /// </summary>
     public void ShiftOrigin(Vector3 newOrigin)
     {
@@ -83,7 +83,6 @@ public sealed class PhysicsWorld : IDisposable
         Simulation = Simulation.Create(Pool, new NarrowPhaseCallbacks(), new PoseIntegratorCallbacks(_gravity), new SolveDescription(8, 1));
     }
 
-    // ------------------------------------------------------------------ statische Kollisionsnetze
     /// <summary>
     /// Statisches Dreiecksnetz (Spielkoordinaten, je 3 Punkte ein Dreieck). surfaces = Untergrund je Dreieck
     /// (0 Asphalt, 1 Gras, 2 Erde; Unity: SurfaceOf je Collider). Rückgabe null, wenn leer.
@@ -137,7 +136,6 @@ public sealed class PhysicsWorld : IDisposable
         StaticCount--; TriangleCount -= c.Triangles;
     }
 
-    // ------------------------------------------------------------------ Kollisionsnetze im Hintergrund bauen
     // Bepu baut beim Anlegen eines Mesh den Suchbaum (BVH) – bei einem Sektor (Gelände + Objekte) 20–70 ms. Das lief im
     // Hauptthread (Ruckler beim Nachladen). Jetzt: Dreiecke + Baum in einem Task, im Hauptthread nur noch Shapes.Add/Statics.Add.
     // Jedes Netz hat einen eigenen Pool: Bepu-Pools geben Speicher sonst nie an das System zurück (gemeinsamer Pool wuchs auf > 1 GB);
@@ -213,7 +211,6 @@ public sealed class PhysicsWorld : IDisposable
         return (Pool.GetTotalAllocatedByteCount(), (ulong)System.Math.Max(0L, System.Threading.Interlocked.Read(ref _bgBytes)));
     }
 
-    // ------------------------------------------------------------------ gemeinsame Netze (Bäume, Laternen, Props)
     readonly Dictionary<(object key, Vector3 scale), (TypedIndex shape, int tris)> _sharedShapes = new();
 
     /// <summary>
@@ -256,7 +253,6 @@ public sealed class PhysicsWorld : IDisposable
     public StaticCollider? StaticOf(CollidableReference c)
         => c.Mobility == CollidableMobility.Static && _statics.TryGetValue(c.StaticHandle.Value, out var s) ? s : null;
 
-    // ------------------------------------------------------------------ Starrkörper (Unity: Rigidbody + BoxCollider)
     /// <summary>
     /// Dynamischer Körper mit einer Box als Kollider. Körperursprung = Schwerpunkt (Bepu); die Box liegt um
     /// <paramref name="boxOffset"/> (lokal, relativ zum Schwerpunkt) verschoben. inertiaDiag = Hauptträgheitsmomente (lokal).
@@ -332,7 +328,6 @@ public sealed class PhysicsWorld : IDisposable
 
     public BodyReference Body(BodyHandle h) => Simulation.Bodies[h];
 
-    // ------------------------------------------------------------------ Raycast (Physics.Raycast)
     public struct RayHit
     {
         public Vector3 Point, Normal;
@@ -419,12 +414,10 @@ public sealed class PhysicsWorld : IDisposable
         foreach (var sc in _statics.Values) { sc.OwnPool?.Clear(); sc.OwnPool = null; }
     }
 
-    // ------------------------------------------------------------------ Diagnose: Kontakte der Karosserie
     /// <summary>Kontakte Körper/Welt mitschreiben (für [DIAG Roll]); Einträge: Zeit (ms), Gegenstück, Normale, Versatz zum Körper, Tiefe.</summary>
     public static volatile bool ContactDiag = true;
     public static readonly System.Collections.Concurrent.ConcurrentQueue<(long ms, CollidableReference other, Vector3 normal, Vector3 offset, float depth)> RecentContacts = new();
 
-    // ------------------------------------------------------------------ Bepu-Rückrufe
     struct NarrowPhaseCallbacks : INarrowPhaseCallbacks
     {
         public void Initialize(Simulation simulation) { }

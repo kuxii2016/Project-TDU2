@@ -2,10 +2,10 @@ using System.Numerics;
 
 namespace Paradise.Core.Formats;
 
-/// <summary>Eine Klangzone eines Sektors: Polygon in XZ (Spielkoordinaten) mit Umgebungstyp (TypeID aus ambiences.xmb).</summary>
+/// <summary>A sound zone within a sector: a polygon in XZ (game coordinates) with an ambient type (TypeID from ambiences.xmb).</summary>
 public sealed class SoundZone
 {
-    /// <summary>Environment.TypeID der Insel-ambiences.xmb (Ibiza 0..15, Hawaii 0..12).</summary>
+    /// <summary>Environment.TypeID for the island-ambiences.xmb (Ibiza 0..15, Hawaii 0..12).</summary>
     public int Type;
     public Vector2 Center;
     /// <summary>Eckpunkte absolut, x = Spiel-X, y = Spiel-Z.</summary>
@@ -28,11 +28,11 @@ public sealed class SoundZone
 }
 
 /// <summary>
-/// Sector-*.psa = Klangzonen (Umgebungsgeräusche) eines Sektors. Aus den Original-Daten gelesen:
-///   0x00 u32 0x20000, 0x0C "ESDZ", 0x10 "ZONE", 0x18 u32 Nutzdatenlänge, 0x20 u32 Zonenanzahl + 12 Byte (0xDEADBEEF),
-///   je Zone 32 Byte Kopf {i32 Typ, f32 MitteX, f32 MitteZ, f32 0, u32 0, i32 Punktzahl, 2× 0xDEADBEEF},
-///   danach Punktzahl × {f32 dx, f32 0, f32 dz, f32 0} relativ zur Mitte.
-///   Z ist in der Datei gespiegelt (Sektor 5-0-0-3 Hawaii: Datei −3005 = Spiel 3005), daher Z = −Datei-Z.
+/// Sector-*.psa = Sound zones (ambient noise) of a sector. Read from the original data:
+///   0x00 u32 0x20000, 0x0C “ESDZ”, 0x10 “ZONE”, 0x18 u32 payload length, 0x20 u32 number of zones + 12 bytes (0xDEADBEEF),
+///   32 bytes header per zone {i32 type, f32 centerX, f32 centerZ, f32 0, u32 0, i32 score, 2× 0xDEADBEEF},
+///   followed by score × {f32 dx, f32 0, f32 dz, f32 0} relative to the center.
+///   Z is mirrored in the file (sector 5-0-0-3 Hawaii: file −3005 = game 3005), so Z = −file-Z.
 /// </summary>
 public static class SoundZonesFile
 {

@@ -5,13 +5,13 @@ using Paradise.Core.Render;
 namespace Paradise.Core.Flash;
 
 /// <summary>
-/// Texturen aus Original-Bänken für Flash-Clips (SetClipTexture): Spot-Bilder der großen Karte (MapScreens/RealtorScr) und
-/// Markenlogos der Händler (frontend/AllRes/logotexturepage.bnk, brands_map 64-px-Kacheln) – Unity TDU2BigMap.SpotPicture /
+/// Textures from original assets for Flash clips (SetClipTexture): Spot images of the large map (MapScreens/RealtorScr) and
+/// dealer brand logos (frontend/AllRes/logotexturepage.bnk, brands_map 64-px tiles) – Unity TDU2BigMap.SpotPicture /
 /// TDU2Minimap.LogoTexture.
 /// </summary>
 public static class FlashTextures
 {
-    /// <summary>Erste .2db-Textur einer Bank als Flash-Textur (null, wenn keine).</summary>
+    /// <summary>First .2db texture of a bank as a Flash texture (null if none).</summary>
     public static Texture2D? FirstTexture(string bankPath)
     {
         var bank = BnkArchive.Open(bankPath);
@@ -23,8 +23,8 @@ public static class FlashTextures
         return null;
     }
 
-    /// <summary>.2db-Textur einer Bank, deren Name <paramref name="namePart"/> enthält (z.B. "IMG_GAR" in RealtorScr/&lt;haus&gt;.bnk –
-    /// die Bilder für Garage/Außenansicht/Wohnraum); null, wenn keine.</summary>
+    /// <summary>.2db texture of a bank whose name contains <paramref name="namePart"/> (e.g., “IMG_GAR” in RealtorScr/&lt;house&gt;.bnk –
+    /// the images for the garage/exterior/living space); null if none.</summary>
     public static Texture2D? TextureNamed(string bankPath, string namePart)
     {
         var bank = BnkArchive.Open(bankPath);
@@ -42,7 +42,7 @@ public static class FlashTextures
     static bool _brandAtlasTried;
     static readonly Dictionary<int, Texture2D?> _logos = new();
 
-    /// <summary>Markenlogo (DBBrands._logo_global_index): 64×64-Kachel aus brands_map; null, wenn unbekannt.</summary>
+    /// <summary>Brand logo (DBBrands._logo_global_index): 64×64 tile from brands_map; null if unknown.</summary>
     public static Texture2D? BrandLogo(string? bnkDir, int index)
     {
         if (index < 0) return null;
@@ -59,15 +59,18 @@ public static class FlashTextures
                     var e = bank.Find("brands_map.2db");
                     if (e != null) _brandAtlas = PixelImage.FromTextureDef(TextureDef.Parse(bank.Read(e), "brands_map"));
                 }
-                if (_brandAtlas == null) Log.Warn("Markenlogos (logotexturepage.bnk/brands_map) nicht ladbar");
+                if (_brandAtlas == null) 
+                    Log.Warn("Brand logos (logotexturepage.bnk/brands_map) cannot be loaded");
             }
-            catch (Exception ex) { Log.Warn("Markenlogos nicht ladbar: " + ex.Message); }
+            catch (Exception ex) 
+            { 
+                Log.Error("Brand logos cannot be loaded:" + ex.Message); 
+            }
         }
         var a = _brandAtlas;
         if (a == null) return null;
         int cols = System.Math.Max(1, a.Width / 64), col = index % cols, row = index / cols;
         if ((row + 1) * 64 > a.Height) { _logos[index] = null; return null; }
-        // Zeile 0 der Rohdaten = Zeile 0 der Textur (wie Unity GetPixels(col*64, row*64) auf der unveränderten DXT-Textur)
         var px = new Color32[64 * 64];
         for (int y = 0; y < 64; y++)
             Array.Copy(a.Pixels, (row * 64 + y) * a.Width + col * 64, px, y * 64, 64);

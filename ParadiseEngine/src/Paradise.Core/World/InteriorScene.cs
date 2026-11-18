@@ -65,6 +65,28 @@ public sealed class InteriorScene
         }
     }
 
+    /// <summary>
+    /// Entity__Volume (ExportType_Volume, z.B. "Tess" in new_intro.bnk): volume_mat = Szenenraum -> Einheitsvolumen;
+    /// OfType 1 Kugel, 2 Box, 3 Zylinder (Unity TDU2StoryScene.Volume.Contains, Original FUN_00b40e50).
+    /// </summary>
+    public sealed class Volume : Ent
+    {
+        public int OfType;
+        public Matrix4x4 Mat = Matrix4x4.Identity;
+
+        public bool Contains(Vector3 p)
+        {
+            var u = Vector3.Transform(p, Mat);
+            return OfType switch
+            {
+                1 => Vector3.Dot(u, u) <= 1f,
+                2 => MathF.Abs(u.X) <= 0.5f && MathF.Abs(u.Y) <= 0.5f && MathF.Abs(u.Z) <= 0.5f,
+                3 => MathF.Abs(u.Y) <= 0.5f && u.X * u.X + u.Z * u.Z <= 1f,
+                _ => false,
+            };
+        }
+    }
+
     /// <summary>Display car on a turntable (Entity__Actor__ActorVehiclePosition, e.g., casino lobby).</summary>
     public sealed class ShowCar : Ent
     {
@@ -80,6 +102,22 @@ public sealed class InteriorScene
     public readonly List<Ent> HouseObjects = new();
     public readonly List<Ent> Npcs = new();
     public readonly List<Selectable> Selectables = new();
+    /// <summary>Entity__Volume (Story-Szenen: Auslöser wie "Tess").</summary>
+    public readonly List<Volume> Volumes = new();
+    /// <summary>Entity__CinCar (Story-Szenen: Auto-Darsteller wie CIN_CAR / PLAYER_CAR).</summary>
+    public readonly List<Ent> CinCars = new();
+
+    public Ent? CarSlot(string name)
+    {
+        foreach (var c in CarSlots) if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) return c;
+        return null;
+    }
+
+    public Volume? FindVolume(string name)
+    {
+        foreach (var v in Volumes) if (v.Name == name) return v;
+        return null;
+    }
 
     public Ent? Camera(ulong hc)
     {
@@ -114,6 +152,7 @@ public sealed class InteriorScene
                     case "ArrayOf_Entity__FirstPerson": sc.StartCamera = it.U("StartCamera"); break;
                     case "ArrayOf_Entity__Camera": sc.Cameras.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__PosCam": sc.CarSlots.Add(Fill(new Ent(), it)); break;
+                    case "ArrayOf_Entity__CinCar": sc.CinCars.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__MyHouseObject": sc.HouseObjects.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__PNJ": sc.Npcs.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__Actor__ActorVehiclePosition":
@@ -149,6 +188,24 @@ public sealed class InteriorScene
                 }
             }
         }
+        var vt = root.Get("ExportType_Volume")?.Get("ArrayOf_Entity__Volume");
+        if (vt != null)
+            foreach (var it in vt.Items)
+            {
+                var v = Fill(new Volume(), it);
+                v.OfType = it.I("OfType");
+                var vm = it.Get("volume_mat");
+                var m = Matrix4x4.Identity;
+                if (vm != null)
+                    for (int c = 0; c < 4; c++)
+                    {
+                        var col = vm.Get("_" + c);
+                        var v4 = col != null ? new Vector4(col.F("X"), col.F("Y"), col.F("Z"), col.F("W", c == 3 ? 1f : 0f)) : (c == 3 ? new Vector4(0, 0, 0, 1) : Vector4.Zero);
+                        SetRow(ref m, c, v4);
+                    }
+                v.Mat = m;
+                sc.Volumes.Add(v);
+            }
         sc.CarSlots.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         return sc;
     }

@@ -6,16 +6,14 @@ using System.Text;
 namespace Paradise.Core.Diagnostics;
 
 /// <summary>
-/// Globaler Absturz-Fänger. Installiert Handler für unbehandelte Exceptions
-/// und schreibt pro Absturz:
-///   - einen Minidump (Crash_&lt;zeit&gt;.dmp) via dbghelp.dll (gehört zu Windows)
-///   - einen Textreport (Crash_&lt;zeit&gt;.txt) mit Kontext, Stacktrace, letzten Logs
-/// nach Documents\KuxiiSoft\TDU2toUnity3D\Crashes.
-///
-/// Verwendung ganz am Anfang von Main():
-///   CrashHandler.Install("Game");
-/// Zusatzinfos (geladener Sektor, Fahrzeug, Startparameter) über
-///   CrashHandler.SetContext("sector", "A-12-7-3");
+/// Global crash handler. Installs handlers for unhandled exceptions
+/// and writes the following for each crash:
+///   - a minidump (Crash_time.dmp) via dbghelp.dll (included with Windows)
+///   - a text report (Crash_time.txt) containing context, stack trace, and recent logs
+/// Use at the very beginning of Main():
+///   CrashHandler.Install(“Game”);
+/// Additional information (loaded sector, vehicle, startup parameters) via
+///   CrashHandler.SetContext(“sector”, “A-12-7-3”);
 /// </summary>
 public static class CrashHandler
 {
@@ -74,11 +72,11 @@ public static class CrashHandler
     {
         var sb = new StringBuilder();
         sb.AppendLine("=== Paradise Engine – Crash Report ===");
-        sb.AppendLine($"Zeit:    {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        sb.AppendLine($"Quelle:  {source}");
+        sb.AppendLine($"Time:    {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"Source:  {source}");
         sb.AppendLine();
 
-        sb.AppendLine("--- Kontext ---");
+        sb.AppendLine("--- Context ---");
         lock (_gate)
             foreach (var kv in _context)
                 sb.AppendLine($"{kv.Key,-10}: {kv.Value}");
@@ -94,10 +92,10 @@ public static class CrashHandler
                 if (e.InnerException != null) sb.AppendLine("-- InnerException --");
             }
         }
-        else sb.AppendLine("(keine Exception übergeben)");
+        else sb.AppendLine("no Exception");
         sb.AppendLine();
 
-        sb.AppendLine("--- Letzte Logzeilen ---");
+        sb.AppendLine("--- Last Logs ---");
         sb.AppendLine(Log.RecentLines());
 
         File.WriteAllText(path, sb.ToString());

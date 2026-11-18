@@ -11,27 +11,27 @@ public struct MaterialLayer
     public string SemanticName => Bin.KeyToString(Semantic);
 }
 
-/// <summary>Ein Eden-Material. Portiert aus dem Unity-Projekt.</summary>
+/// <summary>An Eden asset.</summary>
 public sealed class MaterialDef
 {
     public ulong Key;
     public string Name = "";
     public byte[] Flags = new byte[16];
-    /// <summary>TD_Water (Pools "Oasis_*", Brunnen).</summary>
+    /// <summary>TD_Water (pools “Oasis_*”, fountains).</summary>
     public const ulong ShaderWater = 0x0123000000000000UL;
     public bool IsPoolWater => ShaderSet == ShaderWater;
-    /// <summary>Shader-Set des Originals (MAT.+0x310), z.B. TD_Road / TD_Ground / TD_Building.</summary>
+    /// <summary>Shader set from the original (MAT.+0x310), e.g., TD_Road / TD_Ground / TD_Building.</summary>
     public ulong ShaderSet;
-    /// <summary>Diffusfarbe aus dem Farbblock (MAT.+0xC0 ambient/diffuse/specular/emissive).</summary>
+    /// <summary>Diffuse color from the color block (MAT.+0xC0 ambient/diffuse/specular/emissive).</summary>
     public Vector4 Diffuse = Vector4.One;
     public const ulong ShaderRoad = 0xc8ad93c95455291bUL, ShaderGround = 0xb0f1234b0f123473UL;
     public readonly List<MaterialLayer> Layers = new();
-    /// <summary>Shader-Parameter (Key = 8-Byte-Name, z.B. "RAMPCLR1") -> float4.</summary>
+    /// <summary>Shader parameter (Key = 8-byte name, e.g., “RAMPCLR1”) -> float4.</summary>
     public readonly Dictionary<ulong, Vector4> Params = new();
 
     public bool TryGetParam(string name, out Vector4 v) => Params.TryGetValue(Bin.KeyFromString(name), out v);
 
-    /// <summary>Material-Key = "gemangelter" Name in Großbuchstaben (Bytes zyklisch auf 8 Byte aufaddiert).</summary>
+    /// <summary>Material key = “defective” name in uppercase (bytes cyclically padded to 8 bytes).</summary>
     public static ulong KeyFromName(string name)
     {
         var b = new byte[8];
@@ -56,21 +56,21 @@ public sealed class MaterialDef
     }
 
     public bool IsOcean => Name.Contains("ocean", StringComparison.OrdinalIgnoreCase);
-    /// <summary>FX-Materialien (Lichtkegel, Halos) – volumetrische Effekte.</summary>
+    /// <summary>FX Materials (Light Cones, Halos) – Volumetric Effects.</summary>
     public bool IsEffect => Name.StartsWith("FX_", StringComparison.OrdinalIgnoreCase);
-    /// <summary>Straßen: Haupttextur ist die DETAIL-Ebene auf dem letzten UV-Satz, COLOR ist nur Variation.</summary>
+    /// <summary>Roads: The main texture is the DETAIL layer on the last UV set; COLOR is just a variation.</summary>
     public bool IsRoad => ShaderSet == ShaderRoad || Name.StartsWith("Road", StringComparison.OrdinalIgnoreCase) || Name.StartsWith("crossroad", StringComparison.OrdinalIgnoreCase);
-    /// <summary>TD_Ground (Plätze, Gehwege, Sockel): Farbe = COLOR x DETAIL.r.</summary>
+    /// <summary>TD_Ground (plazas, sidewalks, bases): Color = COLOR x DETAIL.r.</summary>
     public bool IsGround => ShaderSet == ShaderGround;
 }
 
 /// <summary>
-/// .2dm = Materialbibliothek. Portiert aus dem Unity-Projekt.
-///   MATA: HASH + MAT.-Chunks. MAT. (Offsets relativ zum Chunkanfang):
-///     +0x10 u64 Key, +0x20 char[32] Name, +0x40 Flags,
-///     +0xC0.. Farben (float4 ambient/diffuse/specular/emissive),
-///     +0x10C u16 Layer-Anzahl, +0x110 Layer à 32 Byte {u64 Semantik, u64 Texturkey, 8 Byte 0, u8 addrU, u8 addrV, u8, u8, 4 Byte}
-///     danach Shader-Hash und Shaderparameter.
+/// .2dm = Material library.
+///   MATA: HASH + MAT. chunks. MAT. (offsets relative to the start of the chunk):
+///     +0x10 u64 key, +0x20 char[32] name, +0x40 flags,
+///     +0xC0.. colors (float4 ambient/diffuse/specular/emissive),
+///     +0x10C u16 number of layers, +0x110 layers (32 bytes each) {u64 semantics, u64 texture key, 8 bytes 0, u8 addrU, u8 addrV, u8, u8, 4 bytes}
+///     followed by shader hash and shader parameters.
 /// </summary>
 public sealed class Material2DM
 {
@@ -128,8 +128,8 @@ public sealed class Material2DM
     }
 
     /// <summary>
-    /// Parameterliste nach den Layern: Deskriptoren à 16 Byte {u64 Name, u8 2, u8 0, u8 Flag, u8 0, u32 16},
-    /// direkt danach je Parameter ein float4 (gleiche Reihenfolge).
+    /// Parameter list following the layers: 16-byte descriptors {u64 Name, u8 2, u8 0, u8 Flag, u8 0, u32 16},
+    /// followed immediately by one float4 per parameter (in the same order).
     /// </summary>
     private static void ParseParams(byte[] d, Chunk m, MaterialDef def, int start)
     {

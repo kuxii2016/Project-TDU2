@@ -1,11 +1,10 @@
-// Portiert aus dem Unity-Projekt (Runtime/Racing/RaceUva.cs).
 using System.Numerics;
 
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// Textur-Animation (.uva, "ANM!", Docs/tdu2-specs.md §5.5): Spuren Rotation, U-/V-Versatz, U-/V-Skalierung, linear zwischen
-/// den Schlüsseln, Schleife über die Länge. Liefert die Werte für _MainTex_ST (Rotation wird nicht dargestellt).
+/// Texture animation (.uva, “ANM!”, Docs/tdu2-specs.md §5.5): Tracks rotation, U/V offset, U/V scaling, linearly interpolated between
+/// the keys, looped over the length. Returns the values for _MainTex_ST (rotation is not rendered).
 /// </summary>
 public sealed class RaceUva
 {

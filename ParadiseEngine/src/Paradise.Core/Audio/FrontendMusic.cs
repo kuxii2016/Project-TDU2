@@ -28,7 +28,7 @@ public static class FrontendMusic
     static readonly Dictionary<string, AudioClip> _cache = new(StringComparer.OrdinalIgnoreCase);
     static readonly object _lock = new();
     static string? _current;
-    static float _vol = 1f;
+    static float _vol = .8f;
     static int _request;   // jüngste Anforderung (ältere Dekodier-Ergebnisse verwerfen)
 
     /// <summary>Currently playing music (name from the table) or null.</summary>
@@ -49,7 +49,13 @@ public static class FrontendMusic
             if (!GameFiles.Exists(path))
             {
                 var dir = Path.Combine(bnkDir, "sound", "musics");
-                if (GameFiles.DirectoryExists(dir)) foreach (var f in GameFiles.GetFiles(dir, "*.wav")) if (string.Equals(Path.GetFileNameWithoutExtension(f), e.file, StringComparison.OrdinalIgnoreCase)) { path = f; break; }
+                if (GameFiles.DirectoryExists(dir)) 
+                    foreach (var f in GameFiles.GetFiles(dir, "*.wav")) 
+                        if (string.Equals(Path.GetFileNameWithoutExtension(f), e.file, StringComparison.OrdinalIgnoreCase)) 
+                        { 
+                            path = f; 
+                            break; 
+                        }
             }
             if (!GameFiles.Exists(path))
             {

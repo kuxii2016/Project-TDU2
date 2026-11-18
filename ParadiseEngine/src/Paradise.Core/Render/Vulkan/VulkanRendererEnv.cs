@@ -256,7 +256,6 @@ public sealed unsafe partial class VulkanRenderer
         WriteEnvDescriptors();
         System.Array.Clear(_rainPudW);   // Regen-Bindings der (neuen) Spiegel-Sets beim nächsten Bild schreiben
         System.Array.Clear(_rainRipW);
-        Log.Info($"Spiegelungen: Boden {_plW}x{_plH}, Sonde {ProbeSize} (6 Seiten), MSAA {(int)_msaa}x");
     }
 
     /// <summary>Bindings 1..3 aller Frame-Sets: Schattenkarte, Spiegelbild, Würfelkarte (auch nach neuen Schattenkarten).</summary>
@@ -308,7 +307,6 @@ public sealed unsafe partial class VulkanRenderer
         // Bild + Speicher gehören der Textur (Dispose gibt sie verzögert frei)
         _luTex = new VulkanTexture(this, _luImage, _luImageMem, _luView,
             new TextureUpload { Width = (int)w, Height = (int)h, Format = GpuTextureFormat.Rgba8, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "Händler Vorschau" });
-        Log.Info($"Händler-Vorschau: {w}x{h}");
     }
 
     private void DestroyLureTarget()
@@ -449,9 +447,6 @@ public sealed unsafe partial class VulkanRenderer
             RenderFx.LureTexture = _luTex;
         }
         _viewProj = keepVP;
-        // Diagnose alle ~5 s (kann wieder raus)
-        if (_frameCounter % 300 == 0 && (RenderFx.PlanarOn || RenderFx.ProbeOn))
-            Log.Info($"[DIAG Spiegel] Boden an {RenderFx.PlanarOn} aktiv {_planarActive} Ebene {RenderFx.PlanarY:0.00} Kamera y {_globals.CameraPosition.Y:0.00} | Sonde an {RenderFx.ProbeOn} gültig {_probeValid} Pos {RenderFx.ProbePos} | opak {_opaque.Count}");
     }
 
     private void EnvPass(CommandBuffer cmd, Framebuffer fb, uint w, uint h, DescriptorSet set, Matrix4x4 view, Matrix4x4 proj, bool skipCars, float farLimit = 0f, Vector3? clear = null, bool sky = true)

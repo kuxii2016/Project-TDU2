@@ -1,24 +1,23 @@
 ﻿#nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfPatches.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Math;
 using System.Globalization;
 
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Korrekturen für die Original-Flash-Oberflächen (falsche Positionen, Größen, Texte), ohne die Filme zu verändern.
-    /// Datei: Assets/TDU2Map/Resources/TDU2FlashPatches.txt (im Build über Resources), eine Zeile je Korrektur:
-    ///   film | pfad | befehl | werte
-    ///   shopsavatar | /menu_item/item_cart/#29 | offset | 4 -2        Versatz in Bühnenpixeln (zusätzlich zur Zeitleiste)
-    ///   shopsavatar | /menu_item/item_cart/#29 | pos    | 15 4         feste Position (ersetzt _x/_y der Zeitleiste)
-    ///   shopsavatar | /menu_item/item_cart     | scale  | 1.1 1.1      Skalierung (Faktor)
-    ///   shopsavatar | /menu_item/item_cart     | alpha  | 0.5          Deckkraft 0..1
-    ///   shopsavatar | /menu_item/item_cart     | visible| 0            ausblenden (1 = immer zeigen)
-    ///   shopsavatar | /menu_item/#3            | text   | Hallo        eigener Text eines Textfelds
-    ///   *           | ...                                              gilt für alle Filme
-    /// film = Name der Bank ohne Endung (shopsavatar, home, hud …). Pfade wie im Flash Debugger ("#n" = unbenannt, Tiefe n).
-    /// Die Korrekturen werden nach jedem Bild erneut angewendet (auch wenn die Zeitleiste das Objekt neu anlegt).
-    /// Zeilen mit # am Anfang sind Kommentare.
+    /// Corrections to the original Flash interfaces (incorrect positions, sizes, text), without modifying the movies.
+    /// File: /Resources/FlashPatches.txt (in the build via Resources), one line per correction:
+    ///   movie | path | command | values
+    ///   shopsavatar | /menu_item/item_cart/#29 | offset | 4 -2         Offset in stage pixels (in addition to the timeline)
+    ///   shopsavatar | /menu_item/item_cart/#29 | pos    | 15 4         fixed position (replaces _x/_y on the timeline)
+    ///   shopsavatar | /menu_item/item_cart     | scale  | 1.1 1.1      scaling (factor)
+    ///   shopsavatar | /menu_item/item_cart     | alpha  | 0.5          Opacity 0..1
+    ///   shopsavatar | /menu_item/item_cart     | visible| 0            Hide (1 = always show)
+    ///   shopsavatar | /menu_item/#3            | text   | Hello        custom text in a text field
+    ///   *           | ...                                              applies to all movies
+    /// movie = Name of the bank without the extension (shopsavatar, home, hud …). Paths as in the Flash Debugger (“#n” = unnamed, depth n).
+    /// The corrections are reapplied after every frame (even if the timeline recreates the object).
+    /// Lines beginning with # are comments.
     /// </summary>
     public sealed partial class VmfPlayer
     {
@@ -28,12 +27,12 @@ namespace Paradise.Core.Flash
             public override string ToString() => $"{Film} | {Path} | {Command} | {Value}";
         }
 
-        public const string PatchResource = "TDU2FlashPatches";
+        public const string PatchResource = "FlashPatches";
         static List<Patch> _allPatches;
         static int _patchVersion;
         List<Patch> _myPatches; int _myPatchVersion = -1;
 
-        /// <summary>Alle Korrekturen (aus Resources/TDU2FlashPatches.txt, im Editor direkt aus der Datei).</summary>
+        /// <summary>All corrections (from Resources/FlashPatches.txt, imported directly from the file into the editor).</summary>
         public static List<Patch> AllPatches
         {
             get
@@ -43,17 +42,16 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Datei neu einlesen (Flash Debugger nach dem Speichern).</summary>
+        /// <summary>Reload file (Flash Debugger after saving).</summary>
         public static void ReloadPatches()
         {
-            // Unity: Resources/TDU2FlashPatches.txt – hier optional neben der exe
             string text = null;
             try { if (File.Exists(PatchFileEditor)) text = File.ReadAllText(PatchFileEditor); } catch (Exception) { }
             _allPatches = ParsePatches(text);
             _patchVersion++;
         }
 
-        /// <summary>Pfad der Korrekturdatei (neben der exe).</summary>
+        /// <summary>Path to the patch file (next to the exe).</summary>
         public static string PatchFileEditor => System.IO.Path.Combine(Paradise.Core.Config.AppPaths.ExeDir, PatchResource + ".txt");
 
         public static List<Patch> ParsePatches(string text)
@@ -71,7 +69,7 @@ namespace Paradise.Core.Flash
             return list;
         }
 
-        /// <summary>Name des Films für die Korrekturen (Bank ohne Endung, z.B. "shopsavatar").</summary>
+        /// <summary>Name of the movie for the corrections (file name without extension, e.g., “shopsavatar”).</summary>
         public string FilmName => string.IsNullOrEmpty(BankPath) ? "" : System.IO.Path.GetFileNameWithoutExtension(BankPath);
 
         List<Patch> MyPatches()
@@ -108,7 +106,7 @@ namespace Paradise.Core.Flash
             return new Vector2(x, y);
         }
 
-        /// <summary>Eine Korrektur auf ein Objekt anwenden (auch direkt aus dem Debugger).</summary>
+        /// <summary>Apply a correction to an object (even directly from the debugger).</summary>
         public static void ApplyPatch(DisplayObject d, string command, string value)
         {
             if (d == null) return;
@@ -123,14 +121,13 @@ namespace Paradise.Core.Flash
             }
         }
 
-        // ------------------------------------------------------------------ Code-Helfer (für eigene Steuerung)
-        /// <summary>Versatz zusätzlich zur Zeitleiste (Bühnenpixel im Eltern-Clip).</summary>
+        /// <summary>Offset in addition to the timeline (stage pixels in the parent clip).</summary>
         public void SetOffset(string path, Vector2 offset) { var d = Find(path); if (d != null) d.Offset = offset; }
-        /// <summary>Skalierung (Faktor je Achse) zusätzlich zur Zeitleiste.</summary>
+        /// <summary>Scaling (factor per axis) in addition to the timeline.</summary>
         public void SetScale(string path, Vector2 scale) { var d = Find(path); if (d != null) d.ScaleMul = scale; }
-        /// <summary>Deckkraft 0..1 (wie _alpha / 100).</summary>
+        /// <summary>Opacity 0..1 (such as _alpha / 100).</summary>
         public void SetAlpha(string path, float alpha) { var d = Find(path); if (d != null) { d.Cx.Mul.w = Mathf.Clamp01(alpha); d.ScriptCx = true; } }
-        /// <summary>Text eines Textfelds direkt setzen (auch ohne Variable); null = wieder Variable/Starttext.</summary>
+        /// <summary>Set the text of a text field directly (even without a variable); null = variable/initial text.</summary>
         public void SetObjectText(string path, string text) { var d = Find(path); if (d != null) d.TextOverride = text; }
     }
 }

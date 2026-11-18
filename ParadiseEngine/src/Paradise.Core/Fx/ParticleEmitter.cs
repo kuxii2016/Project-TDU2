@@ -5,8 +5,8 @@ using System.Numerics;
 namespace Paradise.Core.Fx;
 
 /// <summary>
-/// FX-Parameter einer Instanz (Laufzeitblock der exe, gelesen in 0x1159b60/0x1158dd0): +0x2c Partikel je Emission, +0x30 Geschwindigkeit,
-/// +0x34 Größe, +0x38 Lebensdauer, +0x44 Emissionen/s, +0x48 Alpha (auf 0..1 begrenzt). Faktoren auf die Werte der .prt.
+/// FX parameters of an instance (exe runtime block, read at 0x1159b60/0x1158dd0): +0x2c particles per emission, +0x30 velocity,
+/// +0x34 size, +0x38 lifetime, +0x44 emissions/s, +0x48 alpha (limited to 0..1). Factors applied to the values in the .prt file.
 /// </summary>
 public struct FxParams
 {
@@ -15,9 +15,9 @@ public struct FxParams
 }
 
 /// <summary>
-/// Ein Emitter einer .prt (Eden edParticles) – Erzeugen, Bewegen und Kurven wie die exe (re/prt_spec.md):
-/// Ausstoß 0x1159b60, Startwerte 0x1158dd0, Emitterform 0x1157f50, Schritt je Bild 0x11573f0, Kurven 0x1154ac0/0x1154b40,
-/// Atlasbild 0x11543d0/0x114fc20, Zufall 0x114d760/0x114d890/0x114d8d0. Gerechnet im Raum des Aufrufers (Unity-Raum).
+/// An emitter in a .prt file (Eden edParticles) – Create, move, and curve just like the exe (re/prt_spec.md):
+/// Emission 0x1159b60, Initial Values 0x1158dd0, Emitter Shape 0x1157f50, Steps per Frame 0x11573f0, Curves 0x1154ac0/0x1154b40,
+/// Atlas image 0x11543d0/0x114fc20, randomness 0x114d760/0x114d890/0x114d8d0.
 /// </summary>
 public sealed class ParticleEmitter
 {
@@ -62,7 +62,6 @@ public sealed class ParticleEmitter
         _period = prt.Rate == 0f ? float.MaxValue : 1f / prt.Rate;   // exe 0x1154670
     }
 
-    // ------------------------------------------------------------------ Zufall (exe 0x114d760 …)
     uint Next() { _rng = _rng * 0x19660du + 0x3c6ef35fu; return _rng; }
     float U01() => BitConverter.UInt32BitsToSingle(0x3f800000u | (Next() & 0x7fffffu)) - 1f;
     /// <summary>a + (2u − 1)·b (exe 0x114d890): a = Mittelwert, b = Streuung.</summary>
@@ -85,8 +84,8 @@ public sealed class ParticleEmitter
     }
 
     /// <summary>
-    /// Ein Bild: Ausstoß (falls aktiv) und Bewegung aller Partikel. emitter = Lage des Effekts (Raum des Aufrufers,
-    /// Zeilenvektoren wie die exe), toGame = Spiegelung zwischen Spielraum der .prt und Aufruferraum (Unity: x gespiegelt).
+    /// An image: emission (if enabled) and movement of all particles. emitter = position of the effect (caller's space,
+    /// row vectors like the exe), toGame = mirroring between the .prt's game space and the caller's space (Unity: x mirrored).
     /// </summary>
     public void Update(float dt, bool emit, in Matrix4x4 emitter, in FxParams fx, bool mirrorX)
     {
@@ -285,7 +284,6 @@ public sealed class ParticleEmitter
         return Vector3.Transform(v, Quaternion.CreateFromAxisAngle(axis, angle));
     }
 
-    // ------------------------------------------------------------------ Schritt je Bild (exe 0x11573f0)
     void Step(float dt)
     {
         int n = 0;
@@ -354,7 +352,6 @@ public sealed class ParticleEmitter
 
     static byte Trunc(float v) => (byte)System.Math.Clamp((int)v, 0, 255);   // cvttss2si → Byte
 
-    // ------------------------------------------------------------------ Atlas (exe 0x11543d0 / 0x114fc20)
     void InitFrames(ref P p)
     {
         if (!Prt.Atlas) { p.FrameStart = 0; p.FrameLen = 1; return; }   // C+0x210 Bit 0 aus: ganze Textur (exe 0x114ffe0)
@@ -382,7 +379,6 @@ public sealed class ParticleEmitter
         return p.FrameStart + f;
     }
 
-    // ------------------------------------------------------------------ Zeichnen (Kamera-Billboards)
     /// <summary>Vertices anhängen; Größe = Größe × Byte(0x5c/0x5d)/255 × C+0x214 (exe 0x1156b10: Halbe = …/510).</summary>
     static readonly byte[] SrgbToLinear = BuildSrgbTable();
     static byte[] BuildSrgbTable()

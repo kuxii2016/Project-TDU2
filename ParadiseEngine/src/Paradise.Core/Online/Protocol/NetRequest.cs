@@ -21,5 +21,7 @@ namespace Paradise.Core.Online
         public int choice;          // vote: gewählte Antwort (0-basiert), target = Umfrage-Id
         public bool p2p;            // status: dieser Client kann P2P (Hole-Punching)
         public string localEp = ""; // status: lokaler UDP-Endpunkt "ip:port" (Mitspieler im selben LAN)
+        public HouseLayout house;   // house: geänderte Einrichtung eines eigenen Hauses (My House, Server erweitert)
+        public string spot = "";    // houseget: Haus-Spot (leer = alle Häuser des Spielers "target")
     }
 }

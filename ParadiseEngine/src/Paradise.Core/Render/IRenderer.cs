@@ -89,6 +89,13 @@ public interface IRenderer : IDisposable
     /// <summary>Textur-Animation (.uva): _MainTex_ST / _DetailTex_ST eines Materials setzen (xy = Skalierung, zw = Versatz).</summary>
     void SetMaterialUv(IGpuMaterial material, Vector4 mainST, Vector4 detailST);
 
+    /// <summary>
+    /// Weltbild des nächsten gezeichneten Bildes (vor Flash/HUD) auf die CPU lesen, z.B. für ein Foto (MyTDULife, Unity: eigene Kamera
+    /// mit RenderTexture + ReadPixels). <paramref name="centerSquare"/> = nur das mittige Quadrat (Höhe × Höhe). Die Antwort kommt
+    /// einige Bilder später im Hauptthread (BeginFrame); null = Backend kann das nicht.
+    /// </summary>
+    void RequestSceneCapture(Action<SceneCapture?> done, bool centerSquare = false) => done(null);
+
     /// <summary>Zähler des zuletzt abgeschlossenen Frames und Gerätedaten.</summary>
     RenderStats Stats { get; }
 

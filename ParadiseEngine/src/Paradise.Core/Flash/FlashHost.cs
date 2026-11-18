@@ -1,41 +1,41 @@
 ﻿#nullable disable
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
+using Paradise.Core.Formats;
 using Paradise.Core.Render;
 using System.Globalization;
 
 namespace Paradise.Core.Flash;
 
 /// <summary>
-/// Verwaltet die geladenen Flash-Filme (VmfPlayer) – im Unity-Projekt waren das MonoBehaviours, die Unity selbst
-/// aktualisiert (Update) und gezeichnet (OnGUI, sortiert nach GUI.depth) hat. Hier ruft der GameLoop
-/// <see cref="Update"/> und <see cref="Render"/> auf. Das Spiel lädt/entfernt Filme nur über diese Klasse.
+/// Manages the loaded Flash movies (VmfPlayer)
+/// <see cref="Update"/> and <see cref="Render"/>. The game loads and removes movies only through this class.
 /// </summary>
 public static class FlashHost
 {
     static readonly List<VmfPlayer> _players = new();
     static readonly List<VmfPlayer> _sorted = new();
 
-    /// <summary>Renderer für Texturen/Quads (vom GameLoop gesetzt).</summary>
+    /// <summary>Renderer for textures/quads (set by GameLoop).</summary>
     public static IRenderer Renderer { get; private set; }
 
     /// <summary>Ordner Euro/Bnk (Frontend-Banken, Datenbank für Texte).</summary>
     public static string BnkDir { get => _bnkDir ?? Config.GameData.BnkDir; set => _bnkDir = value; }
     static string _bnkDir;
 
-    /// <summary>Sprachkürzel der Original-Daten (us, ge, fr, it, sp …).</summary>
-    /// <summary>Gilt vor der Anmeldung und solange im Spielstand keine Sprache eingetragen ist: Englisch.
-    /// Danach aus dem Spielstand (Optionen "WhatLanguage"), siehe Screens/Options.SavedLanguage.</summary>
+    /// <summary>Language codes for the original data (us, ge, fr, it, sp …).</summary>
+    /// <summary>Applies before logging in and as long as no language is specified in the game settings: English.
+    /// After that, the language is determined by the game save (Options > “WhatLanguage”); see Screens/Options.SavedLanguage.</summary>
     public static string Language { get; set; } = DefaultLanguage;
 
-    /// <summary>Vorgabe-Sprache (keine Systemsprache): Englisch.</summary>
+    /// <summary>Default language (not the system language): English.</summary>
     public const string DefaultLanguage = "us";
 
     public static IReadOnlyList<VmfPlayer> Players => _players;
 
     /// <summary>
-    /// Frontend-Bank suchen wie im Unity-Projekt (frontend/hires → medres → lowres, Groß-/Kleinschreibung egal).
-    /// null = nicht gefunden.
+    /// Search for the frontend bank as specified in the Unity project (frontend/hires → medres → lowres; case-insensitive).
+    /// null = not found.
     /// </summary>
     public static string FindFrontendBank(string fileName)
     {
@@ -48,7 +48,7 @@ public static class FlashHost
         return null;
     }
 
-    /// <summary>Datei in einem Ordner ohne Rücksicht auf Groß-/Kleinschreibung (CarDatabase.FindFile).</summary>
+    /// <summary>File in a folder, case-insensitive (CarDatabase.FindFile).</summary>
     public static string FindFile(string dir, string fileName)
     {
         if (!GameFiles.DirectoryExists(dir)) return null;
@@ -62,8 +62,8 @@ public static class FlashHost
     public static void Attach(IRenderer renderer) => Renderer = renderer;
 
     /// <summary>
-    /// Film aus einer Frontend-Bank laden (Pfad absolut oder relativ zu <see cref="BnkDir"/>, z.B. "frontend/hires/gauges.bnk").
-    /// guiDepth wie GUI.depth in Unity: kleinerer Wert liegt oben. Rückgabe null bei Fehler.
+    /// Load a film from a frontend bank (path is absolute or relative to <see cref="BnkDir"/>, e.g., “frontend/hires/gauges.bnk”).
+    /// guiDepth is like GUI.depth in Unity: a smaller value is on top. Returns null on error.
     /// </summary>
     public static VmfPlayer Load(string bank, int guiDepth = 0, bool localize = true, Action<VmfPlayer> beforeLoad = null)
     {
@@ -76,19 +76,18 @@ public static class FlashHost
         }
         catch (Exception ex)
         {
-            Log.Warn("Flash: " + path + " nicht ladbar: " + ex.Message);
+            Log.Error("Flash: " + path + " cannot be loaded: " + ex.Message);
             p.Dispose();
             return null;
         }
         if (localize && !string.IsNullOrEmpty(BnkDir)) FlashLocalization.Apply(p, FlashLocalization.Load(BnkDir, Language));
         _players.Add(p);
-        RegisterMemoryLog();
-        Log.Info("Flash: " + Path.GetFileName(path) + " geladen");
+        //RegisterMemoryLog();
         return p;
     }
 
     static bool _memRegistered;
-    /// <summary>[DIAG Mem] „Flash“: je Film Rohdaten/dekodierte Bitmaps/Shapes, Raster-Arbeitspuffer aller Threads.</summary>
+
     static void RegisterMemoryLog()
     {
         if (_memRegistered) return;
@@ -104,11 +103,11 @@ public static class FlashHost
                 sb.Append(", ").Append(Path.GetFileName(p.BankPath ?? "?")).Append(' ')
                   .Append(MemoryLog.Mb(s.raw)).Append('/').Append(MemoryLog.Mb(s.decoded)).Append('/').Append(s.shapes);
             }
-            return $"{_players.Count} Filme, Rohdaten {MemoryLog.Mb(raw)}, dekodiert {MemoryLog.Mb(dec)}, Shapes GPU {MemoryLog.Mb(sg)}, wartend {MemoryLog.Mb(pend)}, Raster-Puffer {MemoryLog.Mb(VmfRaster.BufferBytes)}{sb}";
+            return $"{_players.Count} movies, raw data {MemoryLog.Mb(raw)}, decoded {MemoryLog.Mb(dec)}, GPU shapes {MemoryLog.Mb(sg)}, pending {MemoryLog.Mb(pend)}, raster buffers {MemoryLog.Mb(VmfRaster.BufferBytes)}{sb}";
         });
     }
 
-    /// <summary>Film entfernen und freigeben (Unity: Destroy).</summary>
+    /// <summary>Remove and share a video.</summary>
     public static void Remove(VmfPlayer p)
     {
         if (p == null) return;
@@ -116,7 +115,7 @@ public static class FlashHost
         p.Dispose();
     }
 
-    /// <summary>Zu Bildbeginn: Zeit, Bildschirmgröße, Eingaben übernehmen und alle Filme fortschreiben.</summary>
+    /// <summary>At the start of the video: Set the time and screen size, apply the settings, and update all movies.</summary>
     public static void Update(int screenWidth, int screenHeight)
     {
         Time.Tick();
@@ -126,14 +125,14 @@ public static class FlashHost
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try { _players[i].Update(); }
-            catch (Exception ex) { Log.Warn("Flash-Update: " + ex.Message); }
-            PerfLog.Add("Flash-Update " + System.IO.Path.GetFileName(_players[i].BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+            catch (Exception ex) { Log.Error("Flash-Update: " + ex.Message); }
+            //PerfLog.Add("Flash-Update " + System.IO.Path.GetFileName(_players[i].BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
         }
     }
 
     /// <summary>
-    /// Weitere Oberflächen-Ebenen außerhalb der Filme (Unity: OnGUI anderer Komponenten mit GUI.depth, z.B. Ladebildschirm) –
-    /// werden mit den Filmen nach GuiDepth sortiert gezeichnet.
+    /// Additional UI layers outside the films (Unity: OnGUI of other components with GUI.depth, e.g., loading screen) –
+    /// are drawn along with the films, sorted by GuiDepth.
     /// </summary>
     public interface IGuiLayer
     {
@@ -147,7 +146,7 @@ public static class FlashHost
     public static void AddLayer(IGuiLayer l) { if (!_layers.Contains(l)) _layers.Add(l); }
     public static void RemoveLayer(IGuiLayer l) => _layers.Remove(l);
 
-    /// <summary>Alle sichtbaren Filme und Ebenen zeichnen – höherer GuiDepth zuerst (liegt unten), wie Unity GUI.depth.</summary>
+    /// <summary>Draw all visible films and layers—those with a higher GuiDepth first (at the bottom)</summary>
     public static void Render()
     {
         if (Renderer == null || (_players.Count == 0 && _layers.Count == 0)) return;
@@ -165,8 +164,9 @@ public static class FlashHost
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try { if (film != null) film.Render(); else layer.Render(Renderer); }
-            catch (Exception ex) { Log.Warn("Flash-Render: " + ex.Message); }
-            if (film != null) PerfLog.Add("Flash-Render " + System.IO.Path.GetFileName(film.BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+            catch (Exception ex) { Log.Error("Flash-Render: " + ex.Message); }
+            ///if (film != null) 
+            //    PerfLog.Add("Flash-Render " + System.IO.Path.GetFileName(film.BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
         }
     }
 

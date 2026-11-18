@@ -3,11 +3,11 @@ using System.Numerics;
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// Terrain-Höhenraster. Portiert aus dem Unity-Projekt.
-/// In TDU2 ist das Terrain ein HMAP-Objekt im .3dd + ein DXVB im .3dg:
-///   Stream 0: 257×257 float Höhen (Zeile = Z, Spalte = X), Stream 1: half4 Normalen.
-///   Abstand: Sektor 3 m (768 m), Area 24 m (6144 m), Insel 384 m (98304 m).
-///   Ursprung = Ecke (0,0) der Kachel. X/Z in Spielkoordinaten, Y = Höhe.
+/// Terrain elevation grid. Ported from the Unity project.
+/// In TDU2, the terrain is an HMAP object in .3dd + a DXVB in .3dg:
+///   Stream 0: 257×257 float elevations (row = Z, column = X), Stream 1: half4 normals.
+///   Spacing: Sector 3 m (768 m), Area 24 m (6144 m), Island 384 m (98304 m).
+///   Origin = corner (0,0) of the tile. X/Z in game coordinates, Y = elevation.
 /// </summary>
 public sealed class HeightGrid
 {
@@ -44,7 +44,7 @@ public sealed class HeightGrid
         return Heights[z * Size + x];
     }
 
-    /// <summary>Bilineare Höhe an lokaler Position (Meter, relativ zur Kachelecke).</summary>
+    /// <summary>Bilinear elevation at local position (meters, relative to the tile corner).</summary>
     public float Sample(float lx, float lz)
     {
         float fx = lx / Spacing, fz = lz / Spacing;

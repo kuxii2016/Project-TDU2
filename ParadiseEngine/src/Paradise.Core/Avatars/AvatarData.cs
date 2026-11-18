@@ -187,10 +187,13 @@ public static class AvatarLibrary
                 try
                 {
                     var path = Path.Combine(BnkDir ?? "", "avatar", "config", "pnj.bnk");
-                    var b = File.Exists(path) ? BnkArchive.Open(path) : null;
+                    var b = Paradise.Core.Files.GameFiles.Exists(path) ? BnkArchive.Open(path) : null;
                     if (b != null) foreach (var e in b.All(".avt")) _avt[Path.GetFileNameWithoutExtension(e.Name)] = b.Read(e);
                 }
-                catch (Exception ex) { Log.Warn("pnj.bnk: " + ex.Message); }
+                catch (Exception ex) 
+                { 
+                    Log.Error($"pnj({configId}).bnk: " + ex.Message); 
+                }
             }
             string id = _pnjFile.TryGetValue(configId, out var file) ? Path.GetFileNameWithoutExtension(file) : configId;
             if (!_avt.TryGetValue(id, out d)) id = configId;
@@ -294,20 +297,25 @@ public static class AvatarLibrary
             string clothesDir = Path.Combine(bnkDir ?? "", "avatar", "clothes");
             try
             {
-                if (Directory.Exists(clothesDir))
-                    foreach (var f in Directory.GetFiles(clothesDir, "*.bnk", SearchOption.AllDirectories))
+                if (Paradise.Core.Files.GameFiles.DirectoryExists(clothesDir))
+                    foreach (var f in Paradise.Core.Files.GameFiles.GetFiles(clothesDir, "*.bnk", SearchOption.AllDirectories))
                         _bankByStem.TryAdd(Path.GetFileNameWithoutExtension(f), f);
             }
-            catch (Exception ex) { Log.Warn("Avatar-Kleidung: " + ex.Message); }
+            catch (Exception ex) 
+            { 
+                Log.Error("Avatar Clothing: " + ex.Message); 
+            }
             CommonTextures = new GlobalTextureCache(renderer);
             foreach (var name in new[] { Path.Combine("avatar", "common_bodies.bnk"), Path.Combine("avatar", "clothes", "common_clothes.bnk") })
             {
                 var p = Path.Combine(bnkDir ?? "", name);
-                try { if (File.Exists(p)) CommonTextures.IndexBank(BnkArchive.Open(p)); }
-                catch (Exception ex) { Log.Warn("Avatar: " + p + " - " + ex.Message); }
+                try { if (Paradise.Core.Files.GameFiles.Exists(p)) CommonTextures.IndexBank(BnkArchive.Open(p)); }
+                catch (Exception ex) 
+                { 
+                    Log.Error("Avatar: " + p + " - " + ex.Message); 
+                }
             }
             _clothes = map;
-            Log.Info($"Avatare: {map.Count} Kleidungsstücke, {_bankByStem.Count} Kleidungsbänke, {CommonTextures.Count} gemeinsame Texturen, {_pnj.Count} Figuren");
         }
     }
 
@@ -318,7 +326,7 @@ public static class AvatarLibrary
             if (_bodies == null)
             {
                 var p = Path.Combine(BnkDir ?? "", "avatar", "common_bodies.bnk");
-                if (File.Exists(p)) _bodies = BnkArchive.Open(p);
+                if (Paradise.Core.Files.GameFiles.Exists(p)) _bodies = BnkArchive.Open(p);
             }
             return _bodies;
         }
@@ -345,7 +353,7 @@ public static class AvatarLibrary
             if (_anims == null)
             {
                 var p = Path.Combine(BnkDir ?? "", "scenarics", "avatars", "avatarsdriver.bnk");
-                if (File.Exists(p)) _anims = BnkArchive.Open(p);
+                if (Paradise.Core.Files.GameFiles.Exists(p)) _anims = BnkArchive.Open(p);
             }
             return _anims;
         }
@@ -369,7 +377,8 @@ public static class AvatarLibrary
             var a = Anims;
             var e = a?.Find(name + ".anm");
             c = e != null ? AnmClip.Parse(a!.Read(e), name) : null;
-            if (c == null) Log.Warn("Avatar-Animation fehlt: " + name);
+            if (c == null) 
+                Log.Warn("Avatar animation is missing: " + name);
             _clips[name] = c;
             return c;
         }
@@ -423,7 +432,7 @@ public static class AvatarLibrary
                 try
                 {
                     var p = Path.Combine(BnkDir ?? "", "avatar", "clothes", "common_clothes.bnk");
-                    var b = File.Exists(p) ? BnkArchive.Open(p) : null;
+                    var b = Paradise.Core.Files.GameFiles.Exists(p) ? BnkArchive.Open(p) : null;
                     var e = b?.Find("hair_mat.2dm");
                     if (e != null)
                         foreach (var m in Material2DM.Parse(b!.Read(e)).Materials.Values)
@@ -432,7 +441,10 @@ public static class AvatarLibrary
                             _hairMat[m.Name ?? ""] = (new Vector4(pc.X, pc.Y, pc.Z, 1f), new Vector4(sc.X, sc.Y, sc.Z, 1f));
                         }
                 }
-                catch (Exception ex) { Log.Warn("hair_mat.2dm: " + ex.Message); }
+                catch (Exception ex) 
+                { 
+                    Log.Error("hair_mat.2dm: " + ex.Message); 
+                }
             }
             string letter = ((char)('A' + System.Math.Clamp(c - 1, 0, 25))).ToString();
             if (!_hairMat.TryGetValue(letter, out var v)) return false;
@@ -450,7 +462,11 @@ public static class AvatarLibrary
         var e3dd = bank.Find(stem + ".3dd");
         var e3dg = bank.Find(stem + ".3dg");
         var e2dm = bank.Find(mat2dm ?? (stem + ".2dm"));
-        if (e3dd == null || e3dg == null) { Log.Warn("Avatar-Teil fehlt: " + stem); return null; }
+        if (e3dd == null || e3dg == null) 
+        { 
+            Log.Warn("Avatar part is missing: " + stem); 
+            return null; 
+        }
         var scene = Scene3DD.Parse(bank.Read(e3dd));
         var geo = Geometry3DG.Parse(bank.Read(e3dg));
         var mats = e2dm != null ? Material2DM.Parse(bank.Read(e2dm)) : null;

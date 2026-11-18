@@ -51,7 +51,7 @@ internal sealed unsafe class GpuAllocator : IDisposable
         for (uint i = 0; i < _props.MemoryTypeCount; i++)
             if ((filter & (1u << (int)i)) != 0 && (_props.MemoryTypes[(int)i].PropertyFlags & flags) == flags)
                 return i;
-        throw new Exception("Kein passender GPU-Speichertyp gefunden.");
+        throw new Exception("No matching GPU memory type found.");
     }
 
     private static ulong AlignUp(ulong v, ulong a) => a <= 1 ? v : (v + a - 1) / a * a;
@@ -80,7 +80,7 @@ internal sealed unsafe class GpuAllocator : IDisposable
         var nb = NewBlock(type, BlockSize, hostVisible, key, false);
         list.Add(nb);
         if (!TryCarve(nb, req.Size, req.Alignment, out ulong o2))
-            throw new Exception("GPU-Suballokation fehlgeschlagen.");
+            throw new Exception("GPU suballocation failed.");
         nb.Live++;
         return new Allocation(nb, o2, req.Size);
     }
@@ -89,7 +89,7 @@ internal sealed unsafe class GpuAllocator : IDisposable
     {
         var info = new MemoryAllocateInfo { SType = StructureType.MemoryAllocateInfo, AllocationSize = size, MemoryTypeIndex = type };
         if (_vk.AllocateMemory(_device, in info, null, out var mem) != Result.Success)
-            throw new Exception($"GPU-Speicher ({size / (1024 * 1024)} MB) konnte nicht alloziert werden.");
+            throw new Exception($"GPU memory ({size / (1024 * 1024)} MB) could not be allocated.");
         var b = new Block { Memory = mem, Size = size, Dedicated = dedicated, Key = key };
         AllocatedBytes += (long)size;
         b.Free.Add((0, size));

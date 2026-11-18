@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Paradise.Core.Formats;
 
-/// <summary>Knoten eines XMB-Baums. Objekte haben <see cref="Children"/>, Arrays <see cref="Items"/>, Werte <see cref="Value"/>.</summary>
+/// <summary>A node in an XMB tree. Objects have <see cref="Children"/>, arrays have <see cref="Items"/>, and values have <see cref="Value"/>.</summary>
 public sealed class XmbNode
 {
     public string Name = "";
@@ -67,12 +67,12 @@ public sealed class XmbNode
 public enum XmbType { Object, Bool, SInt8, SInt16, SInt32, SInt64, UInt8, UInt16, UInt32, UInt64, Float, Double, String, Array, Virtual }
 
 /// <summary>
-/// "XMBF" – binäres XML-Format von TDU2 (Datenbank, Kameras, Sound-Setups, Entities). Portiert aus dem Unity-Projekt.
-///   0x00 "XMBF", 0x08 Offset Deskriptor-Tabelle (Strings), 0x0C Offset Metadaten (Typtabelle, u32-Wörter),
-///   0x10 Offset Daten, 0x14 Root-Name (relativ zur Deskriptor-Tabelle), 0x18 Root-Typindex.
-///   Typwort: Bits 0..3 Typ, 4..14 Kindanzahl (Objekte), 15..31 Bytegröße.
-///   Objekt-Typ t: danach je Kind 2 Wörter {Stringoffset, Typzeiger (Bit31 = Array, Bits 0..29 = Typindex)}.
-///   Kinder liegen gepackt hintereinander (String = u32 Offset, Array = {u32 Anzahl, u32 Offset}, Virtual = {Typ, Offset}).
+/// “XMBF” – TDU2's binary XML format (database, cameras, sound setups, entities).
+///   0x00 “XMBF”, 0x08 Descriptor table offset (strings), 0x0C Metadata offset (type table, u32 words),
+///   0x10 Data offset, 0x14 Root name (relative to the descriptor table), 0x18 Root type index.
+///   Type word: Bits 0–3 type, 4–14 number of children (objects), 15–31 byte size.
+///   Object type t: followed by 2 words per child {string offset, type pointer (bit 31 = array, bits 0–29 = type index)}.
+///   Children are packed consecutively (string = u32 offset, array = {u32 count, u32 offset}, virtual = {type, offset}).
 /// </summary>
 public sealed class XmbFile
 {
@@ -228,9 +228,9 @@ public sealed class XmbFile
 }
 
 /// <summary>
-/// .cpr = mit XTEA verschlüsselte Datei (db_data.cpr, Physics.cpr, GamePC.cpr ...).
-/// Variante aus TDU2: 8 Byte Seed vorne, danach Blöcke; Klartext[i] = Dec(Cipher[i+1]) XOR Cipher[i].
-/// Schlüssel "Other" (alle .cpr außer Savegames).
+/// .cpr = file encrypted with XTEA (db_data.cpr, Physics.cpr, GamePC.cpr ...).
+/// Variant from TDU2: 8-byte seed at the beginning, followed by blocks; Plaintext[i] = Dec(Cipher[i+1]) XOR Cipher[i].
+/// “Other” key (all .cpr files except savegames).
 /// </summary>
 public static class CprCrypto
 {

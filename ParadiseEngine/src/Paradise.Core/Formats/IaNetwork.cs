@@ -1,20 +1,19 @@
-﻿// Portiert aus dem Unity-Projekt (Runtime/Formats/IaNetwork.cs).
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Paradise.Core.Formats
 {
-    /// <summary>Kreuzung (NODE) des Verkehrsnetzes.</summary>
+    /// <summary>Intersection (NODE) of the transportation network.</summary>
     public sealed class IaNode
     {
         public int Id;
         public byte Flag;
-        /// <summary>Knotenart (EDON +10, exe-Knoten +0xa, 0x5f14d0): 3 = Kreisverkehr (Ibiza: 11 Knoten, alle mit JDET-Ring).</summary>
+        /// <summary>Node type (EDON +10, exe node +0xa, 0x5f14d0): 3 = roundabout (Ibiza: 11 nodes, all with JDET ring).</summary>
         public byte Kind;
         public Vector3 Pos;          // Inselkoordinaten
         public int[] Roads = System.Array.Empty<int>();          // Straßen, die hier enden oder beginnen
     }
 
-    /// <summary>Querprofil (PROF): Punkte (Abstand zur Mittellinie, Höhe, Art) – Art 2 = Spur gegen, 3 = Spur mit der Fahrtrichtung.</summary>
+    /// <summary>Cross-section (PROF): Points (distance from centerline, elevation, type) – Type 2 = lane against the direction of travel, 3 = lane in the direction of travel.</summary>
     public sealed class IaProfile
     {
         public int Id;
@@ -23,7 +22,7 @@ namespace Paradise.Core.Formats
         public float[] Offset = System.Array.Empty<float>(), Height = System.Array.Empty<float>();
         public int[] Kind = System.Array.Empty<int>();
 
-        /// <summary>Spurmitten (Abstand zur Mittellinie, positiv = rechts der Straßenrichtung) – sortiert von innen nach außen.</summary>
+        /// <summary>Lane centers (distance from the centerline; positive = to the right of the direction of travel) – sorted from the inside to the outside.</summary>
         public List<(float offset, float height)> LaneCenters(bool forward)
         {
             var r = new List<(float, float)>();
@@ -37,7 +36,7 @@ namespace Paradise.Core.Formats
         }
     }
 
-    /// <summary>Abschnitt einer Straße (aus ROAD_DETAIL): Bezier-Kurve, Tempoklasse, Profil.</summary>
+    /// <summary>Section of a road (from ROAD_DETAIL): Bézier curve, speed class, profile.</summary>
     public sealed class IaPiece
     {
         public int SpeedClass;       // 1-basiert
@@ -46,14 +45,14 @@ namespace Paradise.Core.Formats
         public int NameOffset;
         public float Length;
         /// <summary>
-        /// Straßenart (Byte 17 des Abschnitts; exe liest sie in 0x5f10f0 als [Abschnitt+0x11]): 6 = Tunnel (0x5ee6e0: Typ == 6),
-        /// Namen in der exe-Tabelle bei 0x15047xx (… OFFROAD, CIRCUIT, DEGRADED_ROAD, TUNNEL).
+        /// Road type (byte 17 of the section; exe reads it at 0x5f10f0 as [section+0x11]): 6 = Tunnel (0x5ee6e0: type == 6),
+        /// Names in the exe table at 0x15047xx (… OFFROAD, CIRCUIT, DEGRADED_ROAD, TUNNEL).
         /// </summary>
         public byte Type;
         public bool IsTunnel => Type == 6;
-        /// <summary>Punkte: Knoten (Index 3k) und je zwei Kontrollpunkte dazwischen (kubische Bezier-Segmente).</summary>
+        /// <summary>Points: Nodes (index 3k) and two control points between each pair (cubic Bézier segments).</summary>
         public Vector3[] Points = System.Array.Empty<Vector3>();
-        /// <summary>Querneigung je Knoten (Radiant).</summary>
+        /// <summary>Lateral inclination per node (radians).</summary>
         public float[] Bank = System.Array.Empty<float>();
     }
 
@@ -67,20 +66,20 @@ namespace Paradise.Core.Formats
         public readonly List<IaPiece> Pieces = new List<IaPiece>();
     }
 
-    /// <summary>Kreuzungsfläche (JDET aus ROAD_DETAIL): bis zu drei Umrisse (x,z) in Inselkoordinaten.</summary>
+    /// <summary>Intersection area (JDET from ROAD_DETAIL): up to three outlines (x, z) in island coordinates.</summary>
     public sealed class IaJunction
     {
         public int NodeId;                       // entspricht der NODE-Id in ROAD_MAP
-        /// <summary>Kreisverkehr (JDET +0x0c/+0x10/+0x14/+0x18, exe HudMap 0xca2f6e): Radius, Breite, Mitte (x,z); sonst 0.</summary>
+        /// <summary>Roundabout (JDET +0x0c/+0x10/+0x14/+0x18, exe HudMap 0xca2f6e): radius, width, center (x, z); otherwise 0.</summary>
         public float RingRadius, RingWidth;
         public Vector2 RingCenter;
         public readonly List<Vector2[]> Outlines = new List<Vector2[]>();
     }
 
     /// <summary>
-    /// Verkehrsnetz einer Insel (&lt;Insel&gt;_ROAD_MAP.IA + &lt;Insel&gt;_ROAD_DETAIL.IA in level/&lt;insel&gt;.bnk), siehe tdu2-specs §8.2.
-    /// Chunk-Tags stehen rückwärts ("EDON" = NODE). Alle Positionen in Inselkoordinaten (Meter, Y oben, rechtshändig).
-    /// Straßen laufen vom Start- zum Endknoten; Spuren gegen die Richtung liegen links (negativer Abstand): Rechtsverkehr.
+    /// An island's road network (<Island>_ROAD_MAP.IA + <Island>_ROAD_DETAIL.IA in level/<island>.bnk);
+    /// Chunk tags are reversed (“EDON” = NODE). All positions are in island coordinates (meters, Y up, right-handed).
+    /// Roads run from the start node to the end node; lanes against the direction of travel are on the left (negative distance): right-hand traffic.
     /// </summary>
     public sealed class IaNetwork
     {
@@ -88,11 +87,11 @@ namespace Paradise.Core.Formats
         public readonly Dictionary<int, IaRoad> Roads = new Dictionary<int, IaRoad>();
         public readonly Dictionary<int, IaProfile> Profiles = new Dictionary<int, IaProfile>();
         public readonly Dictionary<int, IaJunction> Junctions = new Dictionary<int, IaJunction>();
-        /// <summary>Tempoklassen 1..n in m/s.</summary>
+        /// <summary>Speed classes 1–n in m/s.</summary>
         public float[] Speeds = System.Array.Empty<float>();
         byte[]? _names;
 
-        /// <summary>Länge des NAME-Chunks (Straßennamen-Puffer) in Bytes; 0 = Insel ohne Straßennamen.</summary>
+        /// <summary>Length of the NAME chunk (street name buffer) in bytes; 0 = island without a street name.</summary>
         public int NameBytes => _names?.Length ?? 0;
 
         public float SpeedOf(int speedClass) => Speeds.Length == 0 ? 13.9f : Speeds[System.Math.Clamp(speedClass - 1, 0, Speeds.Length - 1)];
@@ -107,7 +106,7 @@ namespace Paradise.Core.Formats
         static bool Tag(byte[] d, int o, string reversed) =>
             o + 4 <= d.Length && d[o] == reversed[0] && d[o + 1] == reversed[1] && d[o + 2] == reversed[2] && d[o + 3] == reversed[3];
 
-        /// <summary>Netz aus der Insel-Bank laden.</summary>
+        /// <summary>Load the network from the island database.</summary>
         public static IaNetwork LoadFromBank(string islandBank)
         {
             var bank = BnkArchive.Open(islandBank);
@@ -123,8 +122,8 @@ namespace Paradise.Core.Formats
 
         public static IaNetwork Parse(byte[] m, byte[] d)
         {
-            if (!Tag(m, 0, "RI41")) throw new InvalidDataException("kein ROAD_MAP (HEAD14IR)");
-            if (!Tag(d, 0, "DI41")) throw new InvalidDataException("kein ROAD_DETAIL (HEAD14ID)");
+            if (!Tag(m, 0, "RI41")) throw new InvalidDataException("no ROAD_MAP (HEAD14IR)");
+            if (!Tag(d, 0, "DI41")) throw new InvalidDataException("no ROAD_DETAIL (HEAD14ID)");
             var net = new IaNetwork();
             int nNodes = Bin.I32(m, 24), nRoads = Bin.I32(m, 28), nProf = Bin.I32(m, 32);
             var offs = new int[5];
@@ -277,6 +276,6 @@ namespace Paradise.Core.Formats
             return net;
         }
 
-        public override string ToString() => $"Roadnet: {Nodes.Count} Intersections, {Roads.Count} Roads, {Profiles.Count} Profiles";
+        public override string ToString() => $"Roadnet: {Nodes.Count} intersections, {Roads.Count} roads, {Profiles.Count} profiles";
     }
 }

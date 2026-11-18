@@ -31,14 +31,14 @@ public sealed class PmiGroup
 }
 
 /// <summary>
-/// .pmi = "Placed Mesh Instances" pro Sektor. Portiert aus dem Unity-Projekt.
-///   Sector-...-V.pmi : Vegetation, -O.pmi : weitere Objekte, -A.pmi : Actors (worldactors.bnk), -F/S.pmi
-///   MOBA-Chunk @0x10, payload: u32 Gruppen, float hMin, float hMax, ... ; Kinder ab MOBA+hdr:
-///   MOB.-Chunk payload: u64 Key8, u32 Count, u16 Unknown, u16 Version, danach je Instanz 32 Byte:
-///     +0 u16 x, +2 u16 y, +4 u16 z   (x,z: v/65535*1024-128 ; y: hMin + v/65535*(hMax-hMin))
-///     +6 u16 sx, sy, sz             (Skalierung, 0x4000 = 1.0)
+/// .pmi = “Placed Mesh Instances” per sector.
+///   Sector-...-V.pmi: Vegetation, -O.pmi: Other objects, -A.pmi: Actors (worldactors.bnk), -F/S.pmi
+///   MOBA chunk @0x10, payload: u32 groups, float hMin, float hMax, ... ; Children starting with MOBA+hdr:
+///   MOBA chunk payload: u64 Key8, u32 Count, u16 Unknown, u16 Version, followed by 32 bytes per instance:
+///     +0 u16 x, +2 u16 y, +4 u16 z   (x, z: v/65535*1024-128; y: hMin + v/65535*(hMax-hMin))
+///     +6 u16 sx, sy, sz             (scaling, 0x4000 = 1.0)
 ///     +12 s16 rotX, +14 u16 rotY, +16 s16 rotZ (65536 = 360°)
-///     +18 u16 ?, +20 half3 Farbe1, +26 half3 Farbe2
+///     +18 u16 ?, +20 half3 Color1, +26 half3 Color2
 /// </summary>
 public sealed class PmiFile
 {

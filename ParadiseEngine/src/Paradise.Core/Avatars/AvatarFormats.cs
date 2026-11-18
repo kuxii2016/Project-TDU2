@@ -4,11 +4,11 @@ using System.Numerics;
 namespace Paradise.Core.Avatars;
 
 /// <summary>
-/// .xsb – Skeleton (Eden container “.XSB”, SKEL segment), ported from Unity's Avatars/AvatarFormats.cs:
+/// .xsb – Skeleton (Eden container “.XSB”, SKEL segment)
 ///   +32 u32 n, +36 i32 parent[n], u32 key4_sorted[n], u32 bone_of_sorted[n], pad 16,
 ///   local idle pose[n] (48 bytes each) (f32[4] quaternion, f32[4] position, f32[4] scale),
 ///   f32[16][n] inverse bind matrices (row vectors, translation in row 3), Key8 names[n] in sorted order.
-/// Quaternions in the file rotate row vectors; conjugated as in Unity (-x, -y, -z, w), so that Vector3. Transform(v, q) (= Unity q * v)
+/// Quaternions in the file rotate row vectors
 /// rotates in the same way. Matrices here for row vectors (System.Numerics): InvBind = file unchanged.
 /// All values in game space (right-handed, +Z forward, +X left).
 /// </summary>

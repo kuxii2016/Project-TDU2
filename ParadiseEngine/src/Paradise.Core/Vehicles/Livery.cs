@@ -315,7 +315,7 @@ public static class StickerLibrary
                 };
                 if (!row.B("_isvalid", true) || b.Id <= 0 || b.Id > 255 || string.IsNullOrEmpty(b.BankFile)) continue;
                 var path = CarDatabase.FindFile(dir, b.BankFile + ".bnk");
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) { Log.Warn("Sticker-Planche fehlt: " + b.BankFile + ".bnk"); continue; }
+                if (string.IsNullOrEmpty(path) || !Paradise.Core.Files.GameFiles.Exists(path)) { Log.Warn("Sticker-Planche fehlt: " + b.BankFile + ".bnk"); continue; }
                 b.Path = path;
                 list.Add(b);
             }

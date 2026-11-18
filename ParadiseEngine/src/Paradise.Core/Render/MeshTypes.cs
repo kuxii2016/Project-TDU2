@@ -270,16 +270,16 @@ public sealed class MaterialDesc
     public float UseMask, LgtLights, LgtBrake, LgtReverse, LgtBlink;
     public Vector4 TailLightColor = new(1f, 0.015f, 0.01f, 1f), BrakeLightColor = new(1f, 0.01f, 0.005f, 1f);
     public Vector4 ReverseLightColor = Vector4.One, BlinkLightColor = new(1f, 0.25f, 0.01f, 1f);
-    public Vector4 LightIntensity = new(1f, 2f, 2f, 2f); // _TailLightIntensity, _BrakeLightIntensity, _ReverseLightIntensity, _BlinkLightIntensity
+    public Vector4 LightIntensity = new(2f, 2f, 2f, 2f); // _TailLightIntensity, _BrakeLightIntensity, _ReverseLightIntensity, _BlinkLightIntensity
     public float SelfIllum, Occlusion = 1f;
     public float ClearCoat, ClearCoatPower = 600f, Flake, FlakeScale = 3000f;
     public float UseSticker, StickerUV, StickerAlphaOnly;
     public float DirtLevel, ScratchLevel;
     public Vector4 DirtColor = new(0.42f, 0.35f, 0.26f, 1f);
     // TDU2/CarGlass
-    public float MaxAlpha = 0.5f;
+    public float MaxAlpha = 0.20f;
     // TDU2/CarShadow (Main = Schattentextur)
-    public float Strength = 0.75f;
+    public float Strength = 0.8f;
 
     // TDU2/Avatar, TDU2/AvatarBlend (Core/Avatars/AvatarMaterials) – Main = SKIN/TEX/HAIR, Detail = DETAIL_GRAIN
     public bool AvBlend;
@@ -385,14 +385,14 @@ public struct FrameGlobals
     /// RainSpecs.x = 0 -> trocken (Material ohne UT9).</summary>
     public Vector4 RainSpecs, RainRipple;
 
-    /// <summary>Tageslicht-Standard bis TDU2WorldLighting/TDU2Weather portiert sind.</summary>
+    /// <summary>Tageslicht-Standard bis WorldLighting/Weather portiert sind.</summary>
     public static FrameGlobals Default => new()
     {
         SunDirection = Vector3.Normalize(new Vector3(0.4f, 0.85f, 0.35f)),
         SunColor = new Vector3(0.75f),
         Ambient = new Vector3(0.25f),
         DayDim = 1f,
-        ShadowStrength = 0.424f,   // Unity-Szene: Directional Light m_Shadows.m_Strength
+        ShadowStrength = 0.5f,   // Unity-Szene: Directional Light m_Shadows.m_Strength
         ShadowDistance = 150f,     // Unity-Standard (QualitySettings / Dev-Menü)
     };
 }

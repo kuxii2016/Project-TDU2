@@ -5,12 +5,12 @@ using System.Text;
 
 namespace Paradise.Core.Formats;
 
-/// <summary>Wetterarten wie im Spiel (Tabelle der exe: Sunny Cloudy Rainny Before_rain After_rain Tempest).</summary>
+/// <summary>Weather types as in the game (table from the exe: Sunny, Cloudy, Rainy, Before_rain, After_rain, Tempest).</summary>
 public enum WeatherKind { Sunny = 0, Cloudy = 1, Rainy = 2, BeforeRain = 3, AfterRain = 4, Tempest = 5 }
 
 /// <summary>
-/// islands/insel/fx/game_weathers.xmb (big-endian XMBF): der Spieltag als 24 Schlüsselbilder (00, 01.30 ... 23.20),
-/// je 7 Blöcke: Block 0 nur zeitabhängig (sundirection, Tunnel), Block 1-6 die Wetterarten mit je ~151 Parametern
+/// islands/insel/fx/game_weathers.xmb (big-endian XMBF): the game day as 24 keyframes (00, 01:30 ... 23:20),
+/// 7 blocks each: Block 0 is time-dependent only (sundirection, tunnel); Blocks 1–6 contain the weather types, each with ~151 parameters
 /// (sun_diffuse/ambient, fog_*, rain_*, thunder_*, outside_street_lightmap, spot_*_lightmap_day_night ...).
 /// </summary>
 public sealed class WeatherData
@@ -64,9 +64,8 @@ public sealed class WeatherData
     static int ToInt(Dictionary<string, object?> d, string k) => d.TryGetValue(k, out var v) && v != null ? Convert.ToInt32(v, CultureInfo.InvariantCulture) : 0;
     static float F(Dictionary<string, object?> d, string k) => d.TryGetValue(k, out var v) && v != null ? Convert.ToSingle(v, CultureInfo.InvariantCulture) : 0f;
 
-    // ------------------------------------------------------------------ Kino-Modifikatoren (fx/cinematic_modifiers.xmb)
-    /// <summary>Ein Modifikator ("wmod:Name" der .cin): überschreibt einzelne Parameter eines Kino-Wetters je Schnitt,
-    /// meist die Sonnenrichtung, dazu Licht, Schatten, Nebel, Bloom. weather_name = Wetter, für das er gilt.</summary>
+    /// <summary>A modifier (“wmod:Name” in the .cin file): overrides individual parameters of a cinema weather model on a per-cut basis,
+    /// usually the sun's direction, as well as light, shadows, fog, and bloom. weather_name = the weather model to which it applies.</summary>
     public sealed class Modifier
     {
         public string Name = "", Weather = "";
@@ -77,7 +76,7 @@ public sealed class WeatherData
     public readonly List<Modifier> Modifiers = new();
     readonly Dictionary<string, Key> _modified = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>fx/cinematic_modifiers.xmb (MODIFIER_EXPORT: modifier[] {name, type, weather_name, intempery_index, param[]}) dazuladen.</summary>
+    /// Load <summary>fx/cinematic_modifiers.xmb (MODIFIER_EXPORT: modifier[] {name, type, weather_name, intempery_index, param[]}).</summary>
     public int LoadModifiers(string path)
     {
         if (string.IsNullOrEmpty(path) || !GameFiles.Exists(path)) return 0;
@@ -107,9 +106,9 @@ public sealed class WeatherData
     }
 
     /// <summary>
-    /// Kino-Wetter "weat:weather" mit Modifikator "wmod:modifier": Schlüssel des Wetters, darauf die Parameter des
-    /// Modifikators (zuerst der mit passendem weather_name, sonst irgendeiner dieses Namens). Ein Schlüssel, der selbst so heißt
-    /// wie der Modifikator, hat Vorrang. Ergebnis je Paar zwischengespeichert (gleiche Referenz je Schnitt).
+    /// Movie theater weather “weat:weather” with modifier “wmod:modifier”: weather key, followed by the parameters of the
+    /// modifier (first the one with the matching weather_name, otherwise any one with that name). A key that shares the same name
+    /// as the modifier takes precedence. Result cached per pair (same reference per cut).
     /// </summary>
     public Key? Find(string weather, string modifier)
     {
@@ -153,7 +152,7 @@ public sealed class WeatherData
         return r;
     }
 
-    /// <summary>Zwei Schlüsselbilder um die Uhrzeit (0..24) und der Mischanteil.</summary>
+    /// <summary>Two key images representing the time (0–24) and the blend ratio.</summary>
     public void Bracket(float hour, out Key a, out Key b, out float f)
     {
         int n = Keys.Count;
@@ -173,7 +172,7 @@ public sealed class WeatherData
         return k.Blocks[block].TryGetValue(name, out var v) ? v : def;
     }
 
-    /// <summary>Parameter zur Uhrzeit, zwischen zwei Wetterarten gemischt (Block = Art + 1; Block 0 = nur Zeit).</summary>
+    /// <summary>Time parameters, mixed between two weather types (Block = Type + 1; Block 0 = time only).</summary>
     public Vector4 Sample(string name, float hour, int blockA, int blockB, float t, Vector4 def = default)
     {
         var va = Smooth(name, hour, blockA, def);
@@ -183,8 +182,8 @@ public sealed class WeatherData
     }
 
     /// <summary>
-    /// Wert zwischen den Stunden-Schlüsselbildern als Catmull-Rom-Kurve (statt linear): Sonnenbahn, Licht- und
-    /// Nebelfarben ändern sich ohne Knick an jeder vollen Stunde. Geht durch alle Schlüsselwerte.
+    /// Value between hourly keyframes as a Catmull-Rom curve (instead of linear): The sun's path, light, and
+    /// fog colors change smoothly at every full hour. Runs through all key values.
     /// </summary>
     Vector4 Smooth(string name, float hour, int block, Vector4 def)
     {
@@ -201,7 +200,7 @@ public sealed class WeatherData
         return 0.5f * (2f * p1 + (p2 - p0) * f + (2f * p0 - 5f * p1 + 4f * p2 - p3) * f2 + (3f * p1 - p0 - 3f * p2 + p3) * f3);
     }
 
-    /// <summary>Minimaler Leser für big-endian XMBF (Wetter-Exporte). Kinder eines Objekttyps: {Typ, Name}-Paare.</summary>
+    /// <summary>Minimal reader for big-endian XMBF (weather exports). Children of an object type: {type, name} pairs.</summary>
     sealed class BeXmb
     {
         readonly byte[] _b; readonly int _desc, _meta, _data;

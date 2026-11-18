@@ -1,5 +1,4 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfText.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
 using Paradise.Core.Math;
 using System.Globalization;
 using System.Text;
@@ -7,15 +6,15 @@ using System.Text;
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Textsatz der Flash-Textfelder wie im Spiel:
-    ///   * Zeilenumbrüche: "\r", "\n", "\r\n" und das wörtliche "\n" aus den DBLoc-Texten; Umbruch an Wortgrenzen bei WordWrap.
-    ///   * TDU2-Markup (statt HTML): "#color:RRGGBB#" bzw. "#color:RRGGBBAA#" … "#nocolor#", "#command:NAME#" = Taste der Aktion.
-    ///   * HTML-Felder (Flag HTML): &lt;br&gt;, &lt;p&gt;, &lt;font color="#RRGGBB"&gt;, &amp;amp; usw.
-    /// Ausrichtung je Zeile (links/rechts/mittig), Ränder/Einzug/Zeilenabstand aus DefineEditText.
+    /// Text formatting for the Flash text fields as in the game:
+    ///   * Line breaks: “\r”, “\n”, “\r\n”, and the literal “\n” from the DBLoc texts; line breaks at word boundaries when using WordWrap.
+    ///   * TDU2 markup (instead of HTML): “#color:RRGGBB#” or “#color:RRGGBBAA#” … “#nocolor#”, “#command:NAME#” = key for the action.
+    ///   * HTML fields (HTML flag): <br>,</br>, font color="#RRGGBB", etc.
+    /// Alignment per line (left/right/center), margins/indentation/line spacing from DefineEditText.
     /// </summary>
     public sealed partial class VmfPlayer
     {
-        /// <summary>Taste zu "#command:NAME#" (z.B. CAR_ACCEL) – setzt das Spiel; Standard: Name ohne Präfix.</summary>
+        /// <summary>Key for “#command:NAME#” (e.g., CAR_ACCEL) – sets the game; default: name without prefix.</summary>
         public static Func<string, string> CommandKeyName;
 
         struct TextRun { public string Text; public Color32? Color; }
@@ -24,7 +23,7 @@ namespace Paradise.Core.Flash
 
         readonly Dictionary<(VmfMovie.EditText, string, float), TextLayout> _layoutCache = new Dictionary<(VmfMovie.EditText, string, float), TextLayout>();
 
-        /// <summary>Markup in farbige Abschnitte zerlegen (Zeilenumbrüche als '\n').</summary>
+        /// <summary>Split markup into colored sections (line breaks as ‘\n’).</summary>
         static List<TextRun> ParseMarkup(string s, bool html)
         {
             var runs = new List<TextRun>();
@@ -106,7 +105,7 @@ namespace Paradise.Core.Flash
             return true;
         }
 
-        /// <summary>Text ohne Markup (für Messungen/Ersatzschrift).</summary>
+        /// <summary>Text without markup (for measurements/alternative text).</summary>
         static string PlainText(string s, bool html)
         {
             var sb = new StringBuilder();
@@ -199,7 +198,7 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Ersatzschrift (Unity) mit Rich-Text-Farben.</summary>
+        /// <summary>Font replacement with rich-text colors.</summary>
         static string UnityRichText(string s, bool html)
         {
             var sb = new StringBuilder();

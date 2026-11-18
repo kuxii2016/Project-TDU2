@@ -3,8 +3,8 @@ using System.IO.Compression;
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// PNG lesen (ohne Zusatzpakete): 8 Bit, nicht verschachtelt; Graustufen, RGB, Palette, Grau+Alpha, RGBA.
-/// Ergebnis: RGBA8, Zeile 0 = oben.
+/// Read PNG (without additional packages): 8-bit, non-interlaced; grayscale, RGB, palette, grayscale+alpha, RGBA.
+/// Result: RGBA8, row 0 = top.
 /// </summary>
 public static class PngDecoder
 {

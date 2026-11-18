@@ -1,5 +1,5 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/VmfScript.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
+using Paradise.Core.Diagnostics;
 using Paradise.Core.Math;
 using System.Globalization;
 using System.Text;
@@ -7,16 +7,16 @@ using System.Text;
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// ActionScript-1/2-Interpreter (Stackmaschine, SWF-DoAction-Bytecode) für die Eden-Flash-Screens.
-    /// Unterstützt: Push (alle Typen, Konstantenpool, Register), Variablen mit Pfaden ("/a/b:x", "_root.a.x", "../:x"),
-    /// GetMember/SetMember auf Clips/Objekten/Strings, If/Jump, Arithmetik/Vergleiche/Logik, Funktionen
-    /// (DefineFunction, CallFunction, CallMethod, Return), Clip-Methoden (gotoAndStop/Play, play, stop ...),
+    /// ActionScript 1/2 interpreter (stack machine, SWF DoAction bytecode) for the Eden Flash screens.
+    /// Supports: Push (all types, constant pool, registers), variables with paths (“/a/b:x”, "_root. a.x“, ”../:x"),
+    /// GetMember/SetMember on clips/objects/strings, If/Jump, arithmetic/comparisons/logic, functions
+    /// (DefineFunction, CallFunction, CallMethod, Return), clip methods (gotoAndStop/Play, play, stop ...),
     /// Get/SetProperty (_x, _y, _alpha, _visible, _currentframe ...), GotoFrame/GotoFrame2/GoToLabel, SetTarget, FSCommand.
-    /// Unbekanntes liefert undefined statt abzubrechen.
+    /// Unknown values return `undefined` instead of causing an error.
     /// </summary>
     public sealed partial class VmfPlayer
     {
-        /// <summary>FSCommand aus dem Flash (getURL "FSCommand:cmd", args) – z.B. Menüauswahl.</summary>
+        /// <summary>FSCommand from Flash (getURL “FSCommand:cmd”, args) – e.g., menu selection.</summary>
         public event Action<string, string> FSCommand;
 
         sealed class Undef { public override string ToString() => "undefined"; }
@@ -31,7 +31,7 @@ namespace Paradise.Core.Flash
         sealed class Builtin { public string Name; public Builtin(string n) { Name = n; } }
         static readonly Builtin MathObj = new Builtin("Math"), KeyObj = new Builtin("Key"), StageObj = new Builtin("Stage");
 
-        /// <summary>Benannte Button-Instanz als Skriptobjekt (AS2: btn.onPress = function(){...}, btn._visible ...).</summary>
+        /// <summary>Named button instance as a script object (AS2: btn.onPress = function(){...}, btn._visible ...).</summary>
         sealed class ButtonObj { public DisplayObject D; public readonly Dictionary<string, object> Members = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase); }
         readonly Dictionary<DisplayObject, ButtonObj> _btnObjs = new Dictionary<DisplayObject, ButtonObj>();
         ButtonObj BtnObj(DisplayObject d) { if (!_btnObjs.TryGetValue(d, out var b)) _btnObjs[d] = b = new ButtonObj { D = d }; return b; }
@@ -42,11 +42,10 @@ namespace Paradise.Core.Flash
             try { InvokeTop(fn, bo, Array.Empty<object>()); }
             catch (Exception ex)
             {
-                DebugManager.Error("Flash-Button " + ev + ": " + ex.Message);
+                Log.Error("Flash-Button " + ev + ": " + ex.Message);
             }
         }
 
-        // onEnterFrame-Handler (je Bild nach dem Zeitleisten-Schritt)
         readonly List<Instance> _enterFrame = new List<Instance>();
 
         void RunEnterFrames()
@@ -59,7 +58,7 @@ namespace Paradise.Core.Flash
                 try { InvokeTop(fn, inst, Array.Empty<object>()); }
                 catch (Exception ex)
                 {
-                    DebugManager.Error("Flash onEnterFrame (" + PathOf(inst) + "): " + ex.Message);
+                    Log.Error("Flash onEnterFrame (" + PathOf(inst) + "): " + ex.Message);
                 }
             }
         }
@@ -75,7 +74,7 @@ namespace Paradise.Core.Flash
             return false;
         }
 
-        /// <summary>Clip hängt im Anzeigebaum und ist samt Eltern sichtbar.</summary>
+        /// <summary>The clip is located in the display tree and is visible along with its parent.</summary>
         public bool IsShown(Instance inst) => Shown(inst);
 
         bool Shown(Instance inst)
@@ -85,11 +84,10 @@ namespace Paradise.Core.Flash
             return true;
         }
 
-        // ------------------------------------------------------------------ Native Liste (im Spiel: C++-Klasse ASFlashList)
         /// <summary>
-        /// Ersatz für die native Liste des Spiels (ASFlashList(owner, name, sichtbareZeilen, spalten)). Das Spiel füllt die Zeilen
-        /// selbst: hier über das Ereignis <see cref="ListCreated"/> (Rows füllen, dann <see cref="ListRefresh"/>).
-        /// Zeilen-Clips heißen "line1".."lineN" im Besitzer; Spaltentexte landen in den Variablen aus <see cref="FlashList.ColumnVars"/>.
+        /// Replacement for the game's native list (ASFlashList(owner, name, visibleRows, columns)). The game fills the rows
+        /// itself: here via the <see cref="ListCreated"/> event (fill rows, then <see cref="ListRefresh"/>).
+        /// Row clips are named “line1”..“lineN” in the owner; column texts are stored in the variables from <see cref="FlashList.ColumnVars"/>.
         /// </summary>
         public sealed class FlashList
         {
@@ -103,12 +101,17 @@ namespace Paradise.Core.Flash
 
         public event Action<FlashList> ListCreated;
         public event Action<FlashList> ListValidated;
+        /// <summary>
+        /// A row has been (re)written: (list, row 1..ViewSize, index in Rows or -1 = empty). Similar to the row callback of the native
+        /// list in the game (e.g., exe 0x9ef1e0: player list sets a flag, online icon, and photo for each row) – even after scrolling.
+        /// </summary>
+        public event Action<FlashList, int, int> ListLineDrawn;
         FlashList _activeList;
         public FlashList ActiveList => _activeList;
 
         string LinePath(FlashList l, int line) { var op = PathOf(l.Owner); return (op == "/" ? "" : op) + "/line" + line; }
 
-        /// <summary>Zeilentexte (ab Top) in die Zeilen-Clips schreiben; leere Zeilen bekommen empty = 1.</summary>
+        /// <summary>Write line text (starting from the top) into the line clips; empty lines are assigned empty = 1.</summary>
         public void ListRefresh(FlashList l)
         {
             if (l == null || l.Owner == null) return;
@@ -123,19 +126,17 @@ namespace Paradise.Core.Flash
                     _vars[lp + ":" + l.ColumnVars[c]] = v; _objVars.Remove(lp + ":" + l.ColumnVars[c]);
                 }
                 _vars[lp + ":empty"] = row == null ? "1" : "0"; _objVars[lp + ":empty"] = row == null ? 1.0 : 0.0;
+                ListLineDrawn?.Invoke(l, i, row != null ? r : -1);
             }
             SyncScrollBar(l);
         }
 
-        // ------------------------------------------------------------------ Scrollbalken der nativen Liste (cmon_list_scrollBar)
-        // Im Spiel bewegt die native Liste den Lift (scrollBar/lift mit up/middle/down) selbst und wertet Pfeile/Lift aus;
-        // der Film meldet nur "mylf:scrl:btnu|btnd:prss|rlse" und ruft liftState(0/1/2) für Normal/Über/Gedrückt.
         readonly List<FlashList> _lists = new List<FlashList>();
         FlashList _scrollHoldList, _liftDragList; int _scrollHoldDir; float _scrollHoldNext; float _liftGrab;
 
         Instance ScrollBarOf(FlashList l) => l?.Owner != null ? Child(l.Owner, "scrollBar") : null;
 
-        /// <summary>Liste, zu der ein Scrollbalken-Befehl gehört: aktive Liste, sonst die zuletzt erzeugte sichtbare mit Scrollbalken.</summary>
+        /// <summary>The list to which a scrollbar command belongs: the active list, or otherwise the most recently created visible list with a scrollbar.</summary>
         public FlashList ScrollTarget()
         {
             if (_activeList != null && ScrollBarOf(_activeList) != null && Shown(_activeList.Owner)) return _activeList;
@@ -144,7 +145,7 @@ namespace Paradise.Core.Flash
             return null;
         }
 
-        /// <summary>Sichtbaren Ausschnitt verschieben (Auswahl bleibt im Bild), Lift nachführen.</summary>
+        /// <summary>Move the visible section (selection remains in the image), track the lift.</summary>
         public void ListScroll(FlashList l, int delta)
         {
             if (l == null || l.Rows.Count == 0) return;
@@ -160,8 +161,6 @@ namespace Paradise.Core.Flash
             int oldLine = l.SelectedLine;
             l.Top = top;
             int sel = Mathf.Clamp(l.Selected, top, Mathf.Min(l.Rows.Count, top + l.ViewSize) - 1);
-            // wie die native Liste: Auswahl zuerst umstellen, dann die alte Zeile abwählen – die Filme fragen in
-            // PlayAnimSelectionOut per GetViewLineSelected(), ob die Zeile noch die aktuelle ist (setIconPad der Steuerung)
             l.Selected = sel;
             CallOn(l.Owner, "PlayAnimSelectionOut", (double)oldLine);
             ListRefresh(l);
@@ -193,7 +192,7 @@ namespace Paradise.Core.Flash
             lift.ScriptMatrix = true;
         }
 
-        /// <summary>Scrollbalken-Befehl des Films ("mylf:scrl:…"). true = behandelt.</summary>
+        /// <summary>The movie's scrollbar command (“mylf:scrl:…”). true = handled.</summary>
         bool HandleScrollCommand(string cmd)
         {
             if (cmd == null || !cmd.StartsWith("mylf:scrl:", StringComparison.OrdinalIgnoreCase)) return false;
@@ -210,7 +209,7 @@ namespace Paradise.Core.Flash
             return true;
         }
 
-        /// <summary>Jedes Bild: Pfeil gehalten (wiederholen), Lift ziehen, Klick in die Leiste (Seite blättern).</summary>
+        /// <summary>Each image: Hold the arrow key (repeat), drag the slider, click on the bar (scroll through the page).</summary>
         void ListScrollTick()
         {
 #if ENABLE_LEGACY_INPUT_MANAGER
@@ -251,7 +250,7 @@ namespace Paradise.Core.Flash
 #endif
         }
 
-        /// <summary>Liste als geladen melden (beendet die Ladeanimation des Menüs).</summary>
+        /// <summary>Report that the list has loaded (stops the menu's loading animation).</summary>
         public void ListLoaded(FlashList l)
         {
             if (l?.Owner != null) StoreClipVar(l.Owner, "isListLoaded", true);
@@ -262,23 +261,20 @@ namespace Paradise.Core.Flash
             if (inst != null && GetMember(inst, fn) is AsFunction f) InvokeTop(f, inst, args);
         }
 
-        /// <summary>Auswahl verschieben (wie die native Liste: Animationen der Zeilen im Besitzer-Clip auslösen).</summary>
+        /// <summary>Move selection (like the native list: trigger row animations in the parent clip).</summary>
         public void ListMove(FlashList l, int delta)
         {
             if (l == null || l.Rows.Count == 0) return;
             ListSelect(l, l.Selected + delta, true);
         }
 
-        /// <summary>Zeile (Index in Rows) auswählen; scrollt bei Bedarf (wie die native Liste).</summary>
+        /// <summary>Select a row (index in rows); scrolls as needed (like the native list).</summary>
         public void ListSelect(FlashList l, int index, bool sound)
         {
             if (l == null || l.Rows.Count == 0) return;
             int oldLine = l.SelectedLine;
             int sel = Mathf.Clamp(index, 0, l.Rows.Count - 1);
             if (sel == l.Selected) return;
-            // Auswahl (und Ausschnitt) zuerst umstellen, dann die alte Zeile abwählen: PlayAnimSelectionOut fragt
-            // GetViewLineSelected() – vorher galt die alte Zeile dort noch als aktuell und blieb hervorgehoben
-            // (Steuerung: command_name/command_bind blieben auf "stop_on", jede überfahrene Zeile blieb weiß)
             l.Selected = sel;
             int top = l.Top;
             if (sel < top) top = sel;
@@ -293,7 +289,7 @@ namespace Paradise.Core.Flash
             if (sound && _moveSounds == moves) FSCommand?.Invoke("sndp:move", "");   // spielt der Film den Ton schon selbst: nicht doppelt
         }
 
-        /// <summary>Liegt der Clip im Besitzer-Clip der aktiven nativen Liste (Zeilen-Buttons)?</summary>
+        /// <summary>Is the clip located in the owner clip of the active native list (row buttons)?</summary>
         bool InActiveList(Instance inst)
         {
             var o = _activeList?.Owner;
@@ -314,19 +310,13 @@ namespace Paradise.Core.Flash
                 case "GetViewLineSelected": return (double)(l.Selected - l.Top);
                 case "Activate":
                     l.Active = true; _activeList = l;
-                    // Wie die native Liste: nach dem ersten Aktivieren ist die Liste nicht mehr "am Öffnen". Die Spielerliste
-                    // (initFlashList) startet die Zeilenschleife InitLoop -> AfterLoop (Eingabe frei, Activate) nur, wenn
-                    // isOpening != true – ohne das blieb sie nach dem ersten Seitenwechsel gesperrt.
                     StoreClipVar(l.Owner, "isOpening", false);
                     StoreClipVar(l.Owner, "line_view", (double)l.SelectedLine);
                     if (l.Rows.Count > 0) CallOn(l.Owner, "PlayAnimSelectionIn", (double)l.SelectedLine);
-                    // Scrollbalken wie im Spiel einschalten (Pfeile/Lift melden dann "mylf:scrl:btnu|btnd|lift:prss")
                     CallOn(Child(l.Owner, "scrollBar"), "myLifeScroll");
                     return Undefined;
                 case "Deactivate": l.Active = false; return Undefined;
                 case "OnRollOver":
-                    // Zeilen-Button (on rollOver): Maus über Zeile N (1-basiert) -> diese Zeile auswählen, sonst löst der
-                    // Klick nicht aus (der Button validiert nur die gewählte Zeile)
                     if (l.Active && args != null && args.Length > 0)
                     {
                         int line = (int)ToNum(args[0]);
@@ -344,7 +334,6 @@ namespace Paradise.Core.Flash
         int _depth;
         float _startTime = -1f;
 
-        // ------------------------------------------------------------------ Einstieg
         void ExecFrameActions(Instance self, byte[] code)
         {
             if (code == null || code.Length == 0) return;
@@ -353,13 +342,11 @@ namespace Paradise.Core.Flash
             try { Exec(code, 0, code.Length, self, null, null, out _); }
             catch (Exception ex)
             {
-                DebugManager.Error("[TDU2] Flash-sction (" + PathOf(self) + "): " + ex.Message);
+                Log.Error("Flash-sction (" + PathOf(self) + "): " + ex.Message);
             }
             finally { _depth--; _inActions--; if (_inActions == 0) DrainActionQueue(); }
         }
 
-        // Wie im Flash Player: Bildaktionen, die ein gotoAndStop/Play innerhalb eines Skripts auslöst, laufen erst NACH dem
-        // aktuellen Aktionsblock (sonst überschreibt z.B. ein folgendes play() das stop() des Zielbilds -> Endlosschleifen).
         int _inActions;
         bool _draining;
         readonly Queue<(Instance inst, byte[] code)> _actionQueue = new Queue<(Instance, byte[])>();
@@ -386,7 +373,7 @@ namespace Paradise.Core.Flash
             finally { _draining = false; }
         }
 
-        /// <summary>Aufruf von außen (Eingabe/Maus) wie ein Aktionsblock behandeln: ausgelöste Bildaktionen danach ausführen.</summary>
+        /// <summary>Treat external calls (input/mouse) as an action block: execute triggered image actions afterward.</summary>
         object InvokeTop(AsFunction fn, object thisObj, object[] args)
         {
             _inActions++;
@@ -394,7 +381,6 @@ namespace Paradise.Core.Flash
             finally { _inActions--; if (_inActions == 0) DrainActionQueue(); }
         }
 
-        // ------------------------------------------------------------------ Interpreter
         bool Exec(byte[] a, int start, int end, Instance self, Dictionary<string, object> locals, object thisObj, out object ret)
         {
             ret = Undefined;
@@ -614,7 +600,6 @@ namespace Paradise.Core.Flash
             }
         }
 
-        // ------------------------------------------------------------------ Werte
         static double ToNum(object v)
         {
             switch (v)
@@ -708,7 +693,6 @@ namespace Paradise.Core.Flash
             return Encoding.UTF8.GetString(a, s0, q - s0);
         }
 
-        // ------------------------------------------------------------------ Clips / Pfade
         Instance ResolveClip(Instance from, string path)
         {
             if (string.IsNullOrEmpty(path)) return from;
@@ -739,7 +723,7 @@ namespace Paradise.Core.Flash
             return null;
         }
 
-        /// <summary>Benanntes Kind als Skriptwert: Clip-Instanz oder Button-Objekt.</summary>
+        /// <summary>Named child as script value: clip instance or button object.</summary>
         object ChildObj(Instance inst, string name)
         {
             if (inst == null) return null;
@@ -842,7 +826,7 @@ namespace Paradise.Core.Flash
             StoreClipVar(scope ?? Root, name, v);
         }
 
-        /// <summary>"a.b.c" Glied für Glied auflösen: erstes über GetVar (Variable, _root, this …), danach Mitglieder (auch Objektverweise).</summary>
+        /// <summary>Expand “a.b.c” element by element: first using GetVar (variable, _root, this …), then members (including object references).</summary>
         object WalkMembers(Instance scope, Dictionary<string, object> locals, string dotted)
         {
             var parts = dotted.Split('.');
@@ -1034,7 +1018,6 @@ namespace Paradise.Core.Flash
             }
         }
 
-        // ------------------------------------------------------------------ Aufrufe
         object Invoke(AsFunction fn, object thisObj, object[] args)
         {
             if (_depth > 24) return Undefined;
@@ -1115,7 +1098,7 @@ namespace Paradise.Core.Flash
                         try { ListCreated?.Invoke(l); }
                         catch (Exception ex)
                         {
-                            DebugManager.Error("ASFlashList " + l.Name + ": " + ex.Message);
+                            Log.Error("ASFlashList " + l.Name + ": " + ex.Message);
                         }
                         return l;
                     }
@@ -1255,10 +1238,9 @@ namespace Paradise.Core.Flash
             return Undefined;
         }
 
-        // ------------------------------------------------------------------ Eingabe von außen (wie das Spiel)
         /// <summary>
-        /// Ruft eine im Film definierte Funktion auf (z.B. Move("up"), A(), B()) – an dem obersten sichtbaren Clip, der sie
-        /// definiert (so landet die Eingabe beim gerade geöffneten Menü). Liefert true, wenn eine Funktion gefunden wurde.
+        /// Calls a function defined in the movie (e.g., Move(“up”), A(), B())—on the topmost visible clip that defines it
+        /// (so the input goes to the currently open menu). Returns true if a function is found.
         /// </summary>
         public bool Input(string function, params object[] args)
         {
@@ -1307,18 +1289,18 @@ namespace Paradise.Core.Flash
             try { InvokeTop(best, bestInst, a); }
             catch (Exception ex)
             {
-                DebugManager.Error("Flash-Input " + function + ": " + ex.Message);
+                Log.Error("Flash-Input " + function + ": " + ex.Message);
             }
             return true;
         }
 
-        /// <summary>Menü-Clip im Ruhezustand: angehalten auf seinem Label "default" (geschlossen, nichts zu sehen).</summary>
+        /// <summary>Menu clip in idle state: paused on its “default” label (closed, nothing visible).</summary>
         static bool IsClosedMenu(Instance inst) =>
             inst != null && !inst.Playing && inst.Timeline.Labels.TryGetValue("default", out int f) && inst.Frame == f;
 
         /// <summary>
-        /// Funktion eines bestimmten Clips aufrufen (z.B. Call("/", "ItemType", "over") oder Call("/cursor", "A")) – wie das Spiel
-        /// (FlashPlayer::invoke). Liefert false, wenn der Clip oder die Funktion fehlt.
+        /// Call a specific clip's function (e.g., Call(“/”, “ItemType”, ‘over’) or Call(“/cursor”, “A”)) – just like the game
+        /// (FlashPlayer::invoke). Returns false if the clip or function is missing.
         /// </summary>
         public bool Call(string path, string function, params object[] args)
         {
@@ -1328,14 +1310,14 @@ namespace Paradise.Core.Flash
             var a = new object[args?.Length ?? 0];
             for (int i = 0; i < a.Length; i++) a[i] = args[i] is int iv ? (object)(double)iv : args[i] is float fv ? (object)(double)fv : args[i];
             try { InvokeTop(fn, inst, a); }
-            catch (Exception ex) { DebugManager.Error("Flash-Call " + path + "." + function + ": " + ex.Message); }
+            catch (Exception ex) { Log.Error("Flash-Call " + path + "." + function + ": " + ex.Message); }
             return true;
         }
 
         /// <summary>
-        /// Tastendruck an die Tasten-Buttons des Films (on(keyPress …), Bedingung Bits 9..15 = Tastencode: 1 links, 2 rechts,
-        /// 3 Pos1, 4 Ende, 5 Einfg, 6 Entf, 8 Rück, 13 Enter, 14 hoch, 15 runter, 16 BildAuf, 17 BildAb, 18 Tab, 19 Esc, sonst ASCII).
-        /// Läuft für alle sichtbaren Buttons mit diesem Code (wie der Flash Player). true = mindestens einer reagierte.
+        /// Key presses on the movie's buttons (on(keyPress …), condition: bits 9–15 = key code: 1 left, 2 right,
+        /// 3 Pos1, 4 End, 5 Insert, 6 Delete, 8 Back, 13 Enter, 14 Up, 15 Down, 16 Page Up, 17 Page Down, 18 Tab, 19 Esc, otherwise ASCII).
+        /// Runs for all visible buttons with this code (like the Flash Player). true = at least one responded.
         /// </summary>
         public bool SendKey(int keyCode)
         {
@@ -1359,8 +1341,7 @@ namespace Paradise.Core.Flash
             return hits.Count > 0;
         }
 
-        // ------------------------------------------------------------------ Debug-Schnittstelle (Editor-Fenster "TDU2/Flash Debugger")
-        /// <summary>Alle Variablen als "/pfad:name" -> Anzeigewert (Zahl/Bool/Text, sonst Typ).</summary>
+        /// <summary>All variables are in the format “/path:name” -> display value (number/boolean/text, otherwise type).</summary>
         public List<KeyValuePair<string, string>> DebugVariables()
         {
             var res = new List<KeyValuePair<string, string>>(_vars.Count + 64);
@@ -1382,7 +1363,7 @@ namespace Paradise.Core.Flash
             return res;
         }
 
-        /// <summary>Alle definierten Funktionen als "/pfad:name (parameter)".</summary>
+        /// <summary>All defined functions as “/path:name (parameter)”.</summary>
         public List<KeyValuePair<string, string>> DebugFunctions()
         {
             var res = new List<KeyValuePair<string, string>>();
@@ -1448,8 +1429,8 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Funktionen ("/pfad:name"), deren Code den Variablennamen benutzt – die muss man nach einer Änderung aufrufen,
-        /// damit Symbole/Frames/Anzeigen neu gesetzt werden (Textfelder mit dieser Variable aktualisieren sich von selbst).</summary>
+        /// <summary>Functions (“/path:name”) whose code uses the variable name—you must call these after making a change,
+        /// so that symbols, frames, and displays are reset (text fields containing this variable update automatically).</summary>
         public List<string> DebugFunctionsUsing(string variable)
         {
             var res = new List<string>();
@@ -1462,7 +1443,7 @@ namespace Paradise.Core.Flash
             return res;
         }
 
-        /// <summary>Variable direkt setzen ("/pfad:name"); Zahlen und true/false werden typisiert gespeichert.</summary>
+        /// <summary>Set a variable directly (“/path:name”); Numbers and true/false values are stored with their specific types.</summary>
         public void DebugSetVariable(string key, string value)
         {
             if (string.IsNullOrEmpty(key)) return;
@@ -1474,7 +1455,7 @@ namespace Paradise.Core.Flash
             else _objVars.Remove(key);
         }
 
-        /// <summary>Funktion "/pfad:name" mit Argumenten (Zahlen, true/false, sonst Text) aufrufen.</summary>
+        /// <summary>Call the “/path:name” function with arguments (numbers, true/false, or text).</summary>
         public bool DebugCall(string key, string args)
         {
             int c = key.LastIndexOf(':');
@@ -1492,7 +1473,7 @@ namespace Paradise.Core.Flash
             return CallClip(path.Length == 0 ? "/" : path, fn, list.ToArray());
         }
 
-        /// <summary>Angezeigter Text eines Textfelds (Variable oder Starttext).</summary>
+        /// <summary>Text displayed in a text field (variable or default text).</summary>
         public string DebugText(DisplayObject d)
         {
             if (d == null || !Movie.Chars.TryGetValue(d.CharId, out var ch) || !(ch is VmfMovie.EditText t)) return null;
@@ -1501,7 +1482,7 @@ namespace Paradise.Core.Flash
             return s ?? t.Text;
         }
 
-        /// <summary>Pfade aller sichtbaren Clips, die eine Funktion dieses Namens definieren (z.B. "DialogBox").</summary>
+        /// <summary>Paths to all visible clips that define a function with this name (e.g., “DialogBox”).</summary>
         public List<string> FunctionOwners(string function)
         {
             var res = new List<string>();
@@ -1517,8 +1498,8 @@ namespace Paradise.Core.Flash
         }
 
         /// <summary>
-        /// Skript-Wert über einen Punkt-Pfad ab einem Clip lesen, auch in Arrays/Objekten ("/main_page", "setSquare.3.0").
-        /// null = nicht vorhanden (undefined).
+        /// Read a script value from a clip using a point path, including in arrays/objects (“/main_page”, “setSquare.3.0”).
+        /// null = not present (undefined).
         /// </summary>
         public string GetScriptValue(string clipPath, string memberPath)
         {
@@ -1526,7 +1507,7 @@ namespace Paradise.Core.Flash
             return o == null || o is Undef ? null : ToStr(o);
         }
 
-        /// <summary>Skript-Wert über einen Punkt-Pfad setzen ("/main_page", "setSquare.3.0", "survey"); false = Pfad nicht gefunden.</summary>
+        /// <summary>Set a script value using a dot notation (“/main_page”, “setSquare.3.0”, “survey”); false = Path not found.</summary>
         public bool SetScriptValue(string clipPath, string memberPath, object value)
         {
             if (string.IsNullOrEmpty(memberPath)) return false;
@@ -1561,7 +1542,7 @@ namespace Paradise.Core.Flash
             return o;
         }
 
-        /// <summary>Funktion eines bestimmten Clips aufrufen ("/pause_menu/menu_sq", "Clic", 2).</summary>
+        /// <summary>Call a function for a specific clip (“/pause_menu/menu_sq”, “Clic”, 2).</summary>
         public bool CallClip(string path, string function, params object[] args)
         {
             var inst = string.IsNullOrEmpty(path) || path == "/" ? Root : ResolveClip(Root, path);
@@ -1570,11 +1551,14 @@ namespace Paradise.Core.Flash
             var a = new object[args?.Length ?? 0];
             for (int i = 0; i < a.Length; i++) a[i] = args[i] is int iv ? (object)(double)iv : args[i] is float fv ? (object)(double)fv : args[i];
             try { InvokeTop(fn, inst, a); }
-            catch (Exception ex) { DebugManager.Error("Flash-Call " + function + ": " + ex.Message); }
+            catch (Exception ex) 
+            { 
+                Log.Error("Flash-Call " + function + ": " + ex.Message); 
+            }
             return true;
         }
 
-        /// <summary>Wert (Zahl/Bool/Text) für Vergleiche im Skript typisiert setzen ("/:IsInOptions", true).</summary>
+        /// <summary>Set the type of a value (number/boolean/string) for comparisons in the script (“/:IsInOptions”, true).</summary>
         public void SetValue(string name, object value)
         {
             if (AutoPin) _pinVars[name] = new PinVar { Value = value, Typed = true };
@@ -1582,7 +1566,7 @@ namespace Paradise.Core.Flash
             SetVar(Root, null, name.StartsWith("/:") ? name.Substring(1) : name, value);
         }
 
-        /// <summary>Diagnose: Anzeigebaum (Name, Charakter, Frame/Label, Sichtbarkeit, Alpha) als Text.</summary>
+        /// <summary>Diagnosis: Display tree (Name, Character, Frame/Label, Visibility, Alpha) as text.</summary>
         public string DumpTree(int maxDepth = 6)
         {
             var sb = new StringBuilder();
@@ -1610,7 +1594,7 @@ namespace Paradise.Core.Flash
                 sb.Append("root f=").Append(Root.Frame).Append(Root.Playing ? " play" : "").Append('\n');
                 Walk(Root, "", 0);
             }
-            sb.Append("--- Funktionen:\n");
+            sb.Append("--- Functions:\n");
             foreach (var kv in _objVars) if (kv.Value is AsFunction) sb.Append(kv.Key).Append('\n');
             return sb.ToString();
         }

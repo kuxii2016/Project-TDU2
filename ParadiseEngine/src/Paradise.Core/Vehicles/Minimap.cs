@@ -29,8 +29,85 @@ namespace Paradise.Core.Vehicles
         public Color32 RoadDirt = new Color32(181, 120, 2, 255);
         public bool OnlineStatus = false;
         public int PlayerCount = 1;
+        bool? _appliedOnline; int _appliedPlayers = -1; string? _lastOnlineVar, _lastPlayersVar;
+
+        /// <summary>
+        /// Online-Blip und Spielerzahl wie das Spiel setzen (Unity TDU2Minimap.UpdateOnlineDisplay, jedes Bild):
+        ///   /HUD/minimap/ic_status -> "connected"/"disconnected", /:nb_FRplayers = Spielerzahl, /HUD/minimap/nb_players/in_out -> "in".
+        /// Vorher nur beim Laden von hud.bnk gesetzt – dort war man noch nicht angemeldet, das HUD blieb offline.
+        /// Änderbar über OnlineStatus/PlayerCount oder im Flash Debugger über /:IsOnline und /:NbPlayers.
+        /// </summary>
+        void UpdateOnlineDisplay()
+        {
+            if (_hud == null) return;
+            string? ov = _hud.GetVariable("/:IsOnline"), pv = _hud.GetVariable("/:NbPlayers");
+            if (_lastOnlineVar != null && ov != _lastOnlineVar) OnlineStatus = ov == "1" || string.Equals(ov, "true", StringComparison.OrdinalIgnoreCase);
+            _lastOnlineVar = ov;
+            if (_lastPlayersVar != null && pv != _lastPlayersVar && int.TryParse(pv, out int n)) PlayerCount = n;
+            _lastPlayersVar = pv;
+            if (_appliedOnline != OnlineStatus)
+            {
+                _appliedOnline = OnlineStatus;
+                _hud.GotoLabel("/HUD/minimap/ic_status", OnlineStatus ? "connected" : "disconnected", true);
+                _hud.SetVariable("/:IsOnline", OnlineStatus ? "1" : "0"); _lastOnlineVar = _hud.GetVariable("/:IsOnline");
+                _hud.SetVariable("/:nb_FRplayers", PlayerCount.ToString());
+                _hud.GotoLabel("/HUD/minimap/nb_players/in_out", OnlineStatus ? "in" : "out", true);
+            }
+            if (_appliedPlayers != PlayerCount)
+            {
+                bool first = _appliedPlayers < 0;
+                _appliedPlayers = PlayerCount;
+                _hud.SetVariable("/:nb_FRplayers", PlayerCount.ToString());
+                _hud.SetVariable("/:nb_players", PlayerCount.ToString());
+                _hud.SetVariable("/:NbPlayers", PlayerCount.ToString()); _lastPlayersVar = _hud.GetVariable("/:NbPlayers");
+                if (OnlineStatus || !first) _hud.GotoLabel("/HUD/minimap/nb_players/in_out", "in", true);
+            }
+        }
         /// <summary>Aktualisierungen der Kartentextur je Sekunde (Unity: jedes Bild per Kamera).</summary>
         public float RefreshRate = 20f;
+
+        // ------------------------------------------------------------------ Punkte: Mitspieler / Gegner (Unity TDU2Minimap CollectDots/DrawDots)
+        /// <summary>Mitspieler als Punkte auf der Minimap zeigen.</summary>
+        public bool ShowPlayerDots = true;
+        /// <summary>Punktradius relativ zum Sichtradius (Unity DotSize), Rand-Faktor und -Farbe (schwarz, 75 %).</summary>
+        public float DotSize = 0.045f;
+        public float DotOutline = 1.4f;
+        public Color32 DotOutlineColor = new Color32(0, 0, 0, 191);
+        /// <summary>
+        /// Mitspieler (eigene Lobby, gleiche Insel, im Auto) in Spielkoordinaten mit Farbe je Beziehung – füllt Game/Online
+        /// (TDU2GameData, Farben Friends.ColorOf: weiß / Freund grün / Club orange). Gegner im Rennen: RaceBlips (Racing).
+        /// </summary>
+        public static readonly List<(V3 pos, Color32 col)> PlayerDots = new();
+        public static int RaceCount;
+        public static readonly List<V3> RaceBlips = new();
+        /// <summary>Gegner im Rennen (KI) – wie normale Spieler weiß (Unity PlayerColors.Opponent).</summary>
+        public static Color32 OpponentColor = new Color32(255, 255, 255, 255);
+        readonly List<(V3 w, Color32 c)> _dots = new();
+
+        void CollectDots()
+        {
+            _dots.Clear();
+            if (RaceCount > 0) foreach (var w in RaceBlips) _dots.Add((w, OpponentColor));
+            if (ShowPlayerDots) foreach (var d in PlayerDots) _dots.Add((d.pos, d.col));
+        }
+
+        /// <summary>Punkte über die Straßen: Rand (schwarz) und Füllung; außerhalb des Kartenausschnitts nicht zeigen; nahe zuletzt (oben).</summary>
+        void DrawDots(V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, int px)
+        {
+            CollectDots();
+            if (_dots.Count == 0) return;
+            float r = MathF.Max(0.5f, _range * DotSize);
+            float lim = _range * 0.9f - r;
+            _dots.Sort((a, b) => V3.DistanceSquared(b.w with { Y = 0 }, car with { Y = 0 }).CompareTo(V3.DistanceSquared(a.w with { Y = 0 }, car with { Y = 0 })));
+            foreach (var (w, c) in _dots)
+            {
+                float rx = w.X - car.X, rz = w.Z - car.Z;
+                if (MathF.Sqrt(rx * rx + rz * rz) > lim) continue;
+                float x = cxp + (rx * right.X + rz * right.Z) * scale, y = cyp + (rx * fwd.X + rz * fwd.Z) * scale;
+                DrawLine(x, y, x, y, r * DotOutline * scale, DotOutlineColor, px);
+                DrawLine(x, y, x, y, r * scale, c, px);
+            }
+        }
         public string? Error { get; private set; }
 
         // mmap_lure: Shape 0..108.75 x 0..98 skaliert 1.67/1.84 -> Kartenfeld 181.6 x 180.3 (Bühnenpixel) im Clip minimap
@@ -141,6 +218,7 @@ namespace Paradise.Core.Vehicles
                 _hud.SetVariable("/:NbPlayers", PlayerCount.ToString());
                 _hud.SetVariable("/:nb_FRplayers", PlayerCount.ToString());
                 _hud.SetVariable("/:nb_players", PlayerCount.ToString());
+                _appliedOnline = OnlineStatus; _appliedPlayers = PlayerCount; _lastOnlineVar = _lastPlayersVar = null;   // UpdateOnlineDisplay ab hier
                 //_hud.Visible = false;
                 Log.Info("Flash: hud.bnk (Minimap) geladen");
             }
@@ -514,6 +592,7 @@ namespace Paradise.Core.Vehicles
                 _hud.SetVisible("/HUD/minimap", !overlay);
                 _hud.SetVisible("/HUD/enter", !overlay);
             }
+            UpdateOnlineDisplay();   // Unity: jedes Bild (Online-Status ändert sich erst nach dem Anmelden)
             if (!show || _lines.Length == 0) return;
 
             int px = 192;
@@ -574,6 +653,8 @@ namespace Paradise.Core.Vehicles
                     DrawLine(cxp + ax * scale, cyp + ay * scale, cxp + bx * scale, cyp + by * scale, half, pc, px);
                 }
             }
+            DrawRaceRoute(car, fwd, right, scale, cxp, cyp, px);
+            DrawDots(car, fwd, right, scale, cxp, cyp, px);
             // Pixel -> RGBA; erste Textur anlegen, danach nur den Inhalt ersetzen (ohne GPU-Warten)
             _bytes ??= new byte[px * px * 4];
             if (_bytes.Length != px * px * 4) _bytes = new byte[px * px * 4];
@@ -589,6 +670,50 @@ namespace Paradise.Core.Vehicles
             }
             if (_tex!.Gpu == null) { _tex.SetPixels32(_px); _tex.Apply(); }
             else FlashHost.Renderer?.UpdateTexture(_tex.Gpu, _bytes);
+        }
+
+        // ------------------------------------------------------------------ Rennstrecke auf der Minimap (Unity TDU2Minimap.SetRaceRoute, RaceRoute)
+        Paradise.Core.Racing.RaceDefinition? _route;
+        int _routeNext = -1, _routeBuiltNext = -2;
+        V3[]? _routeVerts; Color32[]? _routeCols; int[]? _routeTris;
+
+        /// <summary>Rennstrecke anzeigen (Checkpoints der Prüfung); null = ausblenden.</summary>
+        public void SetRaceRoute(Paradise.Core.Racing.RaceDefinition? race)
+        {
+            _route = race;
+            _routeNext = race != null ? 1 : -1;
+            _routeBuiltNext = -2;   // Neubau erzwingen
+            _refreshT = 0f;
+        }
+
+        /// <summary>Fortschritt setzen (Index des nächsten Tors); färbt den befahrenen Teil um.</summary>
+        public void SetRaceProgress(int nextIndex)
+        {
+            if (_routeNext == nextIndex) return;
+            _routeNext = nextIndex;
+            _refreshT = 0f;
+        }
+
+        /// <summary>Unity EnsureRouteMesh + DrawRouteMesh: Band aus <see cref="Paradise.Core.Racing.RaceRoute"/> in die Kartentextur (über GPS, unter den Punkten).</summary>
+        void DrawRaceRoute(V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, int px)
+        {
+            if (_route == null || _route.Checkpoints.Count < 2) { _routeVerts = null; return; }
+            if (_routeVerts == null || _routeBuiltNext != _routeNext)
+            {
+                Paradise.Core.Racing.RaceRoute.Build(_route.Checkpoints, _routeNext, out _routeVerts, out _routeCols, out _routeTris);
+                _routeBuiltNext = _routeNext;
+            }
+            var v = _routeVerts; var c = _routeCols; var t = _routeTris;
+            if (v == null || c == null || t == null || t.Length < 3) return;
+            float SX(V3 p) => cxp + ((p.X - car.X) * right.X + (p.Z - car.Z) * right.Z) * scale;
+            float SY(V3 p) => cyp + ((p.X - car.X) * fwd.X + (p.Z - car.Z) * fwd.Z) * scale;
+            float reach = _range * 1.45f + 8f;
+            for (int i = 0; i + 2 < t.Length; i += 3)
+            {
+                V3 a = v[t[i]], b = v[t[i + 1]], d = v[t[i + 2]];
+                if (MathF.Abs(a.X - car.X) > reach + 50f && MathF.Abs(a.Z - car.Z) > reach + 50f) continue;
+                FillTri(SX(a), SY(a), SX(b), SY(b), SX(d), SY(d), c[t[i]], false, px);
+            }
         }
 
         readonly List<float> _xs = new List<float>();
@@ -1038,6 +1163,14 @@ namespace Paradise.Core.Vehicles
         public static readonly Dictionary<string, string> ExtraSpotNames = new Dictionary<string, string>();
         /// <summary>Bild für den Karten-Tooltip zusätzlicher Spots: Pfad unter frontend/AllRes/MapScreens ohne .bnk (z.B. "contest/cl-4-1").</summary>
         public static readonly Dictionary<string, string> ExtraSpotPictures = new Dictionary<string, string>();
+        /// <summary>Nummer im Spot-Symbol zusätzlicher Spots (map.vmf/hud.vmf :num_contest, z.B. Klasse "4" der Meisterschaft C4).</summary>
+        public static readonly Dictionary<string, string> ExtraSpotNumbers = new Dictionary<string, string>();
+        /// <summary>
+        /// Einfahrt eines zusätzlichen Spots (Meisterschaft: Treffpunkt/Startpunkt): <see cref="ShowEnter"/>(null) zeigt dann diesen
+        /// Spot statt auszublenden (Interieur-Einfahrten haben Vorrang). Gesperrt mit <see cref="ExtraEnterLockedText"/> (null = offen).
+        /// </summary>
+        public static string? ExtraEnterCode;
+        public static string? ExtraEnterLockedText;
 
         /// <summary>Spot-Typ (Code aus spots.bin) -> Label des Spot-Icons (Sprite "Spot" in hud.vmf, wie auf der großen Karte).</summary>
         public static string? SpotLabel(string? code)
@@ -1074,6 +1207,7 @@ namespace Paradise.Core.Vehicles
         public void ShowEnter(string? spotCode, string? lockedText = null)
         {
             if (_hud == null) return;
+            if (spotCode == null && ExtraEnterCode != null) { spotCode = ExtraEnterCode; lockedText = ExtraEnterLockedText; }
             if (spotCode == null)
             {
                 if (_enterShown) { _hud.GotoLabel("/HUD/enter", "out", true); _enterShown = false; _enterLabel = null; }
@@ -1099,6 +1233,7 @@ namespace Paradise.Core.Vehicles
                 _hud.GotoLabel("/HUD/enter", "on", true);
                 _hud.GotoLabel("/HUD/enter/enter_txt", locked ? "locked" : "ok", false);
                 _hud.GotoLabel("/HUD/enter/Spot", label, false);
+                if (ExtraSpotNumbers.TryGetValue(spotCode, out var num)) _hud.SetVariable("/HUD/enter:num_contest", num);
                 if (label == "carDealer" || label == "bikeDealer") ApplyDealerLogo("/HUD/enter/Spot", spotCode);
                 _enterShown = true; _enterLabel = label; _enterLocked = locked;
             }

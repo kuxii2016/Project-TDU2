@@ -3,9 +3,9 @@ using System.Numerics;
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// Partikelsystem ".prt" (Eden edParticles, Version 0x1b). Aufbau aus der exe (re/prt_spec.md): Chunk ".PRT" bei 0x0c/0x10,
-/// Nutzdaten ab 0x20; alle Offsets darin zählen ab Dateianfang. Gelesen werden die Blöcke, die der Laufzeitcode nutzt:
-/// System A (Schwerkraft, Zufallsbeschleunigung), Emitter B, Gruppen (Kurven, Flags), Renderblock C (Atlas, Größe).
+/// Particle system “.prt” (Eden edParticles, version 0x1b). Structure from the exe (re/prt_spec.md): “.PRT” chunk at 0x0c/0x10,
+/// Payload starting at 0x20; all offsets within it are counted from the beginning of the file. The blocks read are those used by the runtime code:
+/// System A (gravity, random acceleration), Emitter B, Groups (curves, flags), Render Block C (atlas, size).
 /// </summary>
 public sealed class PrtFile
 {
@@ -20,9 +20,9 @@ public sealed class PrtFile
     // ---- Emitter B
     public Matrix4x4 EmitterMatrix = Matrix4x4.Identity;   // B+0x00 (Form im Emitterraum)
     /// <summary>
-    /// B+0x40: Lage des Emitters im Effekt (aus B+0xc0 Versatz, B+0xe0 Skalierung, B+0xf0 Euler-Winkel). Skalierung = Größe der
-    /// Emitterform (Auspuff 0,1 m, Reifenring 0,5 m), Drehung = Ausstoßrichtung (Auspuff: oben → hinten). Wird auf Form, Startgeschwindigkeit
-    /// und Kräfte angewandt (CHECKLIST: Anwendungsstelle in der exe nicht gefunden, Werte in allen 132 .prt stimmig).
+    /// B+0x40: Position of the emitter within the effect (from B+0xc0 offset, B+0xe0 scale, B+0xf0 Euler angles). Scale = size of the
+    /// emitter shape (exhaust 0.1 m, tire ring 0.5 m); rotation = ejection direction (exhaust: top → rear). Applied to shape, initial velocity,
+    /// and forces (CHECKLIST: Application point not found in the exe; values consistent in all 132 .prt files).
     /// </summary>
     public Matrix4x4 LocalMatrix = Matrix4x4.Identity;
     public Vector3 Direction;                              // B+0xd0 (Richtungsmodus 2)

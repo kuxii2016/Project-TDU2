@@ -6,10 +6,10 @@ using System.Text;
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// Cinematic-Szene (.sce, "SCE!", Port von Unity Interiors/CineScene): Objekte (Kameras, Darsteller) mit dem ersten Schlüssel ihrer
-/// Kanäle Position / Heading / Fov / Animation. Koordinaten im Rahmen der Interieur-Szene (Spielraum, wie die Entitäten); Heading wie
-/// die Clips konjugiert (lokales +Z = Blick- bzw. Laufrichtung). Animation = Name des .anm-Clips aus den REFS (Art 2).
-/// Verwendet für Kleidungsladen, Friseur, Garderobe (Avatar-Platz, Kamera je Kategorie, Verkäufer-Pose) und die Ladenfiguren.
+/// Cinematic scene (.sce, “SCE!”, ported from Unity Interiors/CineScene): Objects (cameras, characters) with the first key of their
+/// channels: Position / Heading / Fov / Animation. Coordinates within the interior scene (play area, like the entities); Heading as
+/// the clips are conjugated (local +Z = direction of gaze or movement). Animation = name of the .anm clip from the REFS (Type 2).
+/// Used for clothing stores, hair salons, coat check areas (avatar space, camera per category, salesperson pose), and store mannequins.
 /// </summary>
 public sealed class CineScene
 {
@@ -123,7 +123,7 @@ public sealed class CineScene
         return sc;
     }
 
-    /// <summary>Alle .sce einer Bank (Name ohne Endung -> Szene).</summary>
+    /// <summary>All .sce files for a bank (name without extension -> scene).</summary>
     public static Dictionary<string, CineScene> LoadAll(BnkArchive? bank)
     {
         var res = new Dictionary<string, CineScene>(StringComparer.OrdinalIgnoreCase);
@@ -136,7 +136,7 @@ public sealed class CineScene
         return res;
     }
 
-    /// <summary>.anm-Clip aus einer Bank (Interieur: clot_*, dr_*, Figuren-Posen); null = fehlt.</summary>
+    /// <summary>. Clip from a bank (interior: clot_*, dr_*, character poses); null = missing.</summary>
     public static AnmClip? LoadClip(BnkArchive? bank, string? name)
     {
         if (bank == null || string.IsNullOrEmpty(name)) return null;

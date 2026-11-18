@@ -285,6 +285,14 @@ namespace Paradise.Core.Savegame
                 if (s.radioVolume >= 0) SetVar(env, "U3D_Radio", s.radioStationName ?? "");   // Sendername (auch "aus" = Hashcode 0)
                 SetVar(env, "U3D_Options", s.options ?? "");
                 SetVar(env, "U3D_Keys", s.keys ?? "");
+                // Geschichte (Schritt selbst: Driver.BeginGameState + U3D_Story), TDU Media, Rennen, Spielerlisten
+                SetVar(env, "U3D_StoryAvatar", s.storyAvatar ?? "");
+                SetVar(env, "U3D_StoryGave", s.storyGaveCar ? "1" : "0");
+                SetVar(env, "U3D_NewsSeen", s.newsSeen.ToString(ic) + "," + s.updatesSeen.ToString(ic));
+                SetVar(env, "U3D_RaceCin", Join(s.raceCinSeen, x => new[] { x }));
+                SetVar(env, "U3D_Racing", Join(s.racing, e => new[] { e.k, e.v }));
+                SetVar(env, "U3D_Recent", Join(s.recentPlayers, e => new[] { e.nick, e.lastSeen, e.carId.ToString(ic), e.color.ToString(ic), e.nbCars.ToString(ic), e.money.ToString(ic), e.nationality.ToString(ic) }));
+                SetVar(env, "U3D_FriendNews", Join(s.friendNews, e => new[] { e.kind.ToString(ic), e.nick, e.date, e.read ? "1" : "0" }));
                 SetVar(env, "U3D_Saved", DateTime.UtcNow.ToString("o", ic));
             }
 
@@ -482,6 +490,24 @@ namespace Paradise.Core.Savegame
             if (vars.TryGetValue("U3D_Radio", out string vr)) s.radioStationName = vr;
             if (vars.TryGetValue("U3D_Options", out string vo)) s.options = vo;
             if (vars.TryGetValue("U3D_Keys", out string vk)) s.keys = vk;
+            if (vars.TryGetValue("U3D_StoryAvatar", out string vsa)) s.storyAvatar = vsa;
+            if (vars.TryGetValue("U3D_StoryGave", out string vsg)) s.storyGaveCar = vsg == "1";
+            if (vars.TryGetValue("U3D_NewsSeen", out string vns))
+            {
+                var p = vns.Split(',');
+                if (p.Length > 0 && int.TryParse(p[0], NumberStyles.Integer, ic, out int ns)) s.newsSeen = ns;
+                if (p.Length > 1 && int.TryParse(p[1], NumberStyles.Integer, ic, out int us)) s.updatesSeen = us;
+            }
+            if (vars.TryGetValue("U3D_RaceCin", out string vrc)) foreach (var f in Split(vrc)) if (f.Length > 0 && f[0].Length > 0) s.raceCinSeen.Add(f[0]);
+            if (vars.TryGetValue("U3D_Racing", out string vrr)) foreach (var f in Split(vrr)) if (f.Length > 1) s.racing.Add(new HouseEntry { k = f[0], v = f[1] });
+            if (vars.TryGetValue("U3D_Recent", out string vre))
+                foreach (var f in Split(vre))
+                    if (f.Length > 6)
+                        s.recentPlayers.Add(new RecentEntry { nick = f[0], lastSeen = f[1], carId = Int(f[2]), color = Int(f[3]), nbCars = Int(f[4]),
+                                                              money = long.TryParse(f[5], NumberStyles.Integer, ic, out long mo) ? mo : 0, nationality = Int(f[6]) });
+            if (vars.TryGetValue("U3D_FriendNews", out string vfn))
+                foreach (var f in Split(vfn))
+                    if (f.Length > 3) s.friendNews.Add(new FriendNewsEntry { kind = Int(f[0]), nick = f[1], date = f[2], read = f[3] == "1" });
 
             // Avatar
             string av = ReadAvatar(root, out string avInfo);
@@ -647,6 +673,35 @@ namespace Paradise.Core.Savegame
                 default: p.Value = value; break;
             }
         }
+
+        // Listen in einer Umgebungsvariablen: Einträge mit ';', Felder mit ',' getrennt, jedes Feld URL-kodiert (kein JSON)
+        static string Join<T>(List<T> list, Func<T, string[]> fields)
+        {
+            if (list == null || list.Count == 0) return "";
+            var sb = new System.Text.StringBuilder();
+            foreach (var e in list)
+            {
+                if (e == null) continue;
+                if (sb.Length > 0) sb.Append(';');
+                var f = fields(e);
+                for (int i = 0; i < f.Length; i++) { if (i > 0) sb.Append(','); sb.Append(Uri.EscapeDataString(f[i] ?? "")); }
+            }
+            return sb.ToString();
+        }
+
+        static IEnumerable<string[]> Split(string v)
+        {
+            if (string.IsNullOrEmpty(v)) yield break;
+            foreach (var rec in v.Split(';'))
+            {
+                if (rec.Length == 0) continue;
+                var f = rec.Split(',');
+                for (int i = 0; i < f.Length; i++) f[i] = Uri.UnescapeDataString(f[i]);
+                yield return f;
+            }
+        }
+
+        static int Int(string v) => int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : 0;
 
         static void SetVar(XArray vars, string name, string value)
         {

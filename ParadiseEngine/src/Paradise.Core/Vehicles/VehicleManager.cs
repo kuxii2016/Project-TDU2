@@ -18,6 +18,19 @@ namespace Paradise.Core.Vehicles
         /// <summary>Startauto (Dateiname aus der Datenbank, z.B. delta_integrale_evo_2).</summary>
         public string StartCar = "delta_integrale_evo_2";
         public bool LoadSound = true;
+        /// <summary>Motor beim Hinsetzen/Spawnen aus (nicht beim Wechsel in voller Fahrt); er springt an, sobald der Spieler Gas,
+        /// Bremse oder Lenkung betätigt (Game/Config/VehicleConfig.EngineOffAtSpawn).</summary>
+        public bool EngineOffAtSpawn = true;
+        /// <summary>Motor läuft (sonst kein Motorgeräusch, kein Gas).</summary>
+        public bool EngineRunning { get; private set; } = true;
+
+        /// <summary>Motor anlassen (EngineStart-Geräusch).</summary>
+        public void StartEngine()
+        {
+            if (EngineRunning) return;
+            EngineRunning = true;
+            if (_audio != null) { _audio.EngineOn = true; _audio.Play("EngineStart"); }
+        }
         public float GripScale = 0.62f;
         public DrivingAids Aids = DrivingAids.Sport;
         public bool AutomaticGearbox = true;
@@ -158,8 +171,6 @@ namespace Paradise.Core.Vehicles
             if (Ready && _carIndex < 0)
             {
                 _carIndex = Mathf.Max(0, Available.FindIndex(c => string.Equals(c.FileName, StartCar, StringComparison.OrdinalIgnoreCase)));
-                _status = $"{Available.Count} Fahrzeuge gefunden (Physik: {Physics?.Source})";
-                Log.Info("Fahrzeuge: " + _status);
             }
             PollLoad();
             TrySettle();
@@ -190,7 +201,6 @@ namespace Paradise.Core.Vehicles
             v.ResetVehicle(ToUnity(game) + Vec.Up * 1.5f, _settleRot);
             _rb.isKinematic = true;
             SnapPose();
-            Log.Info($"Teleport nach Spiel {game}");
             TrySettle();
         }
 
@@ -212,7 +222,6 @@ namespace Paradise.Core.Vehicles
             v.ResetVehicle(new Vector3(sp.X, y + 0.45f, sp.Z), _settleRot);
             SnapPose();
             _settleUntil = -1;
-            Log.Info($"Teleport abgeschlossen (Boden {(ok ? "gefunden" : "nicht gefunden, Zielhöhe")})");
         }
 
         // ------------------------------------------------------------------ Physik / Darstellung
@@ -229,12 +238,14 @@ namespace Paradise.Core.Vehicles
             if (Current != null && _rb != null)
                 Paradise.Core.World.WorldActorBodies.Current?.CheckHits(ToGame(_rb.worldCenterOfMass), U.Mirror(_rb.linearVelocity), 1.6f);
             long ts = System.Diagnostics.Stopwatch.GetTimestamp();
+            var velBefore = Current != null && _rb != null ? _rb.linearVelocity : Vector3.Zero;
+            long stepMs = Environment.TickCount64;
             _world.Step(dt);
-            PerfLog.Add("Physik-Schritt", System.Diagnostics.Stopwatch.GetElapsedTime(ts).TotalMilliseconds);
+            if (Current != null) CheckBodyImpact(velBefore, stepMs);
             HopDiag(dt);
             RollDiag();
             // Floating Origin (Unity: FloatingOrigin.Shift): Auto mehr als 500 m vom Ursprung -> Welt verschieben
-            if (Current != null && _rb != null && _rb.position.LengthSquared() > 500f * 500f) { ShiftTo(_rb.position); _diagLastShift = _diagTime; PerfLog.Add("Ursprung verschieben (Physik)", _world.LastShiftMs); }
+            if (Current != null && _rb != null && _rb.position.LengthSquared() > 500f * 500f) { ShiftTo(_rb.position); _diagLastShift = _diagTime; }
             if (Current != null && _rb != null)
             {
                 _prevPos = _curPos; _prevRot = _curRot;
@@ -268,20 +279,13 @@ namespace Paradise.Core.Vehicles
             if (_rollTipped || now < _rollNextLog) return;
             _rollTipped = true; _rollNextLog = now + 3000;
             var v = _rb.linearVelocity;
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"[DIAG Roll] Neigung {MathF.Acos(System.Math.Clamp(up.Y, -1f, 1f)) * 180f / MathF.PI:0}°, {v.Length() * 3.6f:0} km/h, Drehrate {_rb.angularVelocity.Length():0.00} rad/s");
-            foreach (var w in Current.Wheels)
-                sb.Append($" | {w.Name}: {(w.Grounded ? (w.GroundCollider != null ? w.GroundCollider.Name : "Ersatzhöhe") : "frei")}, Einfederung {w.Compression:0.000}, Normale ({w.ContactNormal.X:0.00};{w.ContactNormal.Y:0.00};{w.ContactNormal.Z:0.00}), Fz {w.Fz:0}");
             int n = 0;
             foreach (var c in q)
             {
                 if (n++ >= 12) break;
                 var sc = _world.StaticOf(c.other);
                 // Versatz/Normale im Spielraum (Bepu); Höhe des Kontakts relativ zum Schwerpunkt
-                sb.Append($" | Kontakt vor {now - c.ms} ms: {(sc != null ? sc.Name : c.other.Mobility.ToString())}, Normale ({c.normal.X:0.00};{c.normal.Y:0.00};{c.normal.Z:0.00}), Höhe {c.offset.Y:+0.00;-0.00} m, Tiefe {c.depth:0.000}");
             }
-            if (n == 0) sb.Append(" | keine Karosserie-Kontakte");
-            Log.Info(sb.ToString());
         }
 
         /// <summary>Plötzlicher Sprung der Vertikalgeschwindigkeit (&gt; 1,5 m/s in einem Physikschritt) ab 60 km/h: Umstände loggen.</summary>
@@ -295,15 +299,8 @@ namespace Paradise.Core.Vehicles
             float kmh = v.Length() * 3.6f;
             if (kmh < 60f || System.Math.Abs(dvy) < 1.5f || _diagTime < _diagNextHop) return;
             _diagNextHop = _diagTime + 0.5;
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"[DIAG Hop] {kmh:0} km/h, Δvy {dvy:+0.00;-0.00} m/s, letzte Ursprungsverschiebung vor {(_diagTime - _diagLastShift) * 1000:0} ms ({_world.LastShiftMs:0.0} ms)");
-            foreach (var w in Current.Wheels)
-            {
-                string src = !w.Grounded ? "frei" : w.GroundCollider != null ? w.GroundCollider.Name : "Ersatzhöhe (kein Kollider)";
-                sb.Append($" | {w.Name}: {src}, Einfederung {w.Compression:0.000}, Normale y {w.ContactNormal.Y:0.00}");
-            }
-            try { var ctx = DiagContext?.Invoke(); if (!string.IsNullOrEmpty(ctx)) sb.Append(" | ").Append(ctx); } catch (Exception) { }
-            Log.Info(sb.ToString());
+
+            try { var ctx = DiagContext?.Invoke(); } catch (Exception) { }
         }
 
         /// <summary>Unity LateUpdate: Räder/Lenkrad, Kamera.</summary>
@@ -414,7 +411,6 @@ namespace Paradise.Core.Vehicles
                 // Reifenspur einen Streifen über die ganze Verschiebung (Spuren an falscher Stelle nach dem Floating-Origin-Wechsel)
                 foreach (var w in Current.Wheels) w.ContactPoint -= dU;
             }
-            Log.Info($"[DIAG Skid] Floating Origin: Physik-Ursprung um {dU} verschoben (Spiel {_world.Origin}), {_world.LastShiftMs:0.0} ms");
             Camera.Shift(dU);
             _hud?.Shift(dU);
             _fx?.Shift(dU);
@@ -657,8 +653,11 @@ namespace Paradise.Core.Vehicles
             {
                 _audio = new VehicleAudio { Vehicle = veh, MasterVolume = Volume, SquealFactor = SquealVolume, GearShiftFactor = GearShiftVolume };
                 _audio.Setup(a);
-                if (_pendingVel.LengthSquared() < 1f) _audio.Play("EngineStart");
+                if (_pendingVel.LengthSquared() < 1f && !EngineOffAtSpawn) _audio.Play("EngineStart");
             }
+            // Motor aus bis zur ersten Fahreingabe (Spawn im Stand); bei Wechsel in Fahrt läuft er weiter
+            EngineRunning = !(EngineOffAtSpawn && _pendingVel.LengthSquared() < 1f);
+            if (_audio != null) _audio.EngineOn = EngineRunning;
 
             // Lichter (Scheinwerfer, Bremse, Rückfahr, Blinker)
             _lights = new VehicleLights { Headlights = _headlights >= 0 ? _headlights : VehicleLights.OriginalControl ? 1 : 0, LensBrightness = LightBrightness };
@@ -699,7 +698,6 @@ namespace Paradise.Core.Vehicles
             Current = veh;
             SnapPose();
             _status = $"{car.ModelName}  ({a.Color?.Name ?? "Standardfarbe"})";
-            Log.Info($"Fahrzeug: {car.Id}: {car.Brand} - {car.ModelName} ({car.FileName}), Masse {rb.mass:0} kg, Räder {veh.Wheels.Length}, Felge {RimId}, Innenraum {InteriorId}");
         }
 
         /// <summary>Maße/Räder ins Log (Abgleich Physik vs. Modell: Luft zwischen Rad und Straße, Lenkrichtung).</summary>
@@ -759,6 +757,13 @@ namespace Paradise.Core.Vehicles
         public void DriveInput(float accel, float brake, float steer, bool handbrake, float dt, bool analog = false, bool wheel = false)
         {
             if (Current == null) return;
+            if (ExternalControl) { AfterInput?.Invoke(Current); return; }   // Unity ExternalControl: Autopilot steuert (RaceAutopilot)
+            if (!EngineRunning)
+            {
+                // erst die Fahreingabe des Spielers lässt den Motor an (Handbremse allein nicht)
+                if (accel > 0.05f || brake > 0.05f || Mathf.Abs(steer) > 0.05f) StartEngine();
+                else accel = 0f;
+            }
             if (wheel) _steerInput = steer;
             else
             {
@@ -769,7 +774,69 @@ namespace Paradise.Core.Vehicles
             Current.BrakePedal = brake;
             Current.Steer = _steerInput;
             Current.HandBrake = handbrake ? 1f : 0f;
+            AfterInput?.Invoke(Current);   // Unity: LateUpdate der Rennlogik nach der Eingabe (Startsperre im Countdown)
         }
+
+        /// <summary>Unity TDU2VehicleManager.ExternalControl: Fahreingaben des Spielers werden ignoriert (Autopilot nach dem Ziel).</summary>
+        public bool ExternalControl;
+        /// <summary>Nach jeder Fahreingabe (Unity: LateUpdate von TDU2RaceManager hält das Auto im Countdown fest).</summary>
+        public Action<Vehicle>? AfterInput;
+        /// <summary>
+        /// Harter Stoß der Karosserie gegen Wand/Verkehr (Unity RaceCarCollisionProbe.OnCollisionEnter: Kontakt mit nennenswert
+        /// waagrechter Normale, |n.y| &lt;= 0,7; Wert = relative Geschwindigkeit in m/s). Umfallende World Actors melden sich über
+        /// WorldActorBodies.Broken.
+        /// </summary>
+        public event Action<float>? BodyImpact;
+        bool _wallContact;
+
+        void CheckBodyImpact(Vector3 velBefore, long stepStartMs)
+        {
+            if (BodyImpact == null || _rb == null) { _wallContact = false; return; }
+            bool wall = false;
+            foreach (var c in PhysicsWorld.RecentContacts)
+            {
+                if (c.ms < stepStartMs) continue;
+                if (MathF.Abs(c.normal.Y) > 0.7f) continue;   // Boden ignorieren
+                if (c.other.Mobility == BepuPhysics.Collidables.CollidableMobility.Static)
+                {
+                    var sc = _world.StaticOf(c.other);
+                    if (sc != null && sc.IgnoreRays) continue;   // World Actors/Props melden selbst (Unity: RacePropHit)
+                }
+                else if (c.other.Mobility == BepuPhysics.Collidables.CollidableMobility.Dynamic && c.other.BodyHandle.Value == _rb.Handle.Value) continue;
+                wall = true; break;
+            }
+            if (wall && !_wallContact) BodyImpact?.Invoke(velBefore.Length());
+            _wallContact = wall;
+        }
+
+        /// <summary>
+        /// Unity TDU2VehicleManager.SpawnCarExact: genau diesen Datensatz laden, auch wenn er nicht in <see cref="Available"/> steht
+        /// (z.B. Rennschul-Sondermodelle, die die Fahrzeugbank des Serienautos teilen). false = es lädt gerade ein anderes Auto.
+        /// </summary>
+        public bool SpawnCarExact(CarPhysics car, Vector3 game, Vector3 forwardGame)
+        {
+            if (!Ready || car == null) return true;
+            if (Available.Contains(car)) { if (_loadTask != null) return false; SpawnCar(car.FileName, game, forwardGame); return true; }
+            if (_loadTask != null || Database == null || _bnkDir == null) return false;
+            if (Current != null || _model != null) Despawn();
+            var before = _world.Origin;
+            _world.ShiftOrigin(game);
+            VehicleEffects.ShiftSkids(U.Mirror(_world.Origin - before));
+            var fwd = U.ProjectOnPlane(U.Mirror(forwardGame), Vec.Up);
+            if (fwd.LengthSquared() < 1e-3f) fwd = Vec.Forward;
+            var pos = ToUnity(game);
+            pos.Y = GroundY(pos) + 0.4f;
+            _pendingPos = pos; _pendingRot = U.LookRotation(Vector3.Normalize(fwd), Vec.Up); _pendingVel = Vector3.Zero;
+            string bnk = _bnkDir; var db = Database; bool snd = LoadSound;
+            if (_colorFromChoice) { _colorIndex = 0; _colorFromChoice = false; }
+            int color = _colorIndex;
+            _status = "Lade " + car.ModelName + " ...";
+            _loadTask = Task.Run(() => CarAssets.Load(bnk, db, car, color, snd, 0, 0));
+            return true;
+        }
+
+        /// <summary>Bodenhöhe (Spielkoordinaten) wie Unity TDU2VehicleManager.GroundHeight: Kollision, sonst Höhenraster.</summary>
+        public float GroundHeightGame(Vector3 game) => GroundY(ToUnity(game)) + _world.Origin.Y;
 
         /// <summary>Auto aufrichten (1,5 m angehoben, gleiche Blickrichtung) und anhalten.</summary>
         public void ResetUpright()

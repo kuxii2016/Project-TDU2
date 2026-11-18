@@ -1,19 +1,19 @@
 namespace Paradise.Core.Config;
 
 /// <summary>
-/// Ordner der gestarteten exe. Bei einer Single-File-exe (PublishSingleFile, z.B. mit IncludeNativeLibrariesForSelfExtract /
-/// IncludeAllContentForSelfExtract) zeigt AppContext.BaseDirectory auf den Entpack-Ordner in %TEMP% – die Spieldaten (Euro,
-/// GamePC.cpr, Physics.cpr …) liegen aber neben der exe. Environment.ProcessPath ist immer der echte Pfad der exe.
+/// Folder of the launched EXE. For a single-file EXE (PublishSingleFile, e.g., with IncludeNativeLibrariesForSelfExtract /
+/// IncludeAllContentForSelfExtract), AppContext.BaseDirectory points to the extraction folder in %TEMP%—but the game data (Euro,
+/// GamePC.cpr, Physics.cpr …) is located next to the EXE. Environment.ProcessPath is always the actual path of the EXE.
 /// </summary>
 public static class AppPaths
 {
-    /// <summary>Ordner der exe (Spieldaten, Korrekturdateien). Rückfall: AppContext.BaseDirectory.</summary>
+    /// <summary>Folder containing the exe (game data, patch files). Fallback: AppContext.BaseDirectory.</summary>
     public static string ExeDir { get; } = Resolve();
 
-    /// <summary>Entpack-Ordner der Single-File-exe bzw. Ausgabeordner (eingebettete Dateien wie Icons).</summary>
+    /// <summary>Extraction folder for the single-file EXE or output folder (embedded files such as icons).</summary>
     public static string BaseDir => AppContext.BaseDirectory;
 
-    /// <summary>Kandidaten zum Suchen von Dateien: zuerst neben der exe, dann der Entpack-Ordner (ohne Doppelte).</summary>
+    /// <summary>Options for searching for files: first next to the exe file, then the extracted folder (without duplicates).</summary>
     public static IEnumerable<string> SearchDirs()
     {
         yield return ExeDir;

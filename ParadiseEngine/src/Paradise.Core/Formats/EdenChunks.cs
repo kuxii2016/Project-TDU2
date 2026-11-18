@@ -1,6 +1,6 @@
 namespace Paradise.Core.Formats;
 
-/// <summary>Chunk eines Eden-Ressourcenformats (.3dd/.3dg/...). Portiert aus dem Unity-Projekt.</summary>
+/// <summary>Chunk of an Eden resource format (.3dd/.3dg/...).</summary>
 public struct Chunk
 {
     public string Tag;
@@ -45,7 +45,7 @@ public static class EdenChunks
         return false;
     }
 
-    /// <summary>HASH-Chunk: Einträge à 16 Byte {u64 key, u32 offset, u32 0}.</summary>
+    /// <summary>HASH chunk: 16-byte entries {u64 key, u32 offset, u32 0}.</summary>
     public static Dictionary<ulong, int> ReadHash(byte[] d, Chunk hash)
     {
         var r = new Dictionary<ulong, int>();
@@ -57,7 +57,7 @@ public static class EdenChunks
         return r;
     }
 
-    /// <summary>Für Array-Chunks (OBJA, GEOA ...): Hash-Tabelle + Elemente.</summary>
+    /// <summary>For array chunks (OBJA, GEOA, etc.): hash table + elements.</summary>
     public static Dictionary<ulong, int> ReadArray(byte[] d, Chunk array, string? elementTag, List<Chunk> elements)
     {
         Dictionary<ulong, int>? hash = null;

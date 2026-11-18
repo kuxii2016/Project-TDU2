@@ -75,6 +75,13 @@ public sealed class WorldWeather : IDisposable
 
     /// <summary>Kino-Wetter (Unity TDU2Weather.Override): Schlüssel aus fx/cinematic_weathers.xmb statt Uhrzeit/Wetterart. null = normal.</summary>
     public static WeatherData.Key? Override;
+    /// <summary>
+    /// Unity TDU2Weather.StoryLock: während der Geschichte festes Wetter – sonniger, trockener Nachmittag statt der laufenden
+    /// Server-Uhr. Gesetzt von der Geschichte (Gamemodes/Utils/Story), solange ein Schritt aktiv ist. ForceHour/ForceKind haben Vorrang.
+    /// </summary>
+    public static bool StoryLock;
+    public static float StoryHour = 14f;
+    public static WeatherKind StoryKind = WeatherKind.Sunny;
     WeatherData.Key? _ovKey;
     float _ovHour;
 
@@ -254,7 +261,7 @@ public sealed class WorldWeather : IDisposable
         if (_data == null || _data.Keys.Count == 0) return;
         _now = now; _instance = this;
         float dayLen = MathF.Max(1f, DayMinutes) * 60f;
-        float hour = ForceHour >= 0f ? ForceHour : (float)(((now / dayLen) * 24.0 + HourOffset + ZoneOffset(_island)) % 24.0);
+        float hour = ForceHour >= 0f ? ForceHour : StoryLock ? StoryHour : (float)(((now / dayLen) * 24.0 + HourOffset + ZoneOffset(_island)) % 24.0);
         if (hour < 0f) hour += 24f;
         // Kino-Wetter (Titel-/Story-Szenen): Uhrzeit aus der Sonnenrichtung des Schlüssels (Unity TDU2Weather.OverrideHour)
         var ov = Override;
@@ -264,8 +271,8 @@ public sealed class WorldWeather : IDisposable
         // Wetter: Abschnitt und Übergang vom vorigen
         double segLen = MathF.Max(1f, WeatherMinutes) * 60.0;
         long seg = (long)System.Math.Floor(now / segLen);
-        WeatherKind cur = ForceKind >= 0 ? (WeatherKind)System.Math.Clamp(ForceKind, 0, 5) : KindAt(seg);
-        WeatherKind prev = ForceKind >= 0 ? cur : KindAt(seg - 1);
+        WeatherKind cur = ForceKind >= 0 ? (WeatherKind)System.Math.Clamp(ForceKind, 0, 5) : StoryLock ? StoryKind : KindAt(seg);
+        WeatherKind prev = ForceKind >= 0 || StoryLock ? cur : KindAt(seg - 1);
         float since = (float)(now - seg * segLen);
         float t = TransitionSeconds > 0f ? System.Math.Clamp(since / TransitionSeconds, 0f, 1f) : 1f;
         t = t * t * (3f - 2f * t);
@@ -402,6 +409,8 @@ public sealed class WorldWeather : IDisposable
         _wet = _wet < wetTarget ? MathF.Min(wetTarget, _wet + rate) : MathF.Max(wetTarget, _wet - rate);
         if (ForceKind >= 0 && MathF.Abs(_wet - wetTarget) > 0.001f && _forceWas != ForceKind) _wet = wetTarget;
         _forceWas = ForceKind;
+        // Unity: Kino-Schnitt bzw. Ende des Kinos oder Beginn/Ende der Geschichte: Wetter wechselt hart -> Nässe sofort übernehmen
+        if (ov != _wetOv || StoryLock != _wetLock) { _wetOv = ov; _wetLock = StoryLock; _wet = wetTarget; }
         GroundWet = _wet;
         _wetShown = inside ? 0f : MathF.Max(_wet, Rain);
         g.Wet = _wetShown;
@@ -421,6 +430,8 @@ public sealed class WorldWeather : IDisposable
         _g = g;
     }
     private int _forceWas = int.MinValue;
+    private WeatherData.Key? _wetOv;
+    private bool _wetLock;
 
     /// <summary>Werte des letzten Updates (Sonne, Licht, Nebel, Nacht, Meer, Lampen).</summary>
     public FrameGlobals Globals => _g;

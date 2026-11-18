@@ -4,9 +4,9 @@ using Paradise.Core.Formats;
 namespace Paradise.Core.Files;
 
 /// <summary>
-/// Ein TDU2-Bigfile-Paar (<c>*.big</c> + <c>*.map</c>). Der Index ist ein XMBF-Dokument (meist big-endian,
-/// Mod-Tools schreiben ihn teils little-endian), die Einträge liegen hintereinander im .big und sind mit
-/// dem 4-Byte-Schlüssel <c>D7 A8 E2 D4</c> XOR-verschlüsselt (nur volle 32-Bit-Wörter, der Rest bleibt klar).
+/// A TDU2 bigfile pair (<c>*.big</c> + <c>*.map</c>). The index is an XMBF document (usually big-endian,
+/// though some mod tools write it in little-endian format), the entries are stored consecutively in the .big file and are
+/// XOR-encrypted with the 4-byte key <c>D7 A8 E2 D4</c> (only full 32-bit words; the rest remains unencrypted).
 /// </summary>
 public sealed class BigArchive : IDisposable
 {
@@ -14,7 +14,7 @@ public sealed class BigArchive : IDisposable
 
     public string MapPath { get; private set; } = "";
     public string BigPath { get; private set; } = "";
-    /// <summary>Load-Order aus dem Index (0 = Basisspiel, höher = Update/DLC/Mod).</summary>
+    /// <summary>Load order from the index (0 = base game, higher = update/DLC/mod).</summary>
     public int LoadOrder { get; private set; }
 
     public int Count => _hashes.Length;
@@ -48,14 +48,14 @@ public sealed class BigArchive : IDisposable
             }
             if (!File.Exists(a.BigPath))
             {
-                Log.Warn($"Bigfile: {Path.GetFileName(mapPath)} ohne passende .big");
+                Log.Warn($"Bigfile: {Path.GetFileName(mapPath)} without a matching .big extension");
                 return null;
             }
             return a;
         }
         catch (Exception ex)
         {
-            Log.Warn($"Bigfile: {Path.GetFileName(mapPath)} nicht lesbar: {ex.Message}");
+            Log.Error($"Bigfile: {Path.GetFileName(mapPath)} cannot be read: {ex.Message}");
             return null;
         }
     }
@@ -70,11 +70,11 @@ public sealed class BigArchive : IDisposable
         var hashNode = root.Get("Hashcodes");
         var fileNode = root.Get("Files");
         if (hashNode == null || fileNode == null)
-            throw new InvalidDataException("Directory.Hashcodes/Files fehlen");
+            throw new InvalidDataException("Directory.Hashcodes/Files are missing");
 
         int n = hashNode.Items.Count;
         if (fileNode.Items.Count != n)
-            throw new InvalidDataException($"Hashcodes ({n}) und Files ({fileNode.Items.Count}) unterschiedlich");
+            throw new InvalidDataException($"Hashcodes ({n}) and files ({fileNode.Items.Count}) differ");
 
         _hashes = new ulong[n];
         _sizes = new uint[n];
@@ -91,7 +91,7 @@ public sealed class BigArchive : IDisposable
 
     public bool TryFind(ulong hash, out int index) => _index.TryGetValue(hash, out index);
 
-    /// <summary>Liest einen Eintrag vollständig (inkl. XOR-Entschlüsselung).</summary>
+    /// <summary>Reads an entry in its entirety (including XOR decryption).</summary>
     public byte[] ReadEntry(int index)
     {
         var buf = new byte[_sizes[index]];
@@ -99,7 +99,7 @@ public sealed class BigArchive : IDisposable
         return buf;
     }
 
-    /// <summary>Liest einen Teil eines Eintrags; <paramref name="offset"/> ist relativ zum Eintragsbeginn.</summary>
+    /// <summary>Reads a portion of an entry; <paramref name="offset"/> is relative to the beginning of the entry.</summary>
     public void ReadEntry(int index, long offset, byte[] buffer, int bufferOffset, int count)
     {
         int size = (int)_sizes[index];
@@ -109,7 +109,7 @@ public sealed class BigArchive : IDisposable
         Decrypt(buffer, bufferOffset, count, offset, size);
     }
 
-    /// <summary>Liest roh aus dem .big (ohne XOR) – für Streams, die selbst entschlüsseln.</summary>
+    /// <summary>Reads directly from the .big file (without XOR) – for streams that decrypt themselves.</summary>
     public void ReadRaw(long offset, byte[] buffer, int bufferOffset, int count)
     {
         lock (_lock)
@@ -120,16 +120,16 @@ public sealed class BigArchive : IDisposable
             while (done < count)
             {
                 int r = _stream.Read(buffer, bufferOffset + done, count - done);
-                if (r <= 0) throw new EndOfStreamException($"{BigPath} endet bei {offset + done}");
+                if (r <= 0) throw new EndOfStreamException($"{BigPath} ends at {offset + done}");
                 done += r;
             }
         }
     }
 
     /// <summary>
-    /// XOR-Entschlüsselung eines Eintragsteils. <paramref name="entryOffset"/> ist der Offset im Eintrag
-    /// (bestimmt die Schlüsselphase), <paramref name="entrySize"/> begrenzt die Entschlüsselung auf die
-    /// vollen 32-Bit-Wörter – die letzten <c>len % 4</c> Bytes liegen klar in der Datei.
+    /// XOR decryption of a portion of an entry. <paramref name="entryOffset"/> is the offset within the entry
+    /// (determines the key phase), <paramref name="entrySize"/> limits the decryption to
+    /// full 32-bit words—the last <c>len % 4</c> bytes are clearly within the file.
     /// </summary>
     public static void Decrypt(byte[] buffer, int offset, int count, long entryOffset, int entrySize)
     {

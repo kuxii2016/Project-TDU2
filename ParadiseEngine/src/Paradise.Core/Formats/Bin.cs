@@ -2,7 +2,6 @@ using System.Text;
 
 namespace Paradise.Core.Formats;
 
-/// <summary>Little-endian Lesehilfen (portiert aus dem Unity-Projekt, ohne Unity-API).</summary>
 public static class Bin
 {
     public static uint U32(byte[] d, int o) => (uint)(d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24));
@@ -14,10 +13,8 @@ public static class Bin
 
     public static string Tag(byte[] d, int o) => Encoding.ASCII.GetString(d, o, 4);
 
-    public static bool TagIs(byte[] d, int o, string tag)
-        => d[o] == tag[0] && d[o + 1] == tag[1] && d[o + 2] == tag[2] && d[o + 3] == tag[3];
+    public static bool TagIs(byte[] d, int o, string tag) => d[o] == tag[0] && d[o + 1] == tag[1] && d[o + 2] == tag[2] && d[o + 3] == tag[3];
 
-    /// <summary>IEEE 754 half -> float.</summary>
     public static float Half(ushort h)
     {
         int sign = (h >> 15) & 1;

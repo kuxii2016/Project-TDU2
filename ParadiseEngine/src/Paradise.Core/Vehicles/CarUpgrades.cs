@@ -81,7 +81,6 @@ namespace Paradise.Core.Vehicles
                 else if (n == "TopSpeedIncreaseByUpgradeLevel") _topPerLevel = v;
                 else if (n == "BrakingIncreaseByUpgradeLevel") _brakePerLevel = v;
             }
-            Log.Info($"Tuning: je Stufe Beschl. {_accelPerLevel} %, Höchstgeschw. {_topPerLevel} %, Bremsen {_brakePerLevel} % (DBEnvironnement)");
         }
 
         /// <summary>Kategorie aus dem Film (/:UpgType, /:BtValid): -1 = keine Stufen (z.B. handling).</summary>
@@ -152,7 +151,6 @@ namespace Paradise.Core.Vehicles
                 e.upgrades = levels.Pack();
             }
             else _session[car] = levels;
-            Log.Info("Tuning gespeichert: " + car + " – " + levels);
             Changed?.Invoke(car);
         }
 

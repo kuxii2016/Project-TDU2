@@ -1,7 +1,4 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Cinematics/TDU2CinematicData.cs). Unity-Vektoren/Quaternionen -> System.Numerics
-// (gleiche Komponenten-Reihenfolge, Quaternion * Quaternion = Hamilton-Produkt wie Unity), LookRotation -> Quat.LookRotation.
-// Ohne MapRoot-Spiegelung: alles bleibt im Spielraum (FrameRotation entfällt, die Engine zeichnet im Spielraum).
 using Paradise.Core.Math;
 using System.Numerics;
 using System.Text;
@@ -9,16 +6,13 @@ using System.Text;
 namespace Paradise.Core.Cinematics
 {
     /// <summary>
-    /// Echtzeit-Kinos des Spiels (Eden): eine Kino-Zeitleiste (.cin, "CIN!") aus Einstellungen (Shots) über eine oder mehrere
-    /// Szenen (.sce, "SCE!"), dazu Nachrichten-Spuren (Wetter "weat:", "wmod:", Schatten "shad:", Flash, Ton) und Fx-Ereignisse.
-    /// Nach OpenTDU2 (game/cinematic/cinematic_scene.*) und docs/re/intro_spec.md.
-    ///
-    /// Gemeinsames Spur-Layout: { u16 Kind; u16 Flags; u32 Size (ganze Spur); u32 Id; u32 NumKeys; f32 Duration;
-    /// f32 Times[NumKeys]; Werte[NumKeys] }. Spur-Ids = 4-Byte-"Faltnamen" (Zeichen i auf Byte i &amp; 3 addiert).
-    ///
-    /// Koordinaten: Szenen-Ursprung (D3D-Matrix, Zeilenvektoren) -> Spielraum; Spielraum = Unity-Raum unter MapRoot
-    /// (linkshändig, Y oben). Heading-Quaternionen werden wie in CineScene konjugiert
-    /// (lokales +Z = Blick- bzw. Fahrtrichtung).
+    /// Real-time movie scenes in the game (Eden): a movie timeline (.cin, “CIN!”) consisting of settings (shots) via one or more
+    /// scenes (.sce, “SCE!”), plus message tracks (weather “weat:”, “wmod:”, shadows “shad:”, flash, sound) and FX events.
+    /// Common track layout: { u16 Child; u16 Flags; u32 Size (entire track); u32 Id; u32 NumKeys; f32 Duration;
+    /// f32 Times[NumKeys]; Values[NumKeys] }. Track IDs = 4-byte “folded names” (character i added to byte i &amp; 3).
+    /// Coordinates: Scene origin (D3D matrix, row vectors) -> game space
+    /// (left-handed, Y up). Heading quaternions are conjugated as in CineScene
+    /// (local +Z = viewing or travel direction).
     /// </summary>
     public static class CinIds
     {

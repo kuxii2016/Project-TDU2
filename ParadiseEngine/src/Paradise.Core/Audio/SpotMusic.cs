@@ -2,6 +2,7 @@ using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
 using Paradise.Core.Vehicles;
+using System.Text;
 
 namespace Paradise.Core.Audio;
 
@@ -15,7 +16,7 @@ public static class SpotMusic
 {
     public static float Volume = 0.6f;
     public static float FadeSeconds = 1.0f;
-    /// <summary>Spot code prefix → music file (without .wav). Longer prefixes first (Unity TDU2SpotAudio.Table).</summary>
+    /// <summary>Spot code prefix → music file (without .wav). Longer prefixes first.</summary>
     static readonly (string prefix, string music)[] Table =
     {
         ("ERS_A", "schoolasphalt"), ("ERS_B", "schooldirt"), ("ERS_C", "schoolclassic"),
@@ -42,7 +43,7 @@ public static class SpotMusic
         {
             _inside = true;
             int req = ++_request;
-            if (TDU2Radio.Instance != null) TDU2Radio.Instance.Muted = true;
+            if (Radio.Instance != null) Radio.Instance.Muted = true;
             if (string.IsNullOrEmpty(bnkDir) || string.IsNullOrEmpty(code)) return;
             Task.Run(() =>
             {
@@ -50,11 +51,17 @@ public static class SpotMusic
                 lock (_lock)
                 {
                     if (req != _request || !_inside) return;
-                    if (clip == null) { if (name != null) Log.Warn("Spot-Musik " + name + ".wav nicht dekodierbar"); else Log.Info("Spot-Musik: keine für " + code); return; }
+                    if (clip == null) 
+                    {
+                        if (name != null)
+                            Log.Warn("Spot music " + name + ".wav cannot be decoded");
+                        else
+                            Log.Info("Spot music: empty " + code); 
+                        return; 
+                    }
                     _current = name;
                     _src.Clip = clip; _src.Volume = 0f; _src.Play();
                     _src.FadeTo(_ducked ? 0f : Volume, FadeSeconds);
-                    Log.Info("Spot-Musik: " + name + ".wav (" + code + ")");
                 }
             });
         }
@@ -65,7 +72,8 @@ public static class SpotMusic
         lock (_lock)
         {
             _inside = false; _request++; _current = null;
-            if (TDU2Radio.Instance != null) TDU2Radio.Instance.Muted = false;
+            if (Radio.Instance != null) 
+                Radio.Instance.Muted = false;
             _src.FadeTo(0f, FadeSeconds);
             Task.Delay(TimeSpan.FromSeconds(FadeSeconds + 0.1)).ContinueWith(_ => { lock (_lock) if (!_inside) _src.Stop(); });
         }
@@ -85,7 +93,8 @@ public static class SpotMusic
     static (AudioClip? clip, string? name) Load(string bnkDir, string? extDir, string code, int salt)
     {
         string dir = Path.Combine(bnkDir, "sound", "musics");
-        if (!GameFiles.DirectoryExists(dir)) return (null, null);
+        if (!GameFiles.DirectoryExists(dir)) 
+            return (null, null);
         var available = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in GameFiles.GetFiles(dir, "*.wav")) available[Path.GetFileNameWithoutExtension(f)] = f;
 
@@ -98,7 +107,9 @@ public static class SpotMusic
                 if (!up.StartsWith(prefix, StringComparison.Ordinal)) continue;
                 if (available.ContainsKey(music)) { pick = music; break; }
                 var vars = new List<string>();
-                foreach (var k in available.Keys) if (k.StartsWith(music, StringComparison.OrdinalIgnoreCase)) vars.Add(k);
+                foreach (var k in available.Keys) 
+                    if (k.StartsWith(music, StringComparison.OrdinalIgnoreCase)) 
+                        vars.Add(k);
                 vars.Sort(StringComparer.OrdinalIgnoreCase);
                 if (vars.Count > 0) { pick = vars[System.Math.Abs(salt) % vars.Count]; break; }
             }

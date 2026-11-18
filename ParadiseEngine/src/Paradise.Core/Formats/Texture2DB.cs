@@ -3,12 +3,11 @@ using Paradise.Core.Render;
 namespace Paradise.Core.Formats;
 
 /// <summary>
-/// .2db = Textur ("BMAP"-Chunk). Portiert aus dem Unity-Projekt (TextureDef).
-///   Datei: 16 Byte Header, BMAP-Chunk ab 0x10.
-///   0x20 u64 Key, 0x28 u16 Breite, 0x2A u16 Höhe, 0x2C u16 Tiefe/Faces (6 = Cubemap),
-///   0x2E u8 Mipmaps, 0x2F u8 Mipmaps, 0x30 u32 Format (0x84 = DXT1, 0x86 = DXT3, 0x88 = DXT5, Bit 0x40 = Cubemap),
-///   Pixeldaten ab 0x50 (D3D-Reihenfolge: Mip 0 .. n, Blöcke mindestens 4x4).
-/// Statt Unity-Texture2D liefert <see cref="ToUpload"/> die Daten für den Renderer.
+/// .2db = Texture (“BMAP” chunk).
+///   File: 16-byte header, BMAP chunk starting at 0x10.
+///   0x20 u64 key, 0x28 u16 width, 0x2A u16 height, 0x2C u16 depth/faces (6 = cubemap),
+///   0x2E u8 Mipmaps, 0x2F u8 Mipmaps, 0x30 u32 Format (0x84 = DXT1, 0x86 = DXT3, 0x88 = DXT5, bit 0x40 = Cubemap),
+///   Pixel data starting at 0x50 (D3D order: Mip 0 .. n, blocks at least 4x4).
 /// </summary>
 public sealed class TextureDef
 {
@@ -40,7 +39,7 @@ public sealed class TextureDef
         return def;
     }
 
-    /// <summary>Liest nur den Key aus den ersten 0x28 Bytes einer .2db.</summary>
+    /// <summary>Reads only the key from the first 0x28 bytes of a .2db file.</summary>
     public static ulong PeekKey(byte[]? head) => head != null && head.Length >= 0x28 ? Bin.U64(head, 0x20) : 0;
 
     private static int MaxMips(int w, int h) => (int)System.Math.Floor(System.Math.Log2(System.Math.Max(1, System.Math.Max(w, h)))) + 1;
@@ -59,8 +58,8 @@ public sealed class TextureDef
     }
 
     /// <summary>
-    /// Entspricht TextureDef.CreateTexture aus dem Unity-Projekt: DXT1/DXT5 mit (auf die vorhandenen
-    /// Daten gekürzter) Mip-Kette direkt, DXT3 per CPU dekodiert (Mip 0) + Mips erzeugt. Cubemaps: null.
+    /// Corresponds to TextureDef.CreateTexture from the Unity project: DXT1/DXT5 with a mipmap chain (truncated to fit the available
+    /// data) directly; DXT3 decoded by the CPU (Mip 0) + mipmaps generated. Cubemaps: null.
     /// </summary>
     public TextureUpload? ToUpload(TextureWrap wrapU = TextureWrap.Repeat, TextureWrap wrapV = TextureWrap.Repeat)
     {
@@ -112,8 +111,8 @@ public sealed class TextureDef
     }
 
     /// <summary>
-    /// "Gepackte" Detailtexturen (d1_*, d2_*, beton_01 ...): nur R = Graustufen-Detail, G/B = andere Daten.
-    /// Erkennung über die DXT-Blockfarben von Mip 0.
+    /// “Packed” detail textures (d1_*, d2_*, beton_01 ...): R = grayscale detail only, G/B = other data.
+    /// Identified by the DXT block colors of Mip 0.
     /// </summary>
     public bool LooksPacked()
     {
@@ -138,7 +137,7 @@ public sealed class TextureDef
         return r > 0.2 && g < 0.35 * r && b < 0.2 * r;
     }
 
-    /// <summary>Mittlere Helligkeit (0..1), z. B. zum Normieren von Overlays.</summary>
+    /// <summary>Average brightness (0..1), e.g., for normalizing overlays.</summary>
     public float MeanLum()
     {
         int bf = BaseFormat;
@@ -159,8 +158,7 @@ public sealed class TextureDef
         }
         return n > 0 ? (float)(sum / n) : 0.5f;
     }
-
-    /// <summary>Eden-Adressmodus: 1 = Wrap, 2 = Clamp (Lightmaps, Colormaps), 3 = Mirror, 4 = Clamp.</summary>
+    /// <summary>Eden address mode: 1 = Wrap, 2 = Clamp (lightmaps, color maps), 3 = Mirror, 4 = Clamp.</summary>
     public static TextureWrap WrapFromEden(byte mode) => mode switch
     {
         2 => TextureWrap.Clamp,
@@ -170,8 +168,8 @@ public sealed class TextureDef
     };
 
     /// <summary>
-    /// Mip 0 als RGBA8 auf der CPU (Zeile 0 = erste Zeile der Datei), für DXT1/DXT3/DXT5 – z.B. Sticker und Werks-Beklebung, deren
-    /// Stickermap auf der CPU zusammengesetzt wird (Core/Vehicles/Livery.cs). Cubemaps/unbekannt: null.
+    /// Mip 0 as RGBA8 on the CPU (line 0 = first line of the file), for DXT1/DXT3/DXT5—e.g., stickers and factory liveries whose
+    /// sticker map is assembled on the CPU (Core/Vehicles/Livery.cs). Cubemaps/unknown: null.
     /// </summary>
     public byte[]? DecodeRgba()
     {
@@ -185,7 +183,7 @@ public sealed class TextureDef
         };
     }
 
-    /// <summary>DXT1 (BC1, mit 1-Bit-Alpha) bzw. DXT5 (BC3: interpolierter Alpha-Block + Farbblock).</summary>
+    /// <summary>DXT1 (BC1, with 1-bit alpha) or DXT5 (BC3: interpolated alpha block + color block).</summary>
     private static byte[]? DecodeBc(byte[] d, int off, int w, int h, bool bc3)
     {
         int bw = System.Math.Max(1, (w + 3) / 4), bh = System.Math.Max(1, (h + 3) / 4), bb = bc3 ? 16 : 8;
@@ -276,7 +274,7 @@ public sealed class TextureDef
         p[o + 3] = 255;
     }
 
-    /// <summary>RGBA8-Mip-Kette per 2x2-Box-Filter (wie Texture2D.Apply(updateMipmaps: true)).</summary>
+    /// <summary>RGBA8 mipmap chain using a 2x2 box filter (like Texture2D.Apply(updateMipmaps: true)).</summary>
     public static byte[] BuildRgbaMips(byte[] mip0, int w, int h, out int mips)
     {
         var levels = new List<byte[]> { mip0 };

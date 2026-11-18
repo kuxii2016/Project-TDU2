@@ -21,14 +21,14 @@ public enum RadioStation { off = 0, hariba, roadtrack, kalua }
 /// Der Sender und die Lautstärke werden in der Spielspeicherdatei gespeichert (ursprüngliche DATA RadioOptions, <see cref="ApplySaved"/>/<see cref="SavedStation"/>);
 /// Wenn keine Spielspeicherdatei vorhanden ist, gelten die Standardwerte aus Game/Config/AudioConfig.
 /// </summary>
-public sealed class TDU2Radio
+public sealed class Radio
 {
     [DllImport("winmm.dll", CharSet = CharSet.Auto)]
     static extern int mciSendString(string command, StringBuilder? returnValue, int returnLength, IntPtr callback);
     [DllImport("winmm.dll", CharSet = CharSet.Auto)]
     static extern bool mciGetErrorString(int errorCode, StringBuilder errorText, int errorTextSize);
 
-    public static TDU2Radio? Instance { get; private set; }
+    public static Radio? Instance { get; private set; }
     public static bool IsOpen => Instance != null && Instance._isOpen;
 
     VmfPlayer? _hud;
@@ -54,8 +54,8 @@ public sealed class TDU2Radio
     float _nextPlaybackCheck, _nextMarqueeUpdate;
     float _time;
     string? _bnkDir;
-    TDU2RadioData? _radioData;
-    Task<TDU2RadioData>? _radioDataTask;
+    RadioData? _radioData;
+    Task<RadioData>? _radioDataTask;
     readonly AudioVoice _radioSource = new() { Loop = false };
     Task<AudioClip?>? _decodeTask;
     RadioStation _decodeStation;
@@ -67,7 +67,7 @@ public sealed class TDU2Radio
     int _tracksSinceJingle = 99;
     bool _lastWasMusic;
     static readonly Random Rng = new();
-    TDU2RadioData.RadioPlaylist? _syncPlaylist;
+    RadioData.RadioPlaylist? _syncPlaylist;
     int _syncCycleStation, _syncCycleSeed;
     RadioMessage? _syncMessage, _decodeMessage;
     float _seekBase;
@@ -80,7 +80,7 @@ public sealed class TDU2Radio
 
     sealed class RadioTrack { public string FilePath = "", Title = "", Artist = ""; }
 
-    public TDU2Radio(string? bnkDir)
+    public Radio(string? bnkDir)
     {
         Instance = this;
         _radioFolderPath = Path.Combine(AppContext.BaseDirectory, SharedAssetsFolderName, RadioFolderName);
@@ -95,7 +95,7 @@ public sealed class TDU2Radio
         if (!PlayOriginalRadio || _radioData != null || _radioDataTask != null) return;
         if (string.IsNullOrEmpty(_bnkDir) || !GameFiles.DirectoryExists(Path.Combine(_bnkDir, "sound", "radio"))) return;
         string dir = _bnkDir;
-        _radioDataTask = Task.Run(() => TDU2RadioData.Load(dir));
+        _radioDataTask = Task.Run(() => RadioData.Load(dir));
     }
 
     public void SetHudPlayer(VmfPlayer? hud)
@@ -417,7 +417,7 @@ public sealed class TDU2Radio
     readonly Dictionary<long, RadioMessage> _fitCache = new();
 
     /// <summary>Synchronous: Deterministically replace weather/time-of-day announcements that do not match the current weather or time.</summary>
-    RadioMessage FitConditions(TDU2RadioData.RadioSegment seg, int stationHash, double cycle)
+    RadioMessage FitConditions(RadioData.RadioSegment seg, int stationHash, double cycle)
     {
         var m = seg.Message;
         if (m == null || !WorldWeather.Active || _radioData == null) return m!;
@@ -447,7 +447,7 @@ public sealed class TDU2Radio
         return best;
     }
 
-    TDU2RadioData.RadioPlaylist? GetPlaylist(int stationHash)
+    RadioData.RadioPlaylist? GetPlaylist(int stationHash)
     {
         if (_radioData == null) return null;
         int seed = TDU2Session.RadioSeed;

@@ -20,7 +20,7 @@ namespace Paradise.Core.Vehicles
 
         //Faster Heat simulation, but less realistic. The original values are too high for the current physics simulation.
         public static float HeatCapacity = 650000f;
-        public static float GlowStart = 0.18f;
+        public static float GlowStart = 0.25f; //.18f
 
         readonly CarMaterial[]?[] _mats = new CarMaterial[4][];
         readonly float[] _shown = { -1f, -1f, -1f, -1f };

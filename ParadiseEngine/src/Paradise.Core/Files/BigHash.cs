@@ -3,8 +3,8 @@ using System.Text;
 namespace Paradise.Core.Files;
 
 /// <summary>
-/// Der Pfad-Hash der TDU2-Bigfiles (CRC-64, MSB-first): über den kleingeschriebenen Pfad mit '/',
-/// Ergebnis mit vertauschten 32-Bit-Hälften. Beispiel: <c>euro/bnk/fx/sun.bnk</c> → 029495bc4ec264f3.
+/// The path hash of the TDU2 bigfiles (CRC-64, MSB-first): based on the lowercase path with ‘/’,
+/// result with the 32-bit halves swapped. Example: <c>euro/bnk/fx/sun.bnk</c> → 029495bc4ec264f3.
 /// </summary>
 public static class BigHash
 {
@@ -26,22 +26,20 @@ public static class BigHash
         return t;
     }
 
-    /// <summary>Hash eines Bigfile-Pfads (<c>euro/bnk/...</c>, Schreibweise egal).</summary>
+    /// <summary>Hash of a Bigfile path (<c>euro/bnk/...</c>, case-insensitive).</summary>
     public static ulong Hash(string path)
     {
         ulong h = Seed;
         if (string.IsNullOrEmpty(path)) return Swap(h);
-        // Die Pfade sind Latin-1 (z.B. "vfx/common/hawaï"); ToLowerInvariant liefert dieselben Bytes für ASCII.
+        // The paths are in Latin-1 (e.g., “vfx/common/hawaï”); ToLowerInvariant returns the same bytes for ASCII.
         var bytes = Encoding.Latin1.GetBytes(path.ToLowerInvariant());
         foreach (byte b in bytes)
             h = ((h << 8) | b) ^ Table[h >> 56];
         return Swap(h);
     }
 
-    /// <summary>True, wenn <paramref name="path"/> bereits ein vollständiger Bigfile-Pfad ist.</summary>
-    public static bool IsBigPath(string path)
-        => path.StartsWith("euro/bnk/", StringComparison.OrdinalIgnoreCase)
-           || path.StartsWith("euro\\bnk\\", StringComparison.OrdinalIgnoreCase);
+    /// <summary>True if <paramref name="path"/> is already a complete Bigfile path.</summary>
+    public static bool IsBigPath(string path) => path.StartsWith("euro/bnk/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("euro\\bnk\\", StringComparison.OrdinalIgnoreCase);
 
     private static ulong Swap(ulong h) => (h << 32) | (h >> 32);
 }

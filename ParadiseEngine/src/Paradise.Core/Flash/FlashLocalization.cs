@@ -1,15 +1,15 @@
 #nullable disable
-// Portiert aus dem Unity-Projekt (Runtime/Flash/FlashLocalization.cs). Unity-Typen: siehe Flash/FlashCompat.cs.
+using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
 
 namespace Paradise.Core.Flash
 {
     /// <summary>
-    /// Texte der Flash-Menüs wie im Spiel:
-    ///   database/db_data.cpr  DBLoc  : _flash (Variablenname, z.B. "m_Resume_") -> _hashcode (+ Flags je Film: _main, _hud, _shops ...)
-    ///   database/db_&lt;lang&gt;.cpr DBData : HashCode -> Text (ge = Deutsch, us = Englisch, fr, it, sp, ru, ja, ko, ch, cz, pl)
-    /// Das Spiel setzt diese Werte als _root-Variablen der Filme (_root.m_Resume_ usw.).
+    /// Flash menu text as it appears in the game:
+    ///   database/db_data.cpr  DBLoc  : _flash (variable name, e.g., “m_Resume_”) -> _hashcode (+ flags per movie: _main, _hud, _shops ...)
+    ///   database/db_lang.cpr DBData : HashCode -> Text (ge = German, us = English, fr, it, sp, ru, ja, ko, ch, cz, pl)
+    /// The game sets these values as the _root variables for the movies (_root.m_Resume_, etc.).
     /// </summary>
     public static class FlashLocalization
     {
@@ -17,7 +17,7 @@ namespace Paradise.Core.Flash
         static string _loadedKey;
         static readonly object _lock = new object();
 
-        /// <summary>Sprachkürzel der Datenbankdateien zur Systemsprache.</summary>
+        /// <summary>Language code of the database files corresponding to the system language.</summary>
         public static string LangCode(SystemLanguage l)
         {
             switch (l)
@@ -36,7 +36,7 @@ namespace Paradise.Core.Flash
             }
         }
 
-        /// <summary>Variablenname -> Text (threadsicher, einmal je Bnk-Ordner/Sprache geladen).</summary>
+        /// <summary>Variable name -> Text (thread-safe, loaded once per Bnk folder/language).</summary>
         public static Dictionary<string, string> Load(string bnkDir, string lang)
         {
             lock (_lock)
@@ -74,7 +74,7 @@ namespace Paradise.Core.Flash
                 }
                 catch (Exception ex)
                 {
-                    DebugManager.Error("Flash text not loadable: " + ex.Message);
+                    Log.Error("Flash text not loadable: " + ex.Message);
                 }
                 _texts = result; _loadedKey = key;
                 return result;
@@ -84,8 +84,8 @@ namespace Paradise.Core.Flash
         static Dictionary<int, string> _lines;
 
         /// <summary>
-        /// Text der Sprachdatenbank (db_&lt;lang&gt;.cpr) zu einem HashCode – so benennt das Spiel Händler (DBCarShop._libelle_hc),
-        /// Häuser (DBHouse._housename_hc) usw. null, wenn unbekannt.
+        /// Text from the language database (db_&lt;lang&gt;.cpr) converted to a hash code—this is how the game names merchants (DBCarShop._libelle_hc),
+        /// houses (DBHouse._housename_hc), etc. It returns null if unknown.
         /// </summary>
         public static string Text(string bnkDir, string lang, int hash)
         {
@@ -102,7 +102,7 @@ namespace Paradise.Core.Flash
                 if (c.IsArray) { foreach (var i in c.Items) yield return i; yield break; }
         }
 
-        /// <summary>Alle Texte als _root-Variablen in den Film schreiben.</summary>
+        /// <summary>Include all text as _root variables in the movie.</summary>
         public static void Apply(VmfPlayer p, Dictionary<string, string> texts)
         {
             if (p == null || texts == null) return;

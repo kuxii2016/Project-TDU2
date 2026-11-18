@@ -44,7 +44,7 @@ public sealed class Win32Window : IGameWindow
         };
 
         if (RegisterClassEx(ref wc) == 0)
-            throw new InvalidOperationException($"RegisterClassEx fehlgeschlagen (Win32 {Marshal.GetLastWin32Error()}).");
+            throw new InvalidOperationException($"RegisterClassEx failed (Win32 {Marshal.GetLastWin32Error()}).");
 
         // Fensterrahmen einrechnen, damit die Client-Fläche genau width×height groß ist.
         var rect = new RECT { left = 0, top = 0, right = width, bottom = height };
@@ -57,13 +57,12 @@ public sealed class Win32Window : IGameWindow
             IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
 
         if (Handle == IntPtr.Zero)
-            throw new InvalidOperationException($"CreateWindowEx fehlgeschlagen (Win32 {Marshal.GetLastWin32Error()}).");
+            throw new InvalidOperationException($"CreateWindowEx failed (Win32 {Marshal.GetLastWin32Error()}).");
 
         ShowWindow(Handle, SW_SHOW);
         UpdateWindow(Handle);
         SetTitle(title); // sicherheitshalber nochmals explizit setzen
         TrySetIcon("game.ico");
-        Log.Info($"Win32-Fenster erstellt: Titel='{title}', HWND=0x{Handle:X}, {width}x{height}");
     }
 
     /// <summary>
@@ -83,7 +82,6 @@ public sealed class Win32Window : IGameWindow
             {
                 if (large[0] != IntPtr.Zero) SendMessage(Handle, WM_SETICON, ICON_BIG, large[0]);
                 if (small[0] != IntPtr.Zero) SendMessage(Handle, WM_SETICON, ICON_SMALL, small[0]);
-                Log.Info("Fenster-Icon aus der exe gesetzt.");
                 return;
             }
         }
@@ -92,7 +90,7 @@ public sealed class Win32Window : IGameWindow
         string? path = ResolveAsset(fileName);
         if (path == null)
         {
-            Log.Info($"Kein exe-Icon und '{fileName}' nicht gefunden – Standard-Icon bleibt.");
+            Log.Info($"No exe icon and ‘{fileName}’ not found – the default icon remains.");
             return;
         }
 
@@ -104,9 +102,7 @@ public sealed class Win32Window : IGameWindow
         if (sml != IntPtr.Zero) SendMessage(Handle, WM_SETICON, ICON_SMALL, sml);
 
         if (big == IntPtr.Zero && sml == IntPtr.Zero)
-            Log.Info($"Icon '{path}' konnte nicht geladen werden (Win32 {Marshal.GetLastWin32Error()}).");
-        else
-            Log.Info($"Fenster-Icon gesetzt: {path}");
+            Log.Info($"The icon ‘{path}’ could not be loaded (Win32 {Marshal.GetLastWin32Error()}).");
     }
 
     private static string? ResolveAsset(string fileName)
@@ -246,7 +242,6 @@ public sealed class Win32Window : IGameWindow
         UnregisterClass(_className, GetModuleHandle(null));
     }
 
-    // ---------------- Vollbild (randloses Fenster über den ganzen Monitor) ----------------
 
     public bool IsFullscreen { get; private set; }
     private WINDOWPLACEMENT _windowedPlacement;
@@ -298,10 +293,6 @@ public sealed class Win32Window : IGameWindow
         return list;
     }
 
-    /// <summary>
-    /// Auflösung setzen (Unity Screen.SetResolution): im Vollbild Anzeigemodus des Monitors umstellen (höchste Frequenz dieser
-    /// Größe) und das Fenster darüberlegen, im Fenster die Client-Fläche. Die Swapchain folgt über WM_SIZE.
-    /// </summary>
     public void SetResolution(int w, int h)
     {
         if (IsFullscreen)
@@ -317,14 +308,12 @@ public sealed class Win32Window : IGameWindow
             if (GetMonitorInfo(MonitorFromWindow(Handle, MONITOR_DEFAULTTONEAREST), ref mi))
                 SetWindowPos(Handle, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
                     mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
-            Log.Info($"Auflösung (Vollbild): {w}x{h} @ {hz} Hz");
         }
         else
         {
             var rect = new RECT { left = 0, top = 0, right = w, bottom = h };
             AdjustWindowRectEx(ref rect, WS_OVERLAPPEDWINDOW, false, 0);
             SetWindowPos(Handle, 0, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOOWNERZORDER);
-            Log.Info($"Auflösung (Fenster): {w}x{h}");
         }
     }
 

@@ -79,8 +79,6 @@ namespace Paradise.Core.Vehicles
             }
             if (_buildTask != null && _buildTask.IsCompleted)
             {
-                if (_buildTask.IsFaulted) Log.Warn("GPS: Straßennetz: " + _buildTask.Exception?.GetBaseException().Message);
-                else Log.Info("GPS: Straßennetz " + _roads.Count + " Straßen, " + _adj.Count + " Knoten");
                 _buildTask = null;
             }
         }
@@ -287,7 +285,6 @@ namespace Paradise.Core.Vehicles
             _nextRoute = 0f; _lastCue = null; _prevRemaining = -1f; _played.Clear(); _jPrev.Clear(); _uturnSince = -1f; _uturnDone = false;
             ShowStatus(false);
             if (announce) Voice(TDU2GpsSettings.VoiceTargetSet);
-            Log.Info("GPS: Ziel " + game);
             try { Changed?.Invoke(); } catch (Exception ex) { Log.Warn("GPS: " + ex.Message); }
         }
 
@@ -298,7 +295,6 @@ namespace Paradise.Core.Vehicles
             HasTarget = false; Route.Clear(); Remaining = -1f; RouteVersion++;
             ShowStatus(true);
             if (arrived) Voice(TDU2GpsSettings.VoiceArrived);
-            Log.Info("GPS: Ziel " + (arrived ? "erreicht" : "entfernt"));
             try { Changed?.Invoke(); } catch (Exception ex) { Log.Warn("GPS: " + ex.Message); }
         }
 
@@ -469,7 +465,6 @@ namespace Paradise.Core.Vehicles
             if (_lastCue == id) return;
             _lastCue = id;
             if (id != "uturn" && !_played.Add(id)) return;
-            Log.Info("GPS-Hinweis " + (id.StartsWith("uturn") ? "wenden" : (id.StartsWith("now") ? "jetzt " : "gleich ") + (id.Contains("R:") ? "rechts" : "links")) + " -> Datei " + voice);
             Voice(voice);
         }
 
@@ -486,7 +481,6 @@ namespace Paradise.Core.Vehicles
             if (clip == null) { Log.Warn("GPS-Ansage " + index + ": VFGPSVoice" + index.ToString("000") + "_.wav nicht gefunden"); return; }
             // laufende Ansage nicht abbrechen: die neueste wartet und kommt danach
             if (_audio.IsPlaying) { _pendingVoice = index; return; }
-            Log.Info("GPS-Ansage VFGPSVoice" + index.ToString("000") + "_.wav");
             _audio.Stop();
             _audio.Clip = clip;
             _audio.Volume = TDU2GpsSettings.VoiceVolume;
