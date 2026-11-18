@@ -414,6 +414,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         string code = (s.Code ?? "").ToLowerInvariant();
         if (_banks.TryGetValue(code, out var b)) return b;
         b = new SpotBanks();
+        Log.Info("Spot " + s.Code + " Kategorie " + (s.TypeA & 0xFF) + " (" + s.TypeA + "/" + s.TypeB + ") bei " + s.Position);
         try
         {
             if (code.StartsWith("eland"))
@@ -443,11 +444,9 @@ public abstract partial class InteriorUtils : GameModeHandler
                 b.IsClub = true;
                 GameMode.Push(Gamemode.GAME_MODE_CLUB);
             }
-            else if (code.StartsWith("ecas") || (s.TypeA & 0xFF) == 21)
+            else if (code.StartsWith("estol"))
             {
-                b.Living = Bank("i" + code[1..]) ?? Bank("icashal"); b.Kind = Kind.Other; b.Name = "Casino";
-                b.IsCasino = true;
-                GameMode.Push(Gamemode.GAME_MODE_CASINO);
+                b.Living = Bank("i" + code[1..]); b.Kind = Kind.Dealer; b.Name = "Gebrauchtwagenhändler";
             }
             else if (code.StartsWith("estol"))
             {
@@ -521,6 +520,8 @@ public abstract partial class InteriorUtils : GameModeHandler
             LoadScene(b.Living, Kind.Living, null);
         else if (b.Kind == Kind.Living && b.Garage != null) 
             LoadScene(b.Garage, Kind.Garage, null);
+        else 
+            LoadScene((b.Living ?? b.Garage)!, b.Kind, null);
     }
 
     internal static void LoadScene(string bank, Kind kind, string? startCam)
