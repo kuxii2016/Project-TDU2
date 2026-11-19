@@ -327,7 +327,7 @@ public abstract class AvatarShop : InteriorUtils
         _ui2?.SetVariable("/:MyMoneyStr", sv != null ? Money(sv.money) : "");
     }
 
-    protected static string Money(long v) => "   " + v.ToString("N0", CultureInfo.GetCultureInfo("de-DE")) + "     ";
+    protected static string Money(long v) => "   " + v.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + "     ";
 
     /// <summary>Bestätigungsbox aus general.bnk wie im Spiel (FlashDialog), Antwort an _root.DialogBox.</summary>
     void AnswerDialog()

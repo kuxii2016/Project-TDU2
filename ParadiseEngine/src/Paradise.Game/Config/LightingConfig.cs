@@ -106,10 +106,10 @@ public sealed class LightingConfig
     // ---------------- Avatare (Unity TDU2Interiors.AvatarIndoor* und Entwicklermenü-Feinabstimmung des Avatar-Shaders, 0 = Original)
     /// <summary>Avatare im Interieur: Deckenlicht statt Sonne (Farbe rgb, Richtung) und Umgebung oben/unten (Unity-Inspektorwerte).</summary>
     /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,5/0,47/0,43).</summary>
-    public float[] AvatarIndoorLight { get; set; } = { 0.738f, 0.694f, 0.635f };
+    public float[] AvatarIndoorLight { get; set; } = { 1f, 0.694f, 0.635f };
     public float[] AvatarIndoorDir { get; set; } = { 0.25f, 1f, 0.35f };
     /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,46/0,44/0,41).</summary>
-    public float[] AvatarIndoorAmbTop { get; set; } = { 0.725f, 0.696f, 0.653f };
+    public float[] AvatarIndoorAmbTop { get; set; } = { 1f, 0.696f, 0.653f };
     public float[] AvatarIndoorAmbBottom { get; set; } = { 0.2f, 0.19f, 0.18f };
     /// <summary>Hautton-Rampe + Verstärkung, Zeile der Rampe (0 = COEFFS.z), Umgebung auf der Lichtseite, zusätzliches Umgebungslicht, Haarglanz.</summary>
     public float AvatarRampAdd { get; set; } = 0f;

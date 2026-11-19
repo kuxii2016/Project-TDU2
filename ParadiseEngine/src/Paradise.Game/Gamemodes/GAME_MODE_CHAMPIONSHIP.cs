@@ -189,7 +189,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (dir.LengthSquared() > 1e-3f) extended.Add(a + Vector3.Normalize(dir) * 250f);
         for (int i = 0; i < n; i++)
         {
-            var (pnj, diff, _) = cup.Lic.Bots[i];
+            var (pnj, diff, aggr) = cup.Lic.Bots[i];
             var car = Championships.BotCar(pnj, cup.Lic, db, vm.BnkDir);
             if (car == null) continue;
             int row = i / 2; float side = i % 2 == 0 ? -2.2f : 2.2f;
@@ -199,16 +199,22 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
             int k = 0; while (k < extended.Count - 1 && Vector3.Dot(extended[k] - pos, fwd) < 2f) k++;
             for (; k < extended.Count; k++) path.Add(extended[k]);
             float top = MathF.Max(30f, car.MaxTheoricalSpeed) / 3.6f;
-            float grip = System.Math.Clamp(MathF.Min(car.MaxLatFrictionFront, car.MaxLatFrictionRear), 1.1f, 2f);
+            // Fahrergesetz (opponents_spec.md): vmax * (0.82 + 0.25 d), a_lat = g (0.75 + 0.4 d),
+            // a = (27.8 / t0-100) * (0.85 + 0.4 d) * 1.3, Bremse = 7.5 + 3 d.
+            // Die alten Werte (0.74..0.94 / grip*0.40..0.58 / 27.8*0.8..1.05) waren deutlich zu
+            // niedrig – deshalb wirkten die Gegner träge und bogen zu früh ab.
             def.Opponents.Add(new RaceOpponentDef
             {
                 CarId = car.Id,
                 Name = Championships.BotName(pnj, i),
                 Position = pos,
                 Forward = fwd,
-                MaxSpeed = top * Lerp(0.74f, 0.94f, diff) * ChampionshipConfig.BotSpeedScale,
-                LatAccel = 9.81f * grip * Lerp(0.40f, 0.58f, diff),
-                Accel = (100f / 3.6f) / MathF.Max(3f, car.Accel0To100) * Lerp(0.8f, 1.05f, diff),
+                MaxSpeed = top * (0.82f + 0.25f * diff) * ChampionshipConfig.BotSpeedScale,
+                LatAccel = 9.81f * (0.75f + 0.4f * diff),
+                Accel = (27.8f / MathF.Max(3f, car.Accel0To100)) * (0.85f + 0.4f * diff) * 1.3f,
+                Brake = 7.5f + 3f * diff,
+                Difficulty = diff,
+                Aggressiveness = aggr,
                 LateralOffset = side * 0.6f,
                 PathOverride = path,
                 StartDistance = -row * ChampionshipConfig.GridRowSpacing,
@@ -217,8 +223,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         }
         return def.Opponents.Count;
     }
-
-    static float Lerp(float a, float b, float t) => a + (b - a) * System.Math.Clamp(t, 0f, 1f);
 
     void BuildCum(List<Vector3> path)
     {
@@ -322,7 +326,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     bool _versusOpen;
     float _hudNext;
     int _gapSign;
-    static readonly CultureInfo De = CultureInfo.GetCultureInfo("de-DE");
+    static readonly NumberFormatInfo De = Paradise.Core.Util.GermanFormat.Number;
 
     void ResetRaceHud()
     {

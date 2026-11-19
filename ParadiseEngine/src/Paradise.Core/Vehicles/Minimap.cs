@@ -220,6 +220,7 @@ namespace Paradise.Core.Vehicles
                 _hud.SetVariable("/:nb_players", PlayerCount.ToString());
                 _appliedOnline = OnlineStatus; _appliedPlayers = PlayerCount; _lastOnlineVar = _lastPlayersVar = null;   // UpdateOnlineDisplay ab hier
                 //_hud.Visible = false;
+                Log.Info("Flash: hud.bnk (Minimap) geladen");
             }
             catch (Exception ex)
             {
@@ -575,6 +576,8 @@ namespace Paradise.Core.Vehicles
                 {
                     var res = _task.Result;
                     _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads;
+                    Log.Info($"Minimap: {res.segs} Straßensegmente, {_lines.Length} Linien, {_areas.Length} Kreuzungsflächen; " +
+                             $"HudMap: {_hudRoads.Strips.Count} Streifen, {_hudRoads.Rings.Count} Kreisverkehre");
                 }
                 _task = null;
             }
@@ -681,11 +684,6 @@ namespace Paradise.Core.Vehicles
             _routeNext = race != null ? 1 : -1;
             _routeBuiltNext = -2;   // Neubau erzwingen
             _refreshT = 0f;
-            // RaceRoute.Build liest die Straßenroute aus Statics. Die müssen zu GENAU diesem
-            // Rennen passen – sonst zeigt die Minimap die Catmull-Rom-Fallbacklinie durch die
-            // Tore statt der Straßenroute (sieht aus wie ein GPS-Fehler, ist aber keiner).
-            Paradise.Core.Racing.RaceRoute.RoadPath = race?.RoadPath;
-            Paradise.Core.Racing.RaceRoute.RoadPathSeg = race?.RoadPathSeg;
         }
 
         /// <summary>Fortschritt setzen (Index des nächsten Tors); färbt den befahrenen Teil um.</summary>
@@ -804,6 +802,50 @@ namespace Paradise.Core.Vehicles
             }
         }
 
+        /// <summary>Kreuzungsfläche füllen (Zeilen-Scan, Gerade-Ungerade-Regel über alle Umrisse: Mittelinsel bleibt frei).</summary>
+        void FillArea(Area ar, V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, Color32 col, int px)
+        {
+            var pts = new List<float[]>(ar.Rings.Count);
+            float y0 = float.MaxValue, y1 = float.MinValue;
+            foreach (var r in ar.Rings)
+            {
+                var q = new float[r.Length];
+                for (int i = 0; i < r.Length; i += 2)
+                {
+                    float dx = r[i] - car.X, dz = r[i + 1] - car.Z;
+                    q[i] = cxp + (dx * right.X + dz * right.Z) * scale;
+                    q[i + 1] = cyp + (dx * fwd.X + dz * fwd.Z) * scale;
+                    y0 = MathF.Min(y0, q[i + 1]); y1 = MathF.Max(y1, q[i + 1]);
+                }
+                pts.Add(q);
+            }
+            int ya = System.Math.Max(0, (int)MathF.Floor(y0)), yb = System.Math.Min(px - 1, (int)MathF.Ceiling(y1));
+            var p = _px!;
+            for (int y = ya; y <= yb; y++)
+            {
+                float sy = y + 0.5f;
+                _xs.Clear();
+                foreach (var q in pts)
+                {
+                    int n = q.Length / 2;
+                    for (int i = 0, k = n - 1; i < n; k = i++)
+                    {
+                        float ay = q[2 * i + 1], by = q[2 * k + 1];
+                        if ((ay > sy) == (by > sy)) continue;
+                        float ax = q[2 * i], bx = q[2 * k];
+                        _xs.Add(ax + (sy - ay) * (bx - ax) / (by - ay));
+                    }
+                }
+                if (_xs.Count < 2) continue;
+                _xs.Sort();
+                for (int i = 0; i + 1 < _xs.Count; i += 2)
+                {
+                    int xa = System.Math.Max(0, (int)MathF.Ceiling(_xs[i] - 0.5f)), xb = System.Math.Min(px - 1, (int)MathF.Floor(_xs[i + 1] - 0.5f));
+                    for (int x = xa; x <= xb; x++) p[y * px + x] = col;
+                }
+            }
+        }
+
         void DrawLine(float ax, float ay, float bx, float by, float half, Color32 col, int px)
         {
             float pad = half + 1f;
@@ -831,6 +873,7 @@ namespace Paradise.Core.Vehicles
                 }
         }
 
+        // ------------------------------------------------------------------ Straßennetz der großen Karte (Unity BuildMapRoads/RoadMesh)
         /// <summary>Straßennetz geladen (für die große Karte).</summary>
         public bool HasRoads => _lines.Length > 0;
         /// <summary>Mindestbreite der Straßen auf der großen Karte in Bildpunkten (Unity TDU2BigMap.RoadMinPixels).</summary>
@@ -934,6 +977,7 @@ namespace Paradise.Core.Vehicles
                     Color = c.r | ((uint)c.g << 8) | ((uint)c.b << 16) | ((uint)c.a << 24)
                 };
             }
+            Log.Info($"Karte: Straßennetz {verts.Count} Vertices, {idx.Count / 3} Dreiecke (Breite x{widthMul:0.##})");
             return (ov, idx.ToArray());
         }
 

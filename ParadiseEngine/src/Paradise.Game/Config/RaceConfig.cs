@@ -54,4 +54,18 @@ public static class RaceConfig
     public static float RoadSnapRadius = 30f;     // Wegpunkt -> Straße
     public static float RoadGoalRadius = 18f;     // Spur führt am Ziel vorbei
     public static int RoadMaxExpand = 6000;
+
+    // ---- RaceRoadPath Glättung (nur scharfe Ecken, nicht die ganze Kurve)
+    /// <summary>Schnellsten statt kürzesten Weg wählen (Kurven über TrafficTrack.Limit bestraft).</summary>
+    public static bool RoadPreferFast = true;
+    /// <summary>Kleine Kinks an Spurwechseln/Kreuzungen abrunden (aus = Rohpolylinie).</summary>
+    public static bool RoadSmooth = true;
+    /// <summary>Abtastabstand der Glättung in Metern.</summary>
+    public static float RoadSmoothStep = 4f;
+    /// <summary>Maximale Abschneidelänge pro Ecke in Metern; effektiv auf 40% von RoadSmoothStep begrenzt.</summary>
+    public static float RoadSmoothCut = 2.5f;
+    /// <summary>Richtungsänderung in Grad, ab der eine Ecke geglättet wird.</summary>
+    public static float RoadSmoothMinAngle = 12f;
+    /// <summary>Bézier-Punkte pro geglätteter Ecke.</summary>
+    public static int RoadSmoothSegments = 3;
 }

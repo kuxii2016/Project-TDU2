@@ -155,17 +155,21 @@ public class GAME_MODE_GOODIES : AvatarShop
         _reopenAt = _clock + 0.9f;
         if (e == null) return;
         var sv = TDU2Session.Save;
+        bool changed = false;
         if (!e.Owned && sv != null)
         {
             if (sv.money < e.Price) { Log.Warn("Kleidungsladen: nicht genug Geld"); return; }
             sv.money = System.Math.Max(0, sv.money - e.Price);
+            changed = true;
         }
         if (e.Item != null && sv != null)
         {
             sv.ownedClothes ??= new List<int>();
-            if (!sv.ownedClothes.Contains(e.Item.Hash)) sv.ownedClothes.Add(e.Item.Hash);
+            if (!sv.ownedClothes.Contains(e.Item.Hash)) { sv.ownedClothes.Add(e.Item.Hash); changed = true; }
         }
         Wear(e);
+        // Kauf (Geld/Besitz) explizit speichern – Wear/SetLocal speichert bereits bei eingeloggter Session, aber das stellt Persistenz sicher.
+        if (changed && sv != null && TDU2Session.LoggedIn) TDU2Session.SaveAsync();
         Log.Info("Kleidungsladen: gekauft " + (e.Item != null ? e.Item.File + " Farbe " + e.Color : "(ablegen)") + " für $" + (e.Owned ? 0 : e.Price));
         foreach (var x in _items) if (x.Item != null && e.Item != null && x.Item.Hash == e.Item.Hash) x.Owned = true;
         // Kauf-Kinematik (M_BUY_ITEM) gibt es nicht: nach der Bestätigungs-Animation das Stückmenü sauber schließen (Run)

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Paradise.FlashDebug</RootNamespace>
+    <AssemblyName>Paradise.FlashDebug</AssemblyName>
+    <!-- Der Browser läuft im Spielprozess auf einem eigenen STA-UI-Thread. -->
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Paradise.Core\Paradise.Core.csproj" />
+  </ItemGroup>
+
+</Project>

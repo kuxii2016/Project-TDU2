@@ -72,7 +72,18 @@ public sealed class RaceHud
     void OnPrepared(RaceManager r)
     {
         var race = r.Race!;
-        if (Minimap != null) { Minimap.SetRaceRoute(race); Minimap.SetRaceProgress(r.NextCheckpointIndex); }
+        if (Minimap != null)
+        {
+            // Straßenroute sicherstellen, BEVOR die Minimap sie übernimmt: ohne RoadPath
+            // fällt RaceRoute.Build auf die gerade Linie durch die Tore zurück.
+            if ((race.RoadPath == null || race.RoadPath.Count < 2) && RaceRoadPath.FindLanes() != null)
+            {
+                try { RaceRoadPath.Compute(race); }
+                catch (Exception ex) { Log.Warn("Straßenroute (Renn-HUD): " + ex.Message); }
+            }
+            Minimap.SetRaceRoute(race);
+            Minimap.SetRaceProgress(r.NextCheckpointIndex);
+        }
         FrontendSounds.Preload("three", "two", "one", "go", "chptpass", "chptrmv", "time", "time2", "wrong");
         var h = H; if (h == null) return;
         FrontendSounds.Attach(h);   // HUD meldet sndp:three/two/one/go, sndp:chptpass, sndp:time ...

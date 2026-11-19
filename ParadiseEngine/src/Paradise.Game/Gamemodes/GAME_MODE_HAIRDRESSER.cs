@@ -239,7 +239,7 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         _hui?.SetVariable("/:MyMoneyStr", sv != null ? Money(sv.money) : " ");
     }
 
-    static string Money(long v) => "$ " + v.ToString("N0", CultureInfo.GetCultureInfo("de-DE"));
+    static string Money(long v) => "$ " + v.ToString("N0", Paradise.Core.Util.GermanFormat.Number);
 
     // ================================================================== Befehle
     static void OnCommand(string cmd, string args)

@@ -1,9 +1,11 @@
+using Paradise.Core.Avatars;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Files;
 using Paradise.Core.Online;
 using Paradise.Game.Input;
 using Paradise.Game.Screens;
+using Paradise.Game.Utils;
 using System.Numerics;
 using AudioEngine = Paradise.Core.Audio.AudioEngine;
 using CarDatabase = Paradise.Core.Vehicles.CarDatabase;
@@ -206,7 +208,7 @@ public class GAME_MODE_MAP : GameModeHandler
     static int _filter;            // Reiter der Filterleiste (_root.numIcFilter), bleibt bis zum nächsten Öffnen
 
     // Spots (Unity BuildSpots/UpdateOverlay): Kopien von /pack/point je Platz, nächste zum Kartenmittelpunkt zuerst
-    public float SpotScale = 0.75f;
+    public float SpotScale = 0.65f;
     public int MaxSpots = 160;
     /// <summary>Spot auf der Karte: normaler Spot, Meisterschaft (cup = Index) oder – im Wettbewerbsmodus – deren Rennen (race).</summary>
     sealed class MapSpot { public Spot spot = null!; public string label = ""; public int bookmark = -1; public int cup = -1, race = -1; }
@@ -273,7 +275,6 @@ public class GAME_MODE_MAP : GameModeHandler
         _target.Y = SeaY();
         _zoom = 2;
         UpdateCamera(true);
-
         ui.SetValue("/:WhatPlatform", 1);
         ui.SetVariable("/:MenuType", "pc");
         ui.SetValue("/:IsPC_X360", true);
@@ -327,6 +328,8 @@ public class GAME_MODE_MAP : GameModeHandler
         // Treffpunkt: nach dem Aufbau der Karte (map_open) direkt in den Wettbewerb der Meisterschaft
         if (contestCup >= 0) { _contestEnterCup = contestCup; _contestEnterAt = _clock + 1.3f; }
         Log.Info("Große Karte geöffnet" + (contestCup >= 0 ? " (Wettbewerb " + contestCup + ")" : ""));
+        ui.PlayLabel("/curseur/cible", "on");
+        ui.PlayLabel("/curseur", "lod2");
         return true;
     }
 
@@ -414,129 +417,6 @@ public class GAME_MODE_MAP : GameModeHandler
         UpdateOverlay();
         if (_fillAt > 0f && _clock >= _fillAt) { _fillAt = -1f; FillExtendedInfos(); }
         return true;
-    }
-
-    void OnCommand(string cmd, string args)
-    {
-        if (!_open) return;
-        string c = (cmd ?? "").Trim().ToLowerInvariant();
-        if (c.StartsWith("sndp:")) return;   // Menü-Sounds (FrontendSounds)
-        Log.Info("Karte FSCommand: " + c + (string.IsNullOrEmpty(args) ? "" : " " + args) + " (Tooltip " + _extended + ", Mini-Menü " + _miniMenu + ")");
-        if (c.StartsWith("bmap:fltr:icf"))
-        {
-            // Reiter der Filterleiste gewechselt (presets.sendCmdIc)
-            if (int.TryParse(c.Substring(13), out int f)) { _filter = System.Math.Clamp(f, 0, 5); _hover = -1; HideTooltip(); }
-            return;
-        }
-        switch (c)
-        {
-            case "zoin": SetZoom(_zoom - 1); break;   // setZoom("in")  -> Spiel verkleinert WhatZoom
-            case "zoou": SetZoom(_zoom + 1); break;   // setZoom("out")
-            case "gofr": BeginClosing(); break;       // B im Navigator: zurück ins freie Fahren (Schließanimation läuft)
-            case "bmap:ttip:extd":                    // A auf einem Spot: Tooltip mit Infos/Menü ausklappen
-                _ui!.CallClip("/tool_tip", "Extend", 1);
-                _ui.SetValue("/:Input", true);
-                _extended = true;
-                _fillAt = _clock + 0.15f;             // Liste nach dem Umschalten der Seiten füllen
-                break;
-            case "bmap:ttip:redu": _extended = false; break;   // Tooltip wieder eingeklappt
-            case "bmap:ttip:mecl": break;                       // Menü des Tooltips zu
-            case "bmap:ttip:meop": _miniMenu = true; break;     // Mini-Menü offen (Eingabe gehört dem Film)
-            case "inon": _miniMenu = false; break;              // Menü zu, Eingabe wieder an die Karte
-            case "gotp":                              // Teleport an die Cursorposition (bzw. die des Mini-Menüs)
-                if (_menuWorld.HasValue) _cursorWorld = _menuWorld;
-                TeleportToCursor(); BeginClosing(); break;
-            case "coin":                              // Wettbewerb der Meisterschaft betreten (A auf dem Meisterschafts-Spot)
-                {
-                    int cup = _contestCup >= 0 ? _contestCup : (_selected >= 0 && _selected < _spots.Count ? _spots[_selected].cup : -1);
-                    if (cup < 0 && _hover >= 0 && _hover < _spots.Count) cup = _spots[_hover].cup;
-                    if (cup >= 0 && cup != _contestCup) EnterContest(cup);
-                    break;
-                }
-            case "coou":                              // Wettbewerb verlassen: vom Treffpunkt -> Karte zu, sonst normale Karte
-                if (_contestDirect) { _contestCup = -1; BeginClosing(); }
-                else LeaveContest();
-                break;
-            case "giup":                              // Meisterschaft aufgeben
-                if (_contestCup >= 0) { Championships.GiveUp(_contestCup); SetContestVars(_contestCup); BuildSpots(); }
-                break;
-            case "mcen":                              // Menü des Tooltips bestätigt ("Teilnehmen" eines Meisterschaftsrennens)
-                if (_contestCup >= 0 && _selected >= 0 && _selected < _spots.Count && _spots[_selected].race >= 0)
-                {
-                    _pendingStart = (_spots[_selected].cup, _spots[_selected].race);
-                    Log.Info("Karte: Meisterschaftsrennen " + (_spots[_selected].race + 1) + " gewählt");
-                    HideTooltip(); _extended = false;
-                    Close();
-                }
-                break;
-            case "goin":                              // zum Spot teleportieren (Menü des Tooltips) bzw. zum Mitspieler
-                if (_contestCup >= 0 && _selected >= 0 && _selected < _spots.Count && _spots[_selected].race >= 0)
-                {
-                    // Rennen der Meisterschaft: nach dem Schließen an den Start und los
-                    _pendingStart = (_spots[_selected].cup, _spots[_selected].race);
-                    BeginClosing(); break;
-                }
-                if (_selectedPlayer >= 0) TeleportToPlayer(_selectedPlayer);
-                else TeleportToSpot(_selected >= 0 && _selected < _spots.Count ? _spots[_selected].spot : null);
-                BeginClosing(); break;
-            // Mitspieler (Tooltip-Menü): Beitreten über die Ladeanzeige join_player (cmon_joinPlayer wie im Pausemenü):
-            // joinPlayer() -> "join:wait" (Lader wartet auf _root.CanJoinPlayer) -> endLoading -> "pjoi"; Fehler: JoinError + timeOutLoading
-            case "join:wait":
-                {
-                    string err = "Spieler nicht gefunden.";
-                    bool ok = _selectedPlayer >= 0 && Paradise.Game.Online.Party.CanJoin(_selectedPlayer, out err);
-                    Log.Info($"Karte: Beitreten {_selectedPlayer}: " + (ok ? "ok" : err));
-                    if (ok) _ui!.SetValue("/:CanJoinPlayer", true);
-                    else
-                    {
-                        _ui!.SetVariable("/:JoinError", err);
-                        if (!_ui.CallClip("/join_player", "timeOutLoading")) _ui.SetValue("/:Input", true);
-                    }
-                    break;
-                }
-            case "join:canc": break;
-            case "pjoi":
-                if (_selectedPlayer >= 0) TeleportToPlayer(_selectedPlayer);
-                BeginClosing(); break;
-            case "pinv":                              // Mitspieler einladen (Tooltip-Menü)
-                if (_selectedPlayer >= 0) Paradise.Game.Online.Party.Invite(_selectedPlayer);
-                break;
-            case "targ":                              // GPS-Ziel setzen bzw. entfernen (Sound spielt der Film: sndp:valid/dropflag)
-                ToggleGpsTarget(MenuPoint(), _menuTargetPresent, false); break;
-            case "tpok":                              // Teleport möglich? (nur auf Straßen, wie im Spiel)
-                _ui!.SetValue("/:IsTeleportOK", OnRoad(out _)); break;
-            case "fiou": case "fiin": case "fity": case "stof": case "ston": case "mnok": break;   // Animationsmeldungen der Filterleiste
-            case "bmrk:enbl":                         // Lesezeichen an der Cursorposition (Unity TDU2BigMap)
-                {
-                    var g = MenuPoint(); var sm = _ctx.Terrain?.Streamer;
-                    if (g.HasValue && TDU2Bookmarks.CanAdd)
-                    {
-                        // Höhe vom Gelände (Cursor liegt auf Meereshöhe), damit das Symbol beim Kippen der Karte an der Stelle bleibt
-                        var p = g.Value;
-                        if (sm != null && sm.RaycastDown(new Vector3(p.X, p.Y + 3000f, p.Z), 0f, 6000f, out float gy)) p.Y = gy;
-                        TDU2Bookmarks.Add(IslandName(), p); BuildSpots();
-                        _ui!.CallClip("/presets/ttip", "Open");   // Meldung "Lesezeichen hinzugefügt" (schließt sich selbst)
-                    }
-                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
-                    break;
-                }
-            case "bmrk:dsbl":                         // Lesezeichen entfernen
-                {
-                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
-                    if (ms != null && ms.bookmark >= 0) { TDU2Bookmarks.Remove(ms.bookmark); _selected = -1; HideTooltip(); BuildSpots(); }
-                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
-                    break;
-                }
-            case "mysp:enbl":                         // Spot als Favorit
-            case "mysp:dsbl":
-                {
-                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : null;
-                    if (ms != null && ms.bookmark < 0) TDU2Bookmarks.SetFavorite(ms.spot.Code, c == "mysp:enbl");
-                    _ui!.SetValue("/:IsSpotFavorite", ms != null && TDU2Bookmarks.IsFavorite(ms.spot.Code));
-                    break;
-                }
-            default: break;
-        }
     }
 
     void SetZoom(int z)
@@ -824,8 +704,25 @@ public class GAME_MODE_MAP : GameModeHandler
         ui.SetValue("/:IsSpotFavorite", TDU2Bookmarks.IsFavorite(s.Code));
         // wie im Spiel: Name aus der Sprachdatenbank (Händler/Shops DBCarShop._libelle_hc, Häuser DBHouse._housename_hc)
         var dbName = ms.bookmark < 0 && ms.cup < 0 ? SpotDbName(s) : null;
-        if (!string.IsNullOrEmpty(dbName)) name = dbName;
-        else if (label == "carDealer" || label == "bikeDealer") { var b = DealerBrands(s.Code); if (!string.IsNullOrEmpty(b)) name = b; }
+
+        Log.Info("Karte: Tooltip " + s.Code + " (" + label + ") -> Name '" + name + "'" + (string.IsNullOrEmpty(dbName) ? "" : ", DB-Name '" + dbName + "'"));
+
+        if (label == "clothes")
+        {
+            var clothes = AvatarUtils.GetClothesCountFromSpot(s, PlayerUtils.GetAvatarSex());
+            var clothesparts = AvatarUtils.GetExtraPartsCountFromSpot(s);
+            Log.Info($"Parts Hats: {clothesparts.Hats} Pullover: {clothesparts.Pullovers} Pants: {clothesparts.Pants} Shoes: {clothesparts.Shoes}");
+            Log.Info("Karte: Kleidung " + s.Code + " -> " + clothes.Owned + "/" + clothes.Available + " (Besitz/Angebot)");
+        }
+
+        if (!string.IsNullOrEmpty(dbName)) 
+            name = dbName;
+        else if (label == "carDealer" || label == "bikeDealer") 
+        { 
+            var b = DealerBrands(s.Code); 
+            if (!string.IsNullOrEmpty(b)) 
+                name = b; 
+        }
         if (ms.cup >= 0)
         {
             var mc = Championships.MapCupAt(ms.cup);
@@ -904,6 +801,7 @@ public class GAME_MODE_MAP : GameModeHandler
             var cars = HouseCars(ms.spot.Code);
             int places = house != null && house.CarSlots > 0 ? house.CarSlots : cars.Count;
             Log.Info($"Karte: Haus {ms.spot.Code} -> DB {(house != null ? house.SpotName + ", Stellplätze " + house.CarSlots + ", Stufe " + house.Level : "nicht gefunden")}, Autos {cars.Count}");
+
             ui.SetVariable("/:nb_cars", cars.Count.ToString());
             ui.SetVariable("/:nb_garage_places", places > 0 ? places.ToString() : "");
             if (house != null && house.Level > 0) ui.SetValue("/:HouseLevel", house.Level);
@@ -1052,6 +950,7 @@ public class GAME_MODE_MAP : GameModeHandler
         var s = ms.spot; var label = ms.label;
         ui.SetClipTexture("/tool_tip/infos/picture/lure_map", SpotPicture(s));
         if (ms.cup >= 0) { SetContestVars(ms.cup); return; }
+        if (label == "clothes") { FillClothesInfos(s); return; }
         if (label == "tuning")
         {
             // Marken des Tuners: Logos in txt/list/br0..15/l (logotexturepage.bnk wie die Händler-Symbole)
@@ -1099,6 +998,36 @@ public class GAME_MODE_MAP : GameModeHandler
         foreach (int id in shop.CarIds)
             if (id != 0 && db.ById.TryGetValue(id, out var c) && c.LogoIndex >= 0 && !r.Contains(c.LogoIndex)) r.Add(c.LogoIndex);
         return r;
+    }
+
+    /// <summary>Besitz-/Angebotszahlen eines Kleidungsladens in der ausgeklappten Infokarte setzen (chbr / FillExtendedInfos).</summary>
+    void FillClothesInfos(Spot s)
+    {
+        if (_ui == null || s == null) return;
+        int sex = PlayerUtils.GetAvatarSex();
+        var clothes = AvatarUtils.GetClothesCountFromSpot(s, sex);
+        var parts = AvatarUtils.GetExtraPartsCountFromSpot(s, sex);
+        Log.Info("Karte: Kleidung " + s.Code + " Besitz/Angebot " + clothes.Owned + "/" + clothes.Available
+            + " (Hüte " + parts.Hats.Owned + "/" + parts.Hats.Available
+            + ", Oberteile " + parts.Pullovers.Owned + "/" + parts.Pullovers.Available
+            + ", Hosen " + parts.Pants.Owned + "/" + parts.Pants.Available
+            + ", Sonnenbrillen " + parts.Sunglasses.Owned + "/" + parts.Sunglasses.Available
+            + ", Handschuhe " + parts.Gloves.Owned + "/" + parts.Gloves.Available
+            + ", Schuhe " + parts.Shoes.Owned + "/" + parts.Shoes.Available + ")");
+
+        _ui.SetObjectText("/tool_tip/infos/#122", clothes.Owned.ToString());
+        _ui.SetObjectText("/tool_tip/infos/#123", clothes.Available.ToString());
+        void SetItem(string path, AvatarUtils.ShopStockCount c)
+        {
+            _ui.SetObjectText(path + "/#4", c.Owned.ToString());
+            _ui.SetObjectText(path + "/#6", c.Available.ToString());
+        }
+        SetItem("/tool_tip/infos/txt/pages/item0", parts.Hats);
+        SetItem("/tool_tip/infos/txt/pages/item1", parts.Pullovers);
+        SetItem("/tool_tip/infos/txt/pages/item2", parts.Pants);
+        SetItem("/tool_tip/infos/txt/pages/item3", parts.Sunglasses);
+        SetItem("/tool_tip/infos/txt/pages/item4", parts.Gloves);
+        SetItem("/tool_tip/infos/txt/pages/item5", parts.Shoes);
     }
 
     void HideTooltip()
@@ -1443,4 +1372,150 @@ public class GAME_MODE_MAP : GameModeHandler
         if (cat >= 23 && cat <= 24) return "mC" + (cat - 22);
         return "empty";
     }
+
+
+    /// <summary>
+    /// Flash Map Commands
+    /// </summary>
+    /// <param name="cmd"></param>
+    /// <param name="args"></param>
+    void OnCommand(string cmd, string args)
+    {
+        if (!_open)  return;
+        string c = (cmd ?? "").Trim().ToLowerInvariant();
+        if (c.StartsWith("sndp:")) return;
+        if (c.StartsWith("bmap:fltr:icf"))
+        {
+            if (int.TryParse(c.Substring(13), out int f)) { _filter = System.Math.Clamp(f, 0, 5); _hover = -1; HideTooltip(); }
+            return;
+        }
+        switch (c)
+        {
+            case "zoin": SetZoom(_zoom - 1); break;   // setZoom("in")  -> Spiel verkleinert WhatZoom
+            case "zoou": SetZoom(_zoom + 1); break;   // setZoom("out")
+            case "gofr": BeginClosing(); break;       // B im Navigator: zurück ins freie Fahren (Schließanimation läuft)
+            case "bmap:ttip:extd":                    // A auf einem Spot: Tooltip mit Infos/Menü ausklappen
+                _ui!.CallClip("/tool_tip", "Extend", 1);
+                _ui.SetValue("/:Input", true);
+                _extended = true;
+                _fillAt = _clock + 0.15f;             // Liste nach dem Umschalten der Seiten füllen
+                break;
+            case "bmap:ttip:redu": _extended = false; break;   // Tooltip wieder eingeklappt
+            case "bmap:ttip:mecl": break;                       // Menü des Tooltips zu
+            case "bmap:ttip:meop": _miniMenu = true; break;     // Mini-Menü offen (Eingabe gehört dem Film)
+            case "inon": _miniMenu = false; break;              // Menü zu, Eingabe wieder an die Karte
+            case "gotp":                              // Teleport an die Cursorposition (bzw. die des Mini-Menüs)
+                if (_menuWorld.HasValue) _cursorWorld = _menuWorld;
+                TeleportToCursor(); BeginClosing(); break;
+            case "coin":                              // Wettbewerb der Meisterschaft betreten (A auf dem Meisterschafts-Spot)
+                {
+                    int cup = _contestCup >= 0 ? _contestCup : (_selected >= 0 && _selected < _spots.Count ? _spots[_selected].cup : -1);
+                    if (cup < 0 && _hover >= 0 && _hover < _spots.Count) cup = _spots[_hover].cup;
+                    if (cup >= 0 && cup != _contestCup) EnterContest(cup);
+                    break;
+                }
+            case "coou":                              // Wettbewerb verlassen: vom Treffpunkt -> Karte zu, sonst normale Karte
+                if (_contestDirect) { _contestCup = -1; BeginClosing(); }
+                else LeaveContest();
+                break;
+            case "giup":                              // Meisterschaft aufgeben
+                if (_contestCup >= 0) { Championships.GiveUp(_contestCup); SetContestVars(_contestCup); BuildSpots(); }
+                break;
+            case "mcen":                              // Menü des Tooltips bestätigt ("Teilnehmen" eines Meisterschaftsrennens)
+                if (_contestCup >= 0 && _selected >= 0 && _selected < _spots.Count && _spots[_selected].race >= 0)
+                {
+                    _pendingStart = (_spots[_selected].cup, _spots[_selected].race);
+                    Log.Info("Karte: Meisterschaftsrennen " + (_spots[_selected].race + 1) + " gewählt");
+                    HideTooltip(); _extended = false;
+                    Close();
+                }
+                break;
+            case "goin":                              // zum Spot teleportieren (Menü des Tooltips) bzw. zum Mitspieler
+                if (_contestCup >= 0 && _selected >= 0 && _selected < _spots.Count && _spots[_selected].race >= 0)
+                {
+                    // Rennen der Meisterschaft: nach dem Schließen an den Start und los
+                    _pendingStart = (_spots[_selected].cup, _spots[_selected].race);
+                    BeginClosing(); break;
+                }
+                if (_selectedPlayer >= 0) TeleportToPlayer(_selectedPlayer);
+                else TeleportToSpot(_selected >= 0 && _selected < _spots.Count ? _spots[_selected].spot : null);
+                BeginClosing(); break;
+            // Mitspieler (Tooltip-Menü): Beitreten über die Ladeanzeige join_player (cmon_joinPlayer wie im Pausemenü):
+            // joinPlayer() -> "join:wait" (Lader wartet auf _root.CanJoinPlayer) -> endLoading -> "pjoi"; Fehler: JoinError + timeOutLoading
+            case "join:wait":
+                {
+                    string err = "Spieler nicht gefunden.";
+                    bool ok = _selectedPlayer >= 0 && Paradise.Game.Online.Party.CanJoin(_selectedPlayer, out err);
+                    Log.Info($"Karte: Beitreten {_selectedPlayer}: " + (ok ? "ok" : err));
+                    if (ok) _ui!.SetValue("/:CanJoinPlayer", true);
+                    else
+                    {
+                        _ui!.SetVariable("/:JoinError", err);
+                        if (!_ui.CallClip("/join_player", "timeOutLoading")) _ui.SetValue("/:Input", true);
+                    }
+                    break;
+                }
+            case "join:canc": break;
+            case "pjoi":
+                if (_selectedPlayer >= 0) TeleportToPlayer(_selectedPlayer);
+                BeginClosing(); break;
+            case "pinv":                              // Mitspieler einladen (Tooltip-Menü)
+                if (_selectedPlayer >= 0) Paradise.Game.Online.Party.Invite(_selectedPlayer);
+                break;
+            case "targ":                              // GPS-Ziel setzen bzw. entfernen (Sound spielt der Film: sndp:valid/dropflag)
+                ToggleGpsTarget(MenuPoint(), _menuTargetPresent, false); break;
+            case "tpok":                              // Teleport möglich? (nur auf Straßen, wie im Spiel)
+                _ui!.SetValue("/:IsTeleportOK", OnRoad(out _)); break;
+            case "fiou": case "fiin": case "fity": case "stof": case "ston": case "mnok": break;   // Animationsmeldungen der Filterleiste
+            case "bmrk:enbl":                         // Lesezeichen an der Cursorposition (Unity TDU2BigMap)
+                {
+                    var g = MenuPoint(); var sm = _ctx.Terrain?.Streamer;
+                    if (g.HasValue && TDU2Bookmarks.CanAdd)
+                    {
+                        // Höhe vom Gelände (Cursor liegt auf Meereshöhe), damit das Symbol beim Kippen der Karte an der Stelle bleibt
+                        var p = g.Value;
+                        if (sm != null && sm.RaycastDown(new Vector3(p.X, p.Y + 3000f, p.Z), 0f, 6000f, out float gy)) p.Y = gy;
+                        TDU2Bookmarks.Add(IslandName(), p); BuildSpots();
+                        _ui!.CallClip("/presets/ttip", "Open");   // Meldung "Lesezeichen hinzugefügt" (schließt sich selbst)
+                    }
+                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                    break;
+                }
+            case "bmrk:dsbl":                         // Lesezeichen entfernen
+                {
+                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
+                    if (ms != null && ms.bookmark >= 0) { TDU2Bookmarks.Remove(ms.bookmark); _selected = -1; HideTooltip(); BuildSpots(); }
+                    _ui!.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
+                    break;
+                }
+            case "mysp:enbl":                         // Spot als Favorit
+            case "mysp:dsbl":
+                {
+                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : null;
+                    if (ms != null && ms.bookmark < 0) TDU2Bookmarks.SetFavorite(ms.spot.Code, c == "mysp:enbl");
+                    _ui!.SetValue("/:IsSpotFavorite", ms != null && TDU2Bookmarks.IsFavorite(ms.spot.Code));
+                    break;
+                }
+            case "bmap:ttip:inf":
+            case "chbr": // Besitz-/Angebotszahlen der Infokarte (Shops)
+                {
+                    var ms = _selected >= 0 && _selected < _spots.Count ? _spots[_selected] : (_hover >= 0 && _hover < _spots.Count ? _spots[_hover] : null);
+                    if (ms == null) break;
+                    Log.Info("Karte: chbr " + ms.spot.Code + " (" + ms.label + ")");
+                    if (ms.label == "clothes")
+                    {
+
+                        int sex = PlayerUtils.GetAvatarSex();
+                        var clothes = AvatarUtils.GetClothesCountFromSpot(ms.spot, sex);
+                        var parts = AvatarUtils.GetExtraPartsCountFromSpot(ms.spot, sex);
+                        _ui.SetText("/:NbClothes", clothes.Owned.ToString());
+                        _ui.SetText("/:NbClothesMax", clothes.Available.ToString());
+                        FillClothesInfos(ms.spot);
+                    }
+                }
+                break;
+            default: { Log.NotImplemented($"Missing Map Command: {c} isExtended: {_extended} or isMiniMenue: {_miniMenu}"); } break;
+        }
+    }
+
 }

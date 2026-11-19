@@ -19,9 +19,11 @@
     <RootNamespacePrefix>Paradise</RootNamespacePrefix>
     <Version>0.1.0</Version>
 
-    <!-- Für lesbare Crash-Reports: vollständige Debug-Infos auch im Release.
-         Die .pdb bleibt bei dir; sie wird NICHT mit der exe ausgeliefert. -->
-    <DebugType>portable</DebugType>
+    <!-- Für lesbare Crash-Reports: Debug-Infos auch im Release.
+         'embedded' statt 'portable': die PDB wird in jede DLL eingebettet und ist damit
+         auch im Single-File-Publish vorhanden. Eine externe .pdb würde nicht mit der
+         exe ausgeliefert werden – dann fehlen in der Stacktrace Datei und Zeilennummer. -->
+    <DebugType>embedded</DebugType>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
 

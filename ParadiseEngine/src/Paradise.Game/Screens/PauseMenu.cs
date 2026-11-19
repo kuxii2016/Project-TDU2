@@ -162,6 +162,7 @@ public sealed class PauseMenu
         Log.Info($"Pausemenü offen (Gebiet {area}, pause_in={ok})");
         if (_ctx.Vehicles != null) _ctx.Vehicles.Frozen = true;   // Unity: Time.timeScale = 0
         AudioEngine.Paused = true;                                  // Unity: AudioListener.pause = true
+        ui.ForceVisible("/options/controls_menu/content_menu/pc/binder_key/#2", false);
     }
 
     public void Close()
@@ -859,6 +860,7 @@ public sealed class PauseMenu
                     _controlsList.Selected = 0; _controlsList.Top = 0;
                     _ui.ListRefresh(_controlsList);
                     _ui.ListLoaded(_controlsList);
+                    _ui.ForceVisible("/options/controls_menu/content_menu/pc/binder_key/#2", false);
                 }
                 return true;
             case "widg:kmap:dflt":            // Standardbelegung (Hilfeleiste)

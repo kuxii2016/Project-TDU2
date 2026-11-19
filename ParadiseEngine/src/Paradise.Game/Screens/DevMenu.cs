@@ -2,6 +2,8 @@ using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Platform;
 using Paradise.Core.Render;
+using Paradise.FlashDebug;
+using Paradise.Game.Config;
 using Paradise.Game.Input;
 using Paradise.Game.World;
 using System.Globalization;
@@ -81,6 +83,9 @@ public sealed partial class DevMenu : GameModule
     public override void Update(in GameTime time)
     {
         _time = time.TotalTime;
+#if WINDOWS
+        FlashBrowser.Pump();   // Flash-Browser (F1 > Flash Debug > Browse Flash) – auch bei geschlossenem Menü aktiv
+#endif
         SampleFrame(time.DeltaTime);
         CollectCarDebug();   // Radstrahlen/Kräfte am Auto (Car > Physics debug), auch bei geschlossenem Menü
         CollectRaceDebug();  // gewählte Strecke (Race Debug), auch bei geschlossenem Menü
@@ -173,7 +178,7 @@ public sealed partial class DevMenu : GameModule
     {
         _open = true;
         _stack.Clear();
-        _stack.Add(new Page { Title = "DEVELOPER MENU", Build = MainMenu });
+        _stack.Add(new Page { Title = "DEVELOPER MENU build: " + AppConfig.EngineVersion, Build = MainMenu });
         if (!_drive && !TDU2Controls.Blocked) { TDU2Controls.Blocked = true; _blockedByMe = true; }
         Rebuild(); Move(_stack[0], 0);
     }

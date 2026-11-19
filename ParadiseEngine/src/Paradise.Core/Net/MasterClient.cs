@@ -54,28 +54,13 @@ public sealed class MasterClient : IDisposable
         try
         {
             using var sock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            using var cts = new CancellationTokenSource(timeoutMs);
             var sw = Stopwatch.StartNew();
-            var connect = sock.ConnectAsync(host, port, cts.Token).AsTask();
-            if (await Task.WhenAny(connect, Task.Delay(timeoutMs)) != connect)
-            {
-                // Sonst bleibt der Connect-Task nach dem Dispose des Sockets übrig und
-                // faultet später als UnobservedTaskException im Finalizer.
-                cts.Cancel();
-                Observe(connect);
-                return -1;
-            }
+            var connect = sock.ConnectAsync(host, port);
+            if (await Task.WhenAny(connect, Task.Delay(timeoutMs)) != connect) return -1;
             await connect; // wirft, falls fehlgeschlagen
             sw.Stop();
             return (int)sw.ElapsedMilliseconds;
         }
         catch { return -1; }
     }
-
-    /// <summary>Eine Task-Fault bewusst beobachten (kein UnobservedTaskException).</summary>
-    private static void Observe(Task task) => _ = task.ContinueWith(
-        t => { _ = t.Exception; },
-        CancellationToken.None,
-        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-        TaskScheduler.Default);
 }

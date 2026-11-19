@@ -131,7 +131,7 @@ public sealed class RaceOpponents
             o.Path.AddRange(o.Def.PathOverride);
             Densify(o.Path);
             if (MathF.Abs(o.Def.LateralOffset) > 0.01f) Offset(o.Path, o.Def.LateralOffset);
-            if (o.Def.LatAccel > 0f) o.VLim = CurveSpeeds(o.Path, o.Def.LatAccel, 7f);
+            if (o.Def.LatAccel > 0f) o.VLim = CurveSpeeds(o.Path, o.Def.LatAccel, o.Def.Brake, o.Def.MaxSpeed);
             return;
         }
         o.Path.Add(o.Def.Position);
@@ -163,7 +163,7 @@ public sealed class RaceOpponents
         if (road != null && legs > 0) { o.Path.Clear(); o.Path.AddRange(road); Log.Info($"Gegner #{o.Def.CarId}: Straßenroute {legs} Abschnitte, {road.Count} Punkte"); }
         else { Smooth(o.Path); Log.Info($"Gegner #{o.Def.CarId}: keine Straßenroute (Netz {(lanes != null ? "da" : "fehlt")}), Linie durch die Tore"); }
         Densify(o.Path);
-        if (o.Def.LatAccel > 0f) o.VLim = CurveSpeeds(o.Path, o.Def.LatAccel, 7f);
+        if (o.Def.LatAccel > 0f) o.VLim = CurveSpeeds(o.Path, o.Def.LatAccel, o.Def.Brake, o.Def.MaxSpeed);
     }
 
     /// <summary>Rechte Seite einer waagerechten Richtung im Spielraum (wie Unity im gespiegelten Inselraum: (z, 0, −x)).</summary>
@@ -180,18 +180,22 @@ public sealed class RaceOpponents
             var d = src[System.Math.Min(src.Count - 1, i + 2)] - src[System.Math.Max(0, i - 2)]; d.Y = 0f;
             if (d.LengthSquared() < 1e-6f) continue;
             var right = Vector3.Normalize(RightOf(d));
-            path[i] = src[i] + right * off * Mathf.Lerp(1f, 0.7f, Mathf.Clamp01(s / 40f));
+            // 0 am Start (kein Sprung aus dem Startgitter) -> voller Linienversatz nach 40 m.
+            path[i] = src[i] + right * off * Mathf.Clamp01(s / 40f);
         }
     }
 
     /// <summary>
     /// Höchsttempo je Punkt aus der Krümmung (v = sqrt(aQuer / k), Krümmung über ±6 m gemessen), danach rückwärts
     /// mit Bremsverzögerung <paramref name="brake"/> ausgeglichen, damit vor Kurven rechtzeitig gebremst wird.
+    /// Wichtig: die Geraden auf <paramref name="top"/> begrenzen – mit 999 m/s wäre die Rückwärtsbremsung
+    /// wirkungslos und die Gegner würden erst IN der Kurve abbremsen (statt davor).
     /// </summary>
-    static float[] CurveSpeeds(List<Vector3> p, float latAcc, float brake)
+    static float[] CurveSpeeds(List<Vector3> p, float latAcc, float brake, float top)
     {
         int n = p.Count;
         var v = new float[n];
+        float cap = top > 1f ? top : 999f;
         for (int i = 0; i < n; i++)
         {
             int a = System.Math.Max(0, i - 6), b = System.Math.Min(n - 1, i + 6);
@@ -199,7 +203,7 @@ public sealed class RaceOpponents
             float len = d1.Length() + d2.Length();
             float ang = d1.LengthSquared() > 1e-4f && d2.LengthSquared() > 1e-4f ? Angle(d1, d2) * (MathF.PI / 180f) : 0f;
             float k = len > 0.5f ? ang / len : 0f;   // 1/m
-            v[i] = k > 1e-4f ? MathF.Sqrt(latAcc / k) : 999f;
+            v[i] = MathF.Min(cap, k > 1e-4f ? MathF.Sqrt(latAcc / k) : cap);
         }
         for (int i = n - 2; i >= 0; i--)
         {
@@ -343,8 +347,12 @@ public sealed class RaceOpponents
         float target = MathF.Max(3f, o.Def.MaxSpeed);
         if (o.VLim != null && o.Seg < o.VLim.Length) target = MathF.Min(target, MathF.Max(6f, o.VLim[System.Math.Min(o.VLim.Length - 1, o.Seg + 2)]));
         if (Avoidance) target = Avoid(o, target);
-        float acc = o.Speed < target ? MathF.Max(0.5f, o.Def.Accel) * Mathf.Lerp(1f, 0.35f, Mathf.Clamp01(o.Speed / MathF.Max(10f, o.Def.MaxSpeed))) : 9f;
-        o.Speed = Mathf.MoveTowards(o.Speed, target, acc * dt);
+        // Fahrergesetz: Beschleunigung linear auf 0 am Höchstempo, Bremse aus der Schwierigkeit
+        // (statt pauschal 9 m/s² – das ließ die Gegner in Kurven viel zu spät langsam werden).
+        float top = MathF.Max(10f, o.Def.MaxSpeed);
+        float accel = MathF.Max(0.5f, o.Def.Accel) * Mathf.Clamp01(1f - o.Speed / top);
+        float brake = MathF.Max(2f, o.Def.Brake);
+        o.Speed = Mathf.MoveTowards(o.Speed, target, (o.Speed < target ? accel : brake) * dt);
         float dist = o.Speed * dt;
         o.Traveled += dist;
         if (o.FinishTime < 0f && FinishDistance > 0f && o.Traveled >= FinishDistance) o.FinishTime = Clock != null ? Clock() : _time;
@@ -440,7 +448,7 @@ public sealed class RaceOpponents
         if (fwd.LengthSquared() < 1e-4f) return target;
         fwd = Vector3.Normalize(fwd);
         var right = RightOf(fwd);
-        float look = 6f + o.Speed * 0.9f;
+        float look = 12f + 0.6f * o.Speed;   // opponents_spec: 12 m + 0.6 s Vorsprung
         bool blocked = false; float blockSpeed = float.MaxValue, blockLat = 0f, blockAlong = float.MaxValue;
         bool leftBusy = false, rightBusy = false;
         void Check(Vector3 p, float speed)
@@ -468,14 +476,16 @@ public sealed class RaceOpponents
             target = MathF.Min(target, MathF.Max(0f, limit));
             // Überholen nur, wenn der Vordermann deutlich langsamer ist: zur freien Seite, höchstens ~1,5 Spuren daneben
             bool curve = o.VLim != null && o.Seg + 6 < o.VLim.Length && o.VLim[o.Seg + 6] < o.Def.MaxSpeed * 0.8f;
-            float side = desired > blockSpeed + 2f && !curve ? (blockLat >= 0f ? -1f : 1f) : 0f;   // in Kurven nicht überholen
+            // opponents_spec: überholt wird, wenn der Vordermann langsamer ist als (3 - 3 * Aggressiveness) m/s.
+            // vorher fest +2 m/s -> aggressive Fahrer warteten trotz freier Seite.
+            float passMargin = 3f - 3f * Mathf.Clamp01(o.Def.Aggressiveness);
+            float side = desired > blockSpeed + passMargin && !curve ? (blockLat >= 0f ? -1f : 1f) : 0f;
             if (side > 0f && rightBusy) side = leftBusy ? 0f : -1f;
             else if (side < 0f && leftBusy) side = rightBusy ? 0f : 1f;
-            // Querrichtung: "right" entspricht +Shift
+            // Querrichtung: "right" entspricht +Shift; höchstens 2,8 m neben der eigenen Linie
             if (side != 0f)
             {
-                float total = o.Def.LateralOffset + o.ShiftTarget;
-                float want = System.Math.Clamp(total + side * 3.2f, -5f, 5f) - o.Def.LateralOffset;
+                float want = Mathf.Clamp(o.ShiftTarget + side * 2.8f, -2.8f, 2.8f);
                 if (MathF.Abs(want - o.ShiftTarget) > 0.5f && MathF.Abs(o.Shift - o.ShiftTarget) < 0.3f) o.ShiftTarget = want;
             }
             o.ClearSince = _time;

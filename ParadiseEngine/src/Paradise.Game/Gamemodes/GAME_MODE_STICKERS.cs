@@ -610,7 +610,7 @@ public class GAME_MODE_STICKERS : InteriorUtils
     static void UpdateInfos()
     {
         var ui = _ui!;
-        var ci = CultureInfo.GetCultureInfo("de-DE");
+        var ci = Paradise.Core.Util.GermanFormat.Number;
         ui.SetVariable("/:StickerRotateAngleStr", (((_rot % 360f) + 360f) % 360f).ToString("0.0", ci) + "°");
         ui.SetVariable("/:StickerXScaleStr", (_sx * 100f).ToString("0", ci) + " %");
         ui.SetVariable("/:StickerYScaleStr", (_sy * 100f).ToString("0", ci) + " %");
@@ -882,7 +882,7 @@ public class GAME_MODE_STICKERS : InteriorUtils
         ui.SetValue("/:EnoughMoney", enough);
     }
 
-    static string Money(long v) => "$ " + v.ToString("N0", CultureInfo.GetCultureInfo("de-DE"));
+    static string Money(long v) => "$ " + v.ToString("N0", Paradise.Core.Util.GermanFormat.Number);
 
     static void Save()
     {

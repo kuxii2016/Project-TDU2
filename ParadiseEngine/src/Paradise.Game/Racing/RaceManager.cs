@@ -304,9 +304,12 @@ public sealed class RaceManager
 
     void AddPenalty(float impact, string what = "")
     {
-        if (State != RaceState.Running || Race == null) return;
         string? why = null;
-        if (!RaceConfig.PenaltiesAlways && Race.PenaltyLevel <= 0) why = "Prüfung ohne Strafstufe (PeLv 0)";
+        if (State != RaceState.Running || Race == null) return;
+        if (Race.PenaltyLevel <= 0)
+        {
+            why = "Prüfung ohne Strafstufe (PeLv 0)";
+        }
         else if (impact < RaceConfig.PenaltyMinImpact) why = "zu leicht (< " + RaceConfig.PenaltyMinImpact.ToString("0.0") + " m/s)";
         else if (_clock - _lastPenaltyT < 1.5f) why = "gleicher Treffer (< 1,5 s)";
         Log.Info("Treffer " + what + " mit " + impact.ToString("0.0") + " m/s – " + (why ?? "Strafe +" + RaceConfig.PenaltySeconds.ToString("0") + " s"));

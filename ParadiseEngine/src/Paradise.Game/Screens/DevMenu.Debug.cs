@@ -1,6 +1,7 @@
 using Paradise.Core.Audio;
 using Paradise.Core.Avatars;
 using Paradise.Core.Flash;
+using Paradise.FlashDebug;
 using Paradise.Core.Online;
 using Paradise.Core.Savegame;
 using Paradise.Core.Vehicles;
@@ -481,7 +482,13 @@ public sealed partial class DevMenu
     List<Item> FlashMenu()
     {
         _flashViewers.RemoveAll(v => !FlashHost.Players.Contains(v));
-        var l = new List<Item> { Head("PLAYING FLASH") };
+        var l = new List<Item>
+        {
+            #if WINDOWS
+            Action_("Browse Flash (Fenster öffnen)", () => { FlashBrowser.Open(); Toast("Flash Browser geöffnet"); }),
+            #endif
+            Head("PLAYING FLASH"),
+        };
         int n = 0;
         foreach (var p in FlashHost.Players)
         {

@@ -389,5 +389,5 @@ public class GAME_MODE_TUNER : InteriorUtils
     static int ParseInt(string? s) => int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v
         : double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? (int)d : 0;
 
-    static string Money(long v) => "$ " + v.ToString("N0", CultureInfo.GetCultureInfo("de-DE"));
+    static string Money(long v) => "$ " + v.ToString("N0", Paradise.Core.Util.GermanFormat.Number);
 }

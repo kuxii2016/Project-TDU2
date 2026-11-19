@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- Flash-Browser (WinForms) läuft im Spielprozess – deshalb Windows-TFM wie der Launcher. -->
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Paradise.Game</RootNamespace>
     <AssemblyName>Test Drive Unlimited 2</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -12,15 +15,29 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <DebugType>none</DebugType>
+    <!-- embedded statt none: ohne PDB stehen im Crash-Report nur Funktionsnamen,
+         aber keine Datei-/Zeilenangaben. Die PDB liegt in der DLL (auch in der
+         Single-File-exe), es wird keine zusätzliche Datei benötigt. -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <DebugType>none</DebugType>
+    <!-- embedded statt none: ohne PDB stehen im Crash-Report nur Funktionsnamen,
+         aber keine Datei-/Zeilenangaben. Die PDB liegt in der DLL (auch in der
+         Single-File-exe), es wird keine zusätzliche Datei benötigt. -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Paradise.Core\Paradise.Core.csproj" />
+    <ProjectReference Include="..\Paradise.FlashDebug\Paradise.FlashDebug.csproj" />
+  </ItemGroup>
+
+  <!-- Keine WinForms-Implizit-Usings im Spiel: "Screen" ist sonst mehrdeutig
+       (Paradise.Core.Flash.Screen vs. System.Windows.Forms.Screen). -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 
   <!-- Speicherbereinigung: Streaming erzeugt viel Müll im Large Object Heap (Bänke, Netze). Standard-GC räumt den erst bei
