@@ -38,6 +38,10 @@ public sealed class RaceOpponentDef
     public float LateralOffset; // seitlicher Abstand zur Ideallinie (m)
     public List<Vector3>? PathOverride;   // feste Route (Inselkoordinaten), sonst durch die Tore
     public float StartDistance; // Weg bis zur Startlinie (m, negativ = dahinter) für die Platzierung
+    // --- Fahrergesetz (opponents_spec.md): aus _difficulty_bot_n / _aggressiveness_bot_n (0..1)
+    public float Difficulty;     // Stärke des Fahrers (0..1)
+    public float Aggressiveness; // Bereitschaft zu überholen (0..1)
+    public float Brake = 7.5f;   // Bremsverzögerung (m/s²), 7.5 + 3 * Difficulty
 }
 
 /// <summary>Spielart einer Challenge (ig2 "gmth"), nach den Meisterschafts-Dateien: 0 Zeitfahren (…T), 1 Radar (…A),

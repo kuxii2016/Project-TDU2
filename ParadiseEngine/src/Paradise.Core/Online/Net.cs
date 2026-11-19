@@ -85,8 +85,25 @@ namespace Paradise.Core.Online
             if (_tcp != null && _tcp.Connected) return false;
             CloseLocked();
             var tcp = new TcpClient { NoDelay = true, ReceiveTimeout = TimeoutMs, SendTimeout = TimeoutMs };
-            var t = tcp.ConnectAsync(Host, Port);
-            if (!t.Wait(4000) || !tcp.Connected) { try { tcp.Close(); } catch (Exception) { } throw new SocketException((int)SocketError.TimedOut); }
+            try
+            {
+                // Früher: var t = tcp.ConnectAsync(...); t.Wait(4000). Bei Timeout oder
+                // Shutdown wurde tcp.Close() aufgerufen, während der Connect-Task noch lief.
+                // Der Task faultete danach mit SocketError.OperationAborted (995) und landete
+                // als UnobservedTaskException im Finalizer. Mit Token + GetResult() wird
+                // jedes Ergebnis – auch der Abbruch – sofort beobachtet.
+                using var cts = new CancellationTokenSource(4000);
+                tcp.ConnectAsync(Host, Port, cts.Token).GetAwaiter().GetResult();
+                if (!tcp.Connected) throw new SocketException((int)SocketError.NotConnected);
+            }
+            catch (Exception ex)
+            {
+                try { tcp.Close(); } catch (Exception) { }
+                if (ex is OperationCanceledException ||
+                    (ex is SocketException se && se.SocketErrorCode == SocketError.OperationAborted))
+                    throw new SocketException((int)SocketError.TimedOut);
+                throw; // Originalfehler (z. B. ConnectionRefused) weitergeben
+            }
             var s = tcp.GetStream();
             _tcp = tcp;
             _reader = new StreamReader(s, new UTF8Encoding(false));
