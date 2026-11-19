@@ -30,7 +30,7 @@ The goal is to regain full control over rendering, performance, resource managem
 
 
 <p align="center">
-  <img src="./drivingshool/stickershop.PNG" width="49%" alt="Driving Shool"/>
+  <img src="./Screenshots/drivingshool.PNG" width="49%" alt="Driving Shool"/>
   <img src="./Screenshots/cups.PNG" width="49%" alt="Cups Unlocked"/>
 </p>
 
