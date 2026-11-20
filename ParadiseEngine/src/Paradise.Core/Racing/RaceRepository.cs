@@ -45,6 +45,22 @@ public sealed class RaceRepository
     {
         var ig2 = LoadIge2(challengeName);
         if (ig2 == null) return null;
+        var def = FromIge2(ig2, challengeName, license);
+        var entry = SpotWorld?.Find(challengeName);
+        if (entry != null && entry.Position.LengthSquared() > 1f)
+        {
+            def.StartPosition = entry.Position; def.StartHeading = entry.Heading; def.HasSpotStart = true;
+        }
+        else if (def.Start != null) def.StartPosition = def.Start.Position;
+        return def;
+    }
+
+    /// <summary>
+    /// Renn-Definition aus einer geladenen .ig2 (ohne Startpunkt aus spotworld.bin: Start = erstes Tor). Auch für Challenges des
+    /// Editors (Testfahrt) und der Spielhalle – die exe lässt sie über denselben Challenge-Ablauf laufen.
+    /// </summary>
+    public static RaceDefinition FromIge2(Ige2File ig2, string challengeName, LicenseInfo? license)
+    {
         var def = new RaceDefinition
         {
             Name = challengeName,
@@ -61,6 +77,8 @@ public sealed class RaceRepository
             HasTimeLimit = ig2.Int("ChCD") == 1,
             TimeLimitMs = ig2.Int("CtDw"),
             RewardMoney = ig2.Int("rewm"),
+            SpeedTrapMin = ig2.Int("tras") / 1000f,
+            SpeedPointsRef = ig2.Int("SPPG") / 1000f,
             CarId = ig2.Int("VMod"),
             PenaltyLevel = ig2.Int("PeLv"),
             OffroadPenalty = ig2.Int("offR") != 0,
@@ -73,6 +91,14 @@ public sealed class RaceRepository
             BotCount = ig2.Int("NbIA"),
         };
         def.Laps = def.IsCircuit ? Mathf.Max(1, def.LapsRaw) : 1;
+        var cpts = ig2.Setting("CpTs")?.Data;
+        if (cpts != null && cpts.Length >= 8)
+            for (int p = 4; p + 4 <= cpts.Length; p += 4)
+            {
+                int t = Be.I32(cpts, p);
+                if (t <= 0) break;
+                def.RefSplitsMs.Add(t);
+            }
         for (int i = 0; i < ig2.Checkpoints.Count; i++) def.Checkpoints.Add(RaceCheckpoint.From(ig2.Checkpoints[i], i));
         if (def.Checkpoints.Count > 0) def.Checkpoints[def.IsCircuit ? 0 : def.Checkpoints.Count - 1].IsFinish = true;
         BuildDecors(ig2, def);
@@ -82,12 +108,7 @@ public sealed class RaceRepository
             var f = v.Forward; f.Y = 0f; if (f.LengthSquared() < 1e-6f) f = Vector3.UnitZ;
             def.Opponents.Add(new RaceOpponentDef { CarId = v.CarId, Position = v.Position, Forward = Vector3.Normalize(f), MaxSpeed = v.MaxSpeed, StartCheckpoint = v.StartCheckpoint });
         }
-        var entry = SpotWorld?.Find(challengeName);
-        if (entry != null && entry.Position.LengthSquared() > 1f)
-        {
-            def.StartPosition = entry.Position; def.StartHeading = entry.Heading; def.HasSpotStart = true;
-        }
-        else if (def.Start != null) def.StartPosition = def.Start.Position;
+        if (def.Start != null) def.StartPosition = def.Start.Position;
         return def;
     }
 

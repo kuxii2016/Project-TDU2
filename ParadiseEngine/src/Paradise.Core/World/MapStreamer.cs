@@ -15,7 +15,7 @@ namespace Paradise.Core.World;
 /// Instead of GameObjects, <see cref="Node"/>s are created (mesh draw commands + RenderObjects).
 /// Coordinates: Game coordinates; render space = game coordinates * <see cref="RootMatrix"/>
 /// </summary>
-public sealed class MapStreamer : IDisposable
+public sealed partial class MapStreamer : IDisposable
 {
     #region Settings (values from the Unity scene TDU2Main.unity, TDU2MapStreamer component)
     public string Island = "ibiza";
@@ -1874,20 +1874,30 @@ public sealed class MapStreamer : IDisposable
                     int ocnt = 0;
                     foreach (var (t, _, _) in parts) ocnt += t.Length / 3;
                     var otris = new Vector3[ocnt * 3]; var osurf = new byte[ocnt];
+                    // Debug-Index: Hülle + Dreiecksbereich je Objekt, damit einzelne Steine/Schilder im Debug erscheinen.
+                    var debugParts = new List<PhysicsWorld.PreparedMesh.DebugPart>(parts.Count);
                     int ow = 0;
                     foreach (var (t, m, surf) in parts)
                     {
                         bool flip = m.GetDeterminant() < 0f;   // gespiegelte Platzierung kehrt die Wicklung um
+                        int start = ow;
+                        var pmin = new Vector3(float.MaxValue); var pmax = new Vector3(float.MinValue);
                         for (int i = 0; i + 2 < t.Length; i += 3)
                         {
                             osurf[ow] = surf;
-                            otris[ow * 3] = Vector3.Transform(t[i], m);
-                            otris[ow * 3 + 1] = Vector3.Transform(t[flip ? i + 2 : i + 1], m);
-                            otris[ow * 3 + 2] = Vector3.Transform(t[flip ? i + 1 : i + 2], m);
+                            var a = Vector3.Transform(t[i], m);
+                            var b = Vector3.Transform(t[flip ? i + 2 : i + 1], m);
+                            var c = Vector3.Transform(t[flip ? i + 1 : i + 2], m);
+                            otris[ow * 3] = a; otris[ow * 3 + 1] = b; otris[ow * 3 + 2] = c;
+                            pmin = Vector3.Min(pmin, Vector3.Min(a, Vector3.Min(b, c)));
+                            pmax = Vector3.Max(pmax, Vector3.Max(a, Vector3.Max(b, c)));
                             ow++;
                         }
+                        if (ow > start)
+                            debugParts.Add(new PhysicsWorld.PreparedMesh.DebugPart((pmin + pmax) * 0.5f, (pmax - pmin) * 0.5f, start, ow - start));
                     }
                     po = phys.PrepareStaticMesh(otris.AsSpan(0, ow * 3), osurf.AsSpan(0, ow));
+                    if (po != null) po.DebugParts = debugParts.ToArray();
                     return (pt, po);
                 })
             });

@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
+using System.Threading;
 
 namespace Paradise.Game.Online;
 
@@ -72,10 +73,36 @@ public static class Multiplayer
     static double Now => _clock.Elapsed.TotalSeconds;
     static IGameModeContext? _ctx;
 
+    // Echte Traffic-Zähler (Dev-Menü): Server-UDP und direkte P2P-Pakete. Relay/Punch zählt TDU2PeerMesh.
+    static long _serverPacketsIn, _serverBytesIn, _serverPacketsOut, _serverBytesOut;
+    static long _directPacketsIn, _directBytesIn, _udpSendErrors, _udpRecvErrors;
+
     /// <summary>Laufzeit zum Server (geglättet, ms); -1 = unbekannt.</summary>
     public static double PingMs => _pong != null ? _pong.SmoothRttMs : -1;
     /// <summary>Lobby laut Server (aus dem Ping).</summary>
     public static int PingLobby => _pong?.Lobby ?? 0;
+    /// <summary>Letzte gemessene UDP-Laufzeit zum Server (ms); -1 = noch keine Antwort.</summary>
+    public static double PingLastMs => _pong?.RttMs ?? -1;
+    /// <summary>UDP-Socket und Server-Endpunkt stehen.</summary>
+    public static bool ServerSocketUp => _udp != null && _server != null;
+    /// <summary>IP:Port des UDP-Servers; "-" solange nicht verbunden.</summary>
+    public static string ServerEndpoint => _server?.ToString() ?? "-";
+    /// <summary>Server-UDP: Pakete und Bytes seit Verbindung.</summary>
+    public static long ServerPacketsIn => Interlocked.Read(ref _serverPacketsIn);
+    public static long ServerBytesIn => Interlocked.Read(ref _serverBytesIn);
+    public static long ServerPacketsOut => Interlocked.Read(ref _serverPacketsOut);
+    public static long ServerBytesOut => Interlocked.Read(ref _serverBytesOut);
+    /// <summary>Direkt von Mitspielern empfangene P2P-Pakete (nicht über den Relay-Umschlag).</summary>
+    public static long DirectPacketsIn => Interlocked.Read(ref _directPacketsIn);
+    public static long DirectBytesIn => Interlocked.Read(ref _directBytesIn);
+    /// <summary>Fehlgeschlagene UDP-Sendements / Empfangsfehler des Receive-Loops.</summary>
+    public static long UdpSendErrors => Interlocked.Read(ref _udpSendErrors);
+    public static long UdpRecvErrors => Interlocked.Read(ref _udpRecvErrors);
+    /// <summary>Pakete, die der UdpDispatcher angenommen bzw. verworfen hat.</summary>
+    public static long DispatchReceived => _dispatch?.Received ?? 0;
+    public static long DispatchDropped => _dispatch?.Dropped ?? 0;
+    /// <summary>Aktuell wartende Verkehrspakete im Empfangs-Queue.</summary>
+    public static int TrafficInboxCount => _trafficPk.Queue.Count;
     /// <summary>P2P zu den Lobby-Mitspielern (Hole-Punching, Relay des Servers als Rückfall).</summary>
     public static TDU2PeerMesh? Mesh { get; private set; }
     /// <summary>Lokaler UDP-Endpunkt "ip:port" (für Mitspieler im selben LAN), leer bis zum Verbinden.</summary>
@@ -119,7 +146,7 @@ public static class Multiplayer
         {
             _nextPing = _clockF + 2f;
             var ping = PingPacketOut.Build(TDU2Session.PlayerId, TDU2Session.UdpKey, (uint)(Now * 1000.0));
-            try { _udp.Send(ping, ping.Length, _server); } catch (Exception) { }
+            UdpSend(ping, ping.Length, _server, true);
         }
         if (_udp != null && _server != null && TDU2Session.LoggedIn && TDU2Session.PlayerId != 0 && _clockF >= _nextSend)
         {
@@ -130,6 +157,23 @@ public static class Multiplayer
     }
 
     // ------------------------------------------------------------------ Netz
+    /// <summary>
+    /// Zentraler UDP-Sendepfad zum Server. Zählt echte Pakete/Bytes für das Dev-Menü und meldet Sendefehler,
+    /// statt sie still zu schlucken. P2P-Direkt- und Relay-Pakete zählt TDU2PeerMesh selbst.
+    /// </summary>
+    static bool UdpSend(byte[] b, int len, IPEndPoint to, bool toServer)
+    {
+        if (_udp == null || to == null) return false;
+        try { _udp.Send(b, len, to); }
+        catch (Exception) { Interlocked.Increment(ref _udpSendErrors); return false; }
+        if (toServer || to.Equals(_server))
+        {
+            Interlocked.Increment(ref _serverPacketsOut);
+            Interlocked.Add(ref _serverBytesOut, len);
+        }
+        return true;
+    }
+
     static void EnsureSocket()
     {
         if (!TDU2Session.LoggedIn || TDU2Session.Offline || TDU2Session.Client == null) { CloseSocket(); return; }
@@ -213,7 +257,7 @@ public static class Multiplayer
         b[7] = target;
         b[8] = (byte)toPlayer; b[9] = (byte)(toPlayer >> 8);
         Buffer.BlockCopy(seg.Array!, seg.Offset, b, 10, seg.Count);
-        try { _udp.Send(b, b.Length, _server); return true; } catch (Exception) { return false; }
+        return UdpSend(b, b.Length, _server, true);
     }
 
     static void ReceiveLoop(UdpClient udp)
@@ -226,17 +270,25 @@ public static class Multiplayer
                 var d = udp.Receive(ref any);
                 if (d == null || d.Length == 0) continue;
                 var from = any;
-                if (from.Equals(_server)) { _dispatch?.Dispatch(d, Now); continue; }
+                if (from.Equals(_server))
+                {
+                    Interlocked.Increment(ref _serverPacketsIn);
+                    Interlocked.Add(ref _serverBytesIn, d.Length);
+                    _dispatch?.Dispatch(d, Now);
+                    continue;
+                }
                 // direkt von einem Mitspieler (P2P): Punch oder Zustand/Verkehr von einem bekannten Endpunkt
+                Interlocked.Increment(ref _directPacketsIn);
+                Interlocked.Add(ref _directBytesIn, d.Length);
                 var mesh = Mesh;
                 if (mesh == null) continue;
                 if (d[0] == UdpPacketId.PeerPunch) { mesh.OnPunch(d, from); continue; }
-                if ((d[0] == UdpPacketId.StateOut || d[0] == UdpPacketId.TrafficOut) && d.Length >= 3 && mesh.AcceptDirect(from, d[1] | (d[2] << 8)))
+                if ((d[0] == UdpPacketId.StateOut || d[0] == UdpPacketId.TrafficOut) && d.Length >= 3 && mesh.AcceptDirect(from, d[1] | (d[2] << 8), d.Length))
                     _dispatch?.Dispatch(d, Now);
             }
-            catch (SocketException) { if (!_run) break; }
+            catch (SocketException) { if (_run) Interlocked.Increment(ref _udpRecvErrors); if (!_run) break; }
             catch (ObjectDisposedException) { break; }
-            catch (Exception) { if (!_run) break; }
+            catch (Exception) { if (_run) Interlocked.Increment(ref _udpRecvErrors); if (!_run) break; }
         }
     }
 
@@ -397,7 +449,7 @@ public static class Multiplayer
         if (_udp == null || _server == null) return;
         if (mesh == null || !mesh.Active)
         {
-            try { _udp.Send(b, len, _server); } catch (Exception) { }
+            UdpSend(b, len, _server, true);
             return;
         }
         int plen = len - UdpPacketId.ClientHeader;
@@ -574,7 +626,7 @@ public static class Multiplayer
         if (_chatBase == 0) _chatBase = (uint)Random.Shared.Next(1, 0xFFFF);
         WriteU32(b, 7, (_chatBase << 16) | (++_chatSeq & 0xFFFF));   // Nachricht-Nr. (Empfänger verwerfen Doppelte)
         Buffer.BlockCopy(t, 0, b, 11, len);
-        try { _udp.Send(b, b.Length, _server); } catch (Exception) { return false; }
+        if (!UdpSend(b, b.Length, _server, true)) return false;
         _chatResend = b; _chatResendAt = _clockF + 0.15f;
         return true;
     }

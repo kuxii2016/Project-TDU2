@@ -21,10 +21,13 @@ namespace Paradise.Game.Gamemodes;
 /// Meisterschaftsrennen (Daten/Treffpunkte/Karte: <see cref="Championships"/>). Im Original Teil des Wettbewerbs-Managers,
 /// hier eigene Klasse (wie GAME_MODE_TUNER). Ablauf wie Unity TDU2Championships:
 ///  - Rennen (gmth 3): Gegner aus der Lizenz (_bot_n = DBPNJ, Auto der Klasse aus DBPNJCar, Stärke _difficulty_bot_n) in
-///    Zweierreihen vor dem Spieler (<see cref="RaceOpponents"/>), Platzierung nach Weg/Zieleinlauf, HUD /HUD/position,
-///    /HUD/list_versus und Abstand /HUD/ref_score (Zeitmessung alle 25 m).
-///  - Zeitfahren (0): Gegnerzeiten aus der Zielzeit timG. Radar (1): Summe der Tempi an den Toren. Tempo (10): Durchschnitts-
-///    tempo über die Zeit CtDw mit /HUD/speed_gauge und /HUD/time_cd. [Wertung vermutet]
+///    Zweierreihen vor dem Spieler (<see cref="RaceOpponents"/>), Platzierung nach Weg/Zieleinlauf. HUD wie die exe-Komponente
+///    CHECKPOINTS: /HUD/position nur mit /:Pos, /:Exp, /:NbPlayers (0xb4f380). /HUD/list_versus gehört im Original nur zum
+///    Club-Duell (GMCompClub 0xb6aad0) und /HUD/ref_score nur zu Zeitfahren/Countdown – beide hier nicht mehr benutzt.
+///  - Zeitfahren (0): Gegnerzeiten aus der Zielzeit timG. Radar (1, GMCompTraps): Tor 1..n−1 sind Radare ohne Reihenfolge, je
+///    Radar zählt die höchste Durchfahrt ab dem Mindesttempo "tras"; Wertung = Durchschnitt aller Radare (Text 0xc7), Ende mit
+///    dem Zeitlimit CtDw. Tempo (10, GMCompSpeed, <see cref="SpeedChallenge"/>): Punkte = ∫ (v − vmin) dt über v ≥ vmin
+///    bis zum Zeitlimit (Text 0x88e).
 ///  - Ergebnis: results.bnk (<see cref="RaceResults.ShowChampionship"/>), Punkte 10-8-6-5-4-3-2-1, Preisgeld
 ///    (DBLicense._racemoneyreward nach Platz, bei Wiederholung nur die Verbesserung; Gesamtsieg _champmoneyreward).
 ///  - "Weiter": Abschluss-Kino (falls die Meisterschaft fertig ist), zurück zum Treffpunkt und Wettbewerbsansicht der Karte.
@@ -58,17 +61,19 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     float _pProgress;
     int _lastPos = -1, _lastTotal = -1;
     float _finishLen;
-    readonly List<float> _cpDist = new();       // Weg der Tore (Radar)
-    readonly List<float> _playerRadar = new();
-    float[][]? _botRadar;
-    int[]? _botRadarNext;
     float _resultAt = -1f;
     List<Row>? _rows;
     bool _filmShown;
     bool _privateOn;
     float _clock;
     // Tempo-Modus
-    float _speedT, _speedDist, _speedCountdown, _gaugeBase = -1f;
+    float _speedT, _speedCountdown;
+    readonly SpeedChallenge _speed = new();
+    // Eliminator (exe LapElimination): Teilnehmer 0 = Spieler, 1.. = Gegner
+    readonly LapElimination _elim = new();
+    bool _elimOn;
+    int[] _elimLaps = Array.Empty<int>();
+    List<float>[] _elimRoundT = Array.Empty<List<float>>();
     // Rückweg zum Treffpunkt
     Championships.Cup? _hubCup; float _hubUntil, _hubSettleAt; bool _hubTeleported;
 
@@ -76,7 +81,8 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     {
         public string Name = "", Car = "";
         public bool Player, Finished;
-        public float Value;      // Zeit (s) bzw. Wert (km/h)
+        public float Value;      // Zeit (s) bzw. Wert (km/h); Eliminator: Platz
+        public string? Text;     // Anzeige statt Value (Eliminator: Zeit des Siegers bzw. "--")
         public int Points, Place, BotIndex = -1;
     }
 
@@ -85,6 +91,32 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
 
     // ------------------------------------------------------------------ Start (aus Championships)
     internal static void Begin(IGameModeContext ctx, Championships.Cup cup, RaceDefinition def) => Instance.BeginRace(ctx, cup, def);
+
+    /// <summary>
+    /// Testfahrt des Challenge-Editors (exe FSCommand "test" 0xad7c68 -> 0xad27c0: die Challenge des Editors läuft über denselben
+    /// Challenge-Ablauf wie die Rennen, danach zurück in den Editor). Ohne Meisterschaft: keine Gegner, keine Punkte/Preise;
+    /// Ziel, Zeitablauf oder Abbruch rufen <paramref name="onEnd"/> (Editor: BackFromTest).
+    /// </summary>
+    internal static void BeginTest(IGameModeContext ctx, RaceDefinition def, bool showRoute, Action<bool> onEnd)
+    {
+        Instance._testEnd = onEnd;
+        Instance.BeginRace(ctx, null, def);
+        Minimap.RaceParticipants = 1;   // nur der Spieler (sonst bleibt die Teilnehmerzahl des letzten Rennens im HUD)
+        Instance._lastPos = -1;
+        if (!showRoute) { RaceRoute.RoadPath = null; RaceRoute.RoadPathSeg = null; }   // ohne Pflichtweg keine Fahrlinie
+    }
+
+    /// <summary>Laufende Testfahrt des Editors: Rückruf nach dem Ende (true = Ziel erreicht).</summary>
+    Action<bool>? _testEnd;
+
+    /// <summary>Testfahrt beenden und in den Editor zurück.</summary>
+    void EndTest(bool completed)
+    {
+        var te = _testEnd; _testEnd = null;
+        EndRace();
+        Log.Info("Editor-Testfahrt beendet (" + (completed ? "Ziel" : "abgebrochen/Zeit abgelaufen") + ")");
+        te?.Invoke(completed);
+    }
 
     void Wire(IGameModeContext ctx)
     {
@@ -106,21 +138,30 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         {
             var opp = r.Opponents;
             if (opp != null) { opp.FinishDistance = _finishLen; opp.Clock = () => _race.ElapsedSeconds; opp.KeepDrivingAfterFinish = true; }
-            _botRadar = null;
+            Minimap.RacePortalBlips.Clear();   // Radare zeigt die Minimap als Ziel-Symbole (RaceHud, exe 0xb63920)
         };
-        _race.Started += r => ShowPosition(true);
-        _race.CheckpointPassed += (r, i) => { if (_def != null && _def.Kind == RaceMode.SpeedTrap && Vm?.Current != null) _playerRadar.Add(MathF.Abs(Vm.Current.SpeedKmh)); };
+        _race.Started += r =>
+        {
+            ShowPosition(true);
+            if (_elimOn && _def != null) StartElimination();
+        };
         _race.Completed += r => OnFinished(false);
         _race.Failed += r => OnFinished(true);
-        _race.Aborted += r => { Log.Info("Rennen abgebrochen"); EndRace(); };
+        _race.Aborted += r => { Log.Info("Rennen abgebrochen"); if (_testEnd != null) EndTest(false); else EndRace(); };
         // ESC-Menü im Rennen (main.vmf WhatGameMode 2): "Neu starten" / "Beenden" = Rennen abbrechen
         PauseMenu.RegisterRace(this,
             () => _phase == Phase.Racing || _phase == Phase.Speed,
-            () => { var c = _cup; var d = _def; EndRace(); if (c != null && d != null && _ctx != null) BeginRace(_ctx, c, d); },
-            () => { Log.Info("Rennen abgebrochen"); EndRace(); });
+            () =>
+            {
+                var c = _cup; var d = _def; var te = _testEnd; _testEnd = null;
+                EndRace();
+                _testEnd = te;   // Testfahrt neu starten bleibt eine Testfahrt
+                if (d != null && _ctx != null && (c != null || te != null)) BeginRace(_ctx, c, d);
+            },
+            () => { Log.Info("Rennen abgebrochen"); if (_testEnd != null) EndTest(false); else EndRace(); });
     }
 
-    void BeginRace(IGameModeContext ctx, Championships.Cup cup, RaceDefinition def)
+    void BeginRace(IGameModeContext ctx, Championships.Cup? cup, RaceDefinition def)
     {
         Wire(ctx);
         var vm = Vm; var veh = vm?.Current;
@@ -136,42 +177,60 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (!_orig.ContainsKey(def.Name)) _orig[def.Name] = (def.TargetTimeMs, def.TimeLimitMs, def.HasTimeLimit);
         var o = _orig[def.Name];
         def.TargetTimeMs = o.target; def.TimeLimitMs = o.limit; def.HasTimeLimit = o.hasLimit;
-        if (def.Kind == RaceMode.Race || def.Kind == RaceMode.SpeedTrap) { def.TargetTimeMs = 0; def.TimeLimitMs = 0; def.HasTimeLimit = false; }
+        // Rennen haben kein Zeitlimit. SpeedTrap behält ChCD/CtDw aus der ig2: Der Spieler braucht die Zeit,
+        // um schlechte Portdurchfahrten innerhalb des Limits noch zu verbessern.
+        if (def.Kind == RaceMode.Race) { def.TargetTimeMs = 0; def.TimeLimitMs = 0; def.HasTimeLimit = false; }
+        // Radar zeigt keine GPS-Route: ein vor dem Start gesetztes Ziel würde sonst über der Minimap liegen.
+        if (def.Kind == RaceMode.SpeedTrap) Gps.Instance?.ClearTarget();
 
+        // Eliminator: Runden = Teilnehmer − 1 (exe 0xb5a0b8 setzt sie an der Checkpoint-Komponente), Straßenroute neu
+        _elimOn = def.IsEliminator && cup != null;
+        if (_elimOn)
+        {
+            int laps = System.Math.Max(1, System.Math.Min(def.BotCount > 0 ? def.BotCount : 7, cup!.Lic.Bots.Count));
+            if (def.Laps != laps) { def.Laps = laps; def.RoadPath = null; def.RoadPathSeg = null; }
+        }
         if (def.RoadPath == null) { try { RaceRoadPath.Compute(def); } catch (Exception ex) { Log.Warn("Straßenroute: " + ex.Message); } }
         if (def.RoadPath == null || def.RoadPath.Count < 2) def.RoadPath = new List<Vector3> { def.StartPosition, def.Checkpoints[^1].Position };
-        RaceRoute.RoadPath = def.Kind == RaceMode.Speed ? null : def.RoadPath;
-        RaceRoute.RoadPathSeg = def.Kind == RaceMode.Speed ? null : def.RoadPathSeg;
+        // Radar: keine Routenanzeige auf der Minimap/großen Karte, nur blaue Portal-Dots.
+        bool showRoute = def.Kind != RaceMode.Speed && def.Kind != RaceMode.SpeedTrap;
+        RaceRoute.RoadPath = showRoute ? def.RoadPath : null;
+        RaceRoute.RoadPathSeg = showRoute ? def.RoadPathSeg : null;
         BuildCum(def.RoadPath);
 
         Championships.StartFrame(def, out var start, out var fwd);
         var right = new Vector3(fwd.Z, 0f, -fwd.X);
         def.Opponents.Clear();
         int playerSlot = 0;
-        if (def.Kind == RaceMode.Race || def.Kind == RaceMode.SpeedTrap) playerSlot = BuildGrid(cup, def, start, fwd, right);
+        if (cup != null && (def.Kind == RaceMode.Race || def.Kind == RaceMode.SpeedTrap)) playerSlot = BuildGrid(cup, def, start, fwd, right);
         // Spielerauto in die Startaufstellung (hinterste Reihe) bzw. an die Startlinie (hält fest, bis der Boden geladen ist)
         int row = playerSlot / 2; float side = playerSlot == 0 ? 0f : (playerSlot % 2 == 0 ? -2.2f : 2.2f);
         var pIsl = start - fwd * (row * ChampionshipConfig.GridRowSpacing) + right * side;
         vm.TeleportSafe(pIsl, fwd);
         _pIdx = 0; _pProgress = -row * ChampionshipConfig.GridRowSpacing; _lastPos = -1;
-        _playerRadar.Clear(); _cpDist.Clear();
-        foreach (int k in def.TargetSequence()) _cpDist.Add(DistanceAlong(def.Checkpoints[k].Position));
         _rows = null; _resultAt = -1f; _filmShown = false;
 
-        Log.Info("Meisterschaft " + cup.Name + " – " + Championships.ModeName(def) + " " + def.Name + " (" + Championships.RaceName(def) + "): " +
+        Log.Info((cup != null ? "Meisterschaft " + cup.Name : "Editor-Testfahrt") + " – " + Championships.ModeName(def) + " " + def.Name + " (" + Championships.RaceName(def) + "): " +
                  def.Opponents.Count + " Gegner, Strecke " + (_finishLen / 1000f).ToString("0.0", CultureInfo.InvariantCulture) + " km, " + (def.IsCircuit ? def.Laps + " Runden" : "Punkt-zu-Punkt"));
 
         if (def.Kind == RaceMode.Speed)
         {
             _phase = Phase.Speed;
-            _speedT = 0f; _speedDist = 0f; _speedCountdown = RaceConfig.CountdownSeconds;
+            _speedT = 0f; _speedCountdown = RaceConfig.CountdownSeconds;
+            Minimap.RaceParticipants = 1;   // Tempo: nur der Spieler fährt
             vm.ExternalControl = true;   // im Countdown halten (Pedale setzt dieser Modus)
             var h = Hud;
-            if (h != null) { FrontendSounds.Attach(h); h.SetVisible("/_3_2_1_go", true); h.GotoLabel("/_3_2_1_go", "3_go", true); }
+            if (h != null)
+            {
+                FrontendSounds.Attach(h);
+                ChallengeModes.ApplyHud(h, def);       // exe 0xb40039: /:cur_gm = /:whatcha = "speed"
+                h.SetVisible("/HUD/score", false);
+                h.SetVisible("/_3_2_1_go", true); h.GotoLabel("/_3_2_1_go", "3_go", true);
+            }
         }
         else
         {
-            if (!_race.StartRace(def)) { Log.Warn("Rennen " + def.Name + " konnte nicht gestartet werden"); EndRace(); return; }
+            if (!_race.StartRace(def)) { Log.Warn("Rennen " + def.Name + " konnte nicht gestartet werden"); if (_testEnd != null) EndTest(false); else EndRace(); return; }
             _phase = Phase.Racing;
         }
         // Phase vor dem Wechsel setzen (Enter ohne Rennen kehrt sonst in die Freifahrt zurück)
@@ -231,13 +290,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         _finishLen = _cum.Length > 0 ? _cum[^1] : 0f;
     }
 
-    float DistanceAlong(Vector3 p)
-    {
-        var path = _def!.RoadPath!; float best = float.MaxValue; int bi = 0;
-        for (int i = 0; i < path.Count; i++) { var d = path[i] - p; d.Y = 0f; float m = d.LengthSquared(); if (m < best) { best = m; bi = i; } }
-        return _cum[bi];
-    }
-
     // ------------------------------------------------------------------ Spielmodus
     public override void Enter(IGameModeContext ctx, Gamemode from)
     {
@@ -254,6 +306,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         {
             // Modus von außen gewechselt (Entwicklertaste, Inselwechsel …): Rennen beenden wie Unity OnDisable
             Log.Info("Meisterschaft: Modus " + to + " – laufendes Rennen beendet");
+            if (_testEnd != null && to != Gamemode.GAME_MODE_EDITOR) { _testEnd = null; }
             EndRace();
         }
     }
@@ -281,11 +334,11 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         _race.Update(dt);
         _hud.Update();
         _autopilot.Update(dt);
-        UpdateRacing();
+        UpdateRacing(dt);
     }
 
     // ------------------------------------------------------------------ Laufendes Rennen
-    void UpdateRacing()
+    void UpdateRacing(float dt)
     {
         if (_def == null || !_race.Running || Vm == null) return;
         var carIsland = Vm.PositionGame;
@@ -304,216 +357,129 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         else _pProgress = _cum[_pIdx];
 
         var opp = _race.Opponents;
-        if (opp == null) return;
+        if (opp == null)
+        {
+            // ohne Gegner: Platz 1 von 1 (sonst bliebe /:Pos//:NbPlayers vom letzten Lauf stehen)
+            if ((_def.Kind == RaceMode.SpeedTrap || _def.Kind == RaceMode.Race) && (_lastPos != 1 || _lastTotal != 1)) { _lastPos = 1; _lastTotal = 1; SetPosition(1, 1); }
+            return;
+        }
         var st = opp.Standings();
-        if (_def.Kind == RaceMode.SpeedTrap) TrackBotRadar(st);
+        if (_def.Kind == RaceMode.SpeedTrap)
+        {
+            // Radar (exe 0xb63bd0): /:NbPlayers und Platz nach dem Durchschnitt der Radare
+            float mine = _race.TrapAverageKmh;
+            int tp = 1; for (int i = 0; i < st.Count; i++) if (_race.OpponentTrapAverageKmh(i) > mine) tp++;
+            if (tp != _lastPos || st.Count + 1 != _lastTotal) { _lastPos = tp; _lastTotal = st.Count + 1; SetPosition(tp, st.Count + 1); }
+            return;
+        }
         if (_def.Kind != RaceMode.Race) return;
-        int pos = 1;
-        foreach (var s in st) if (s.Finished || s.Traveled > _pProgress) pos++;
-        if (pos != _lastPos || st.Count + 1 != _lastTotal) { _lastPos = pos; _lastTotal = st.Count + 1; SetPosition(pos, st.Count + 1); }
-        Minimap.RaceCount = st.Count + 1;
+        int pos = 1, total = 1;
+        foreach (var s in st) { if (s.Out) continue; total++; if (s.Finished || s.Traveled > _pProgress) pos++; }
+        if (pos != _lastPos || total != _lastTotal) { _lastPos = pos; _lastTotal = total; SetPosition(pos, total); }
+        Minimap.RaceCount = total;
+        Minimap.RaceParticipants = total;
         Minimap.RaceBlips.Clear(); opp.WorldPositions(Minimap.RaceBlips);
-        UpdateRaceHud(st, pos);
+        if (_elimOn) UpdateElimination(dt, st);
     }
 
-    // ------------------------------------------------------------------ Renn-HUD: Namen vor/hinter mir, Abstand zum Führenden
-    const float GapBin = 25f;                      // Zeitmessung alle 25 m Strecke
-    readonly List<float> _binBot = new();          // früheste Gegnerzeit je Abschnitt
-    readonly List<float> _binMe = new();           // meine Zeit je Abschnitt
-    int[]? _botNextBin;
-    float[]? _botLastBinT;
-    List<float>[]? _botBins;
-    bool _versusOpen;
-    float _hudNext;
-    int _gapSign;
-    static readonly NumberFormatInfo De = Paradise.Core.Util.GermanFormat.Number;
-
-    void ResetRaceHud()
+    // ------------------------------------------------------------------ Eliminator (exe LapElimination, Game/Racing/LapElimination)
+    void StartElimination()
     {
-        _binBot.Clear(); _binMe.Clear(); _botNextBin = null; _botLastBinT = null; _botBins = null; _versusOpen = false; _gapSign = 0; _hudNext = 0f;
+        int n = 1 + (_race.Opponents?.Count ?? 0);
+        _elim.Start(Hud, n);
+        _elimLaps = new int[n];
+        _elimRoundT = new List<float>[n];
+        for (int i = 0; i < n; i++) _elimRoundT[i] = new List<float>();
+        Log.Info("Eliminator: " + n + " Teilnehmer, " + _def!.Laps + " Runden");
     }
 
-    void UpdateRaceHud(List<RaceOpponents.Standing> st, int pos)
+    void UpdateElimination(float dt, List<RaceOpponents.Standing> st)
     {
-        var h = Hud;
-        if (h == null) return;
+        var def = _def!; var h = Hud;
+        int n = _elimLaps.Length;
+        if (n == 0 || _elim.Remaining <= 1) return;
         float t = _race.ElapsedSeconds;
-        // Abschnittszeiten
-        if (_botNextBin == null || _botNextBin.Length != st.Count)
+        float lapLen = def.Laps > 0 ? _finishLen / def.Laps : _finishLen;
+        // beendete Runden: Spieler über die Checkpoints, Gegner über den Weg entlang der Strecke
+        for (int i = 0; i < n; i++)
         {
-            _botNextBin = new int[st.Count]; _botLastBinT = new float[st.Count];
-            _botBins = new List<float>[st.Count]; for (int i = 0; i < st.Count; i++) _botBins[i] = new List<float>();
-        }
-        float? gap = null;
-        for (int i = 0; i < st.Count; i++)
-            while ((_botNextBin[i] + 1) * GapBin <= st[i].Traveled)
+            int laps;
+            if (i == 0) laps = def.TargetsPerLap > 0 ? _race.PassedCount / def.TargetsPerLap : 0;
+            else
             {
-                int k = _botNextBin[i]++;
-                _botLastBinT![i] = t; _botBins![i].Add(t);
-                while (_binBot.Count <= k) _binBot.Add(-1f);
-                if (_binBot[k] < 0f)
-                {
-                    _binBot[k] = t;
-                    // ich war vorne: Vorsprung auf den Zweiten, sobald der erste Gegner den Abschnitt erreicht
-                    if (k < _binMe.Count && k == _binMe.Count - 1) gap = _binMe[k] - t;
-                }
+                var s = st[i - 1];
+                laps = s.Finished ? def.Laps : lapLen > 1f ? (int)(MathF.Max(0f, s.Traveled) / lapLen) : 0;
             }
-        while ((_binMe.Count + 1) * GapBin <= _pProgress)
-        {
-            int k = _binMe.Count;
-            _binMe.Add(t);
-            if (k < _binBot.Count && _binBot[k] >= 0f) gap = t - _binBot[k];   // Rückstand auf den Führenden
+            while (_elimRoundT[i].Count < laps) _elimRoundT[i].Add(t);
+            _elimLaps[i] = laps;
         }
-        if (gap.HasValue) ShowGap(h, gap.Value);
-        if (_clock < _hudNext) return;
-        _hudNext = _clock + 0.2f;
-        // Reihenfolge (Ziel zuerst, dann nach Weg) für die Namen vor/hinter mir (-1 = ich)
-        var order = new List<(string name, float key, int bot)>();
-        for (int i = 0; i < st.Count; i++) order.Add((st[i].Name ?? "?", st[i].Finished ? 1e9f - st[i].FinishTime : st[i].Traveled, i));
-        order.Add((Championships.PlayerName, _pProgress, -1));
-        order.Sort((a, b) => b.key.CompareTo(a.key));
-        int me = order.FindIndex(o => o.bot < 0);
-        // Abstand zu Vorder-/Hintermann (Sekunden) über die 25-m-Abschnitte
-        string GapText(int bot, bool ahead)
-        {
-            if (bot < 0 || _botBins == null || bot >= _botBins.Length) return "";
-            var bb = _botBins[bot];
-            int k = ahead ? _binMe.Count - 1 : bb.Count - 1;
-            if (k < 0 || k >= bb.Count || k >= _binMe.Count) return "";
-            float g = ahead ? _binMe[k] - bb[k] : bb[k] - _binMe[k];
-            if (g < 0.05f) return "";
-            return "  " + (ahead ? "-" : "+") + g.ToString("0.0", De) + "s";
-        }
-        h.SetVariable("/HUD/position/player:PlayerName", Championships.PlayerName);
-        h.SetVariable("/:PosPlayer", pos.ToString(CultureInfo.InvariantCulture)); h.SetVariable("/:ExpPlayer", ".");
-        string? before = me > 0 ? order[me - 1].name + GapText(order[me - 1].bot, true) : null;
-        string? after = me >= 0 && me + 1 < order.Count ? order[me + 1].name + GapText(order[me + 1].bot, false) : null;
-        h.SetVariable("/HUD/position/player_before:PlyrNameBefore", before ?? "");
-        h.SetVariable("/:PosBefore", (pos - 1).ToString(CultureInfo.InvariantCulture)); h.SetVariable("/:ExpBefore", ".");
-        h.SetVariable("/HUD/position/player_after:PlyrNameAfter", after ?? "");
-        h.SetVariable("/:PosAfter", (pos + 1).ToString(CultureInfo.InvariantCulture)); h.SetVariable("/:ExpAfter", ".");
-        // Platzliste rechts unter der Zeit (Original-Liste /HUD/list_versus, neutrale Zeilen, eigene Zeile hervorgehoben)
-        UpdateVersusList(h, st);
+        int who = _elim.Update(dt, _elimLaps, (p, k) => k - 1 < _elimRoundT[p].Count ? _elimRoundT[p][k - 1] : float.MaxValue);
+        // Liste nach Platzierung: Aktive nach Weg, Ausgeschiedene nach Endplatz
+        var order = new List<int>(n);
+        for (int i = 0; i < n; i++) if (!_elim.IsOut(i)) order.Add(i);
+        order.Sort((a, b) => Progress(b, st).CompareTo(Progress(a, st)));
+        var outs = new List<int>(); for (int i = 0; i < n; i++) if (_elim.IsOut(i)) outs.Add(i);
+        outs.Sort((a, b) => _elim.FinalPlace[a].CompareTo(_elim.FinalPlace[b]));
+        order.AddRange(outs);
+        _elim.UpdateRows(h, order, i => ParticipantName(i, st));
+        if (who < 0) return;
+        string name = ParticipantName(who, st);
+        LapElimination.ShowEliminated(h, name);
+        Log.Info("Eliminator: Runde " + (_elim.Round - 1) + " – " + name + " scheidet aus (Platz " + _elim.FinalPlace[who] + ")");
+        if (who == 0) { _race.ForceFinish(false); return; }   // Spieler raus: verloren (exe Zustand 2)
+        _race.Opponents?.Eliminate(who - 1);
+        Minimap.RaceParticipants = _elim.Remaining;
+        if (_elim.Remaining <= 1) { _elim.CloseWinner(); _race.ForceFinish(true); }   // nur der Spieler übrig (exe Zustand 1)
     }
 
-    /// <summary>Liste der Fahrer rechts (Original /HUD/list_versus: line0..7, Name + Rückstand auf den Führenden).</summary>
-    void UpdateVersusList(VmfPlayer h, List<RaceOpponents.Standing> st)
+    float Progress(int p, List<RaceOpponents.Standing> st)
     {
-        float LeaderAt(int bin)
-        {
-            float lt = float.MaxValue;
-            if (bin >= 0 && bin < _binBot.Count && _binBot[bin] >= 0f) lt = _binBot[bin];
-            if (bin >= 0 && bin < _binMe.Count) lt = MathF.Min(lt, _binMe[bin]);
-            return lt;
-        }
-        var rows = new List<(string name, float key, float gap, bool me)>();
-        for (int i = 0; i < st.Count; i++)
-        {
-            int bin = _botNextBin != null && i < _botNextBin.Length ? _botNextBin[i] - 1 : -1;
-            float lt = LeaderAt(bin);
-            float gap = bin >= 0 && lt < float.MaxValue && _botLastBinT != null ? _botLastBinT[i] - lt : 0f;
-            rows.Add((st[i].Name ?? "?", st[i].Finished ? 1e9f - st[i].FinishTime : st[i].Traveled, gap, false));
-        }
-        {
-            int bin = _binMe.Count - 1;
-            float lt = LeaderAt(bin);
-            float gap = bin >= 0 && lt < float.MaxValue ? _binMe[bin] - lt : 0f;
-            rows.Add((Championships.PlayerName, _pProgress, gap, true));
-        }
-        rows.Sort((x, y) => y.key.CompareTo(x.key));
-        if (!_versusOpen)
-        {
-            _versusOpen = true;
-            h.SetVisible("/HUD/list_versus", true);
-            h.GotoLabel("/HUD/list_versus", "open", true);
-        }
-        for (int i = 0; i < 8; i++)
-        {
-            string line = "/HUD/list_versus/line" + i;
-            if (i >= rows.Count) { h.GotoLabel(line + "/content", "empty", false); continue; }
-            var r = rows[i];
-            string txt = r.name + (i > 0 && r.gap > 0.05f ? "  +" + r.gap.ToString("0.0", De) : "");
-            bool changed = h.GetVariable(line + ":player_name") != txt;
-            h.SetVariable(line + ":player_name", txt);
-            h.SetVariable(line + ":pos", (i + 1).ToString(CultureInfo.InvariantCulture));
-            string lab = r.me ? "blue_on" : "default";
-            if (h.Label(line + "/content") != lab) h.GotoLabel(line + "/content", lab, false);
-            var cur = h.Label(line);
-            if (cur == "default" || cur == null) h.GotoLabel(line, "open", true);
-            if (changed) h.CallClip(line + "/content/p", "SetTxtScroll");
-        }
+        if (p == 0) return _pProgress;
+        var s = st[p - 1];
+        return s.Finished ? 1e9f - s.FinishTime : s.Traveled;
     }
 
-    /// <summary>Abstand (s): positiv = Rückstand auf den Führenden, negativ = Vorsprung auf den Zweiten (ref_score, Karte "time").</summary>
-    void ShowGap(VmfPlayer h, float gap)
-    {
-        int ms = (int)MathF.Round(MathF.Abs(gap) * 1000f);
-        h.SetVariable("/:MinRef", (gap < 0f ? "-" : "+") + (ms / 60000).ToString(CultureInfo.InvariantCulture));
-        h.SetVariable("/:SecRef", ((ms / 1000) % 60).ToString("00", CultureInfo.InvariantCulture));
-        h.SetVariable("/:CentRef", ((ms / 10) % 100).ToString("00", CultureInfo.InvariantCulture));
-        int sign = gap < 0f ? -1 : 1;
-        if (sign != _gapSign)
-        {
-            if (_gapSign == 0) { h.SetVisible("/HUD/ref_score", true); h.GotoLabel("/HUD/ref_score", "open", true); }
-            else h.GotoLabel("/HUD/ref_score", sign < 0 ? "up" : "down", true);
-            h.GotoLabel("/HUD/ref_score/cart", "time", false);
-            _gapSign = sign;
-        }
-    }
+    static string ParticipantName(int p, List<RaceOpponents.Standing> st) => p == 0 ? Championships.PlayerName : (st[p - 1].Name ?? "?");
 
-    void TrackBotRadar(List<RaceOpponents.Standing> st)
-    {
-        if (_botRadar == null || _botRadar.Length != st.Count)
-        {
-            _botRadar = new float[st.Count][]; _botRadarNext = new int[st.Count];
-            for (int i = 0; i < st.Count; i++) _botRadar[i] = new float[_cpDist.Count];
-        }
-        for (int i = 0; i < st.Count; i++)
-            while (_botRadarNext![i] < _cpDist.Count && st[i].Traveled >= _cpDist[_botRadarNext[i]])
-                _botRadar[i][_botRadarNext[i]++] = st[i].Speed * 3.6f;
-    }
-
+    /// <summary>
+    /// Platzierung (exe CHECKPOINTS 0xb4f380 bzw. TRAPS 0xb63bd0): /HUD/position öffnet RaceHud beim Start der Komponenten (Rennen,
+    /// Radar); hier nur Zustand zurücksetzen bzw. am Ende Minimap-Punkte löschen. Keine Namen vor/hinter mir, keine Versus-Liste.
+    /// </summary>
     void ShowPosition(bool on)
     {
-        var h = Hud;
-        if (h == null || _def == null) { Minimap.RaceCount = 0; Minimap.RaceBlips.Clear(); return; }
-        if (on && _def.Kind == RaceMode.Race)
+        if (_def == null || !on)
         {
-            h.SetVariable("/:cur_gm", "race");
-            h.SetVisible("/HUD/position", true);
-            h.GotoLabel("/HUD/position", "open", true);
-            h.GotoLabel("/HUD/position/player", "default", false);
-            h.GotoLabel("/HUD/position/player_before", "default", false);
-            h.GotoLabel("/HUD/position/player_after", "default", false);
-            _lastPos = -1;
-            ResetRaceHud();
+            Minimap.RaceCount = 0; Minimap.RaceBlips.Clear(); Minimap.RacePortalBlips.Clear();
+            Minimap.RaceParticipants = 0;   // Minimap zeigt wieder die Spieler der Sitzung
+            Hud?.SetVisible("/HUD/eliminator", false);
+            return;
         }
-        else
+        _lastPos = -1; _lastTotal = -1;
+        // Spielerzahl der Minimap = Teilnehmer dieses Rennens (die exe zählt die Spieler der Sitzung – im Rennen die Rennsitzung)
+        Minimap.RaceParticipants = 1 + (_race.Opponents?.Count ?? 0);
+        if (_def.Kind == RaceMode.SpeedTrap)
         {
-            h.GotoLabel("/HUD/position", "default", false);
-            h.GotoLabel("/HUD/ref_score", "default", false);
-            h.GotoLabel("/HUD/list_versus", "default", false);
-            Minimap.RaceCount = 0; Minimap.RaceBlips.Clear();
-            ResetRaceHud();
+            // Radar: keine Gegner-Punkte; die Radare zeigt die Minimap als Ziel-Symbole (RaceHud)
+            Minimap.RaceCount = 0; Minimap.RaceBlips.Clear(); Minimap.RacePortalBlips.Clear();
         }
+        else Minimap.RacePortalBlips.Clear();
     }
 
     void SetPosition(int pos, int total)
     {
         var h = Hud;
         if (h == null) return;
-        h.SetVariable("/:Pos", pos.ToString(CultureInfo.InvariantCulture));
-        h.SetVariable("/:Exp", ".");
         h.SetVariable("/:NbPlayers", total.ToString(CultureInfo.InvariantCulture));
+        ChallengeModes.SetRank(h, pos);   // exe 0xb3c710: "%d." + Exponent " " (deutsch)
     }
 
-    // ------------------------------------------------------------------ Tempo (Durchschnitt über die Zeit)
+    // ------------------------------------------------------------------ Tempo (exe GMCompSpeed, SpeedChallenge)
     void UpdateSpeed(IGameModeContext ctx, float dt)
     {
         var vm = Vm; var veh = vm?.Current;
-        if (vm == null || veh == null || _def == null) { EndRace(); return; }
+        if (vm == null || veh == null || _def == null) { if (_testEnd != null) EndTest(false); else EndRace(); return; }
         var h = Hud;
-        float limit = MathF.Max(10f, _orig[_def.Name].limit / 1000f);
+        float limit = MathF.Max(1f, _orig[_def.Name].limit / 1000f);
         if (_speedCountdown > 0f)
         {
             _speedCountdown -= dt;
@@ -522,31 +488,20 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
             {
                 vm.ExternalControl = false;
                 veh.BrakePedal = 0f; veh.HandBrake = 0f; veh.StartLock = false;
-                if (h != null)
-                {
-                    h.SetVisible("/HUD/time_cd", true); h.GotoLabel("/HUD/time_cd", "open", true);
-                    // Tempo-Prüfung: Original-Anzeige speed_gauge (Wert + Mindest-/aktuelles Tempo, Balken = Zeit)
-                    h.SetVisible("/HUD/speed_gauge", true); h.GotoLabel("/HUD/speed_gauge", "open", true);
-                    h.SetVariable("/:m_Pts", "km/h Ø"); h.SetVariable("/:m_SpeedUnit", "km/h");
-                    _gaugeBase = -1f;
-                }
+                // Start der Komponenten in exe-Reihenfolge: SPEED (0x88), TIME (0x9c), COUNTDOWN (0xa0)
+                _speed.Start(h, _def);
+                ChallengeModes.ShowClip(h, "/HUD/time", true);
+                ChallengeModes.ShowClip(h, "/HUD/time_cd", true);
+                ChallengeModes.ShowClip(h, "/HUD/time", false);
+                ChallengeModes.ShowClip(h, "/HUD/ref_score", false);
             }
             return;
         }
-        if (ctx.Pressed(0x08)) { Log.Info("Rennen abgebrochen"); EndRace(); return; }
+        if (ctx.Pressed(0x08)) { Log.Info("Rennen abgebrochen"); if (_testEnd != null) EndTest(false); else EndRace(); return; }
         _speedT += dt;
-        _speedDist += MathF.Abs(veh.SpeedKmh) / 3.6f * dt;
+        _speed.Update(h, veh.SpeedKmh / 3.6f, dt);
         if (h != null)
         {
-            float avgK = _speedT > 0.1f ? _speedDist / _speedT * 3.6f : 0f;
-            h.SetVariable("/:SpeedScore", avgK.ToString("0", CultureInfo.InvariantCulture));
-            h.SetVariable("/:speed_min", MathF.Abs(veh.SpeedKmh).ToString("0", CultureInfo.InvariantCulture));
-            var comp = h.Find("/HUD/speed_gauge/gauge/completion");
-            if (comp != null)
-            {
-                if (_gaugeBase < 0f) _gaugeBase = MathF.Abs(comp.Matrix.A) > 1e-4f ? comp.Matrix.A : 1f;
-                comp.Matrix.A = _gaugeBase * System.Math.Clamp(_speedT / limit, 0f, 1f); comp.ScriptMatrix = true;
-            }
             float left = MathF.Max(0f, limit - _speedT);
             int ms = (int)(left * 1000f);
             h.SetVariable("/:MinCd", (ms / 60000).ToString(CultureInfo.InvariantCulture));
@@ -555,7 +510,8 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         }
         if (_speedT >= limit)
         {
-            if (h != null) { h.GotoLabel("/HUD/time_cd", "default", false); h.GotoLabel("/HUD/speed_gauge", "default", false); h.GotoLabel("/_3_2_1_go", "default", false); h.SetVisible("/_3_2_1_go", false); }
+            _speed.Close(h);
+            if (h != null) { ChallengeModes.ShowClip(h, "/HUD/time_cd", false); h.GotoLabel("/_3_2_1_go", "default", false); h.SetVisible("/_3_2_1_go", false); }
             OnFinished(false);
         }
     }
@@ -563,6 +519,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     // ------------------------------------------------------------------ Ergebnis
     void OnFinished(bool failed)
     {
+        if (_testEnd != null) { EndTest(!failed); return; }   // Editor-Testfahrt: ohne Wertung zurück in den Editor
         if (_cup == null || _def == null) return;
         ShowPosition(false);
         var vm = Vm;
@@ -603,6 +560,8 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         Championships.Refresh();
     }
 
+    static readonly NumberFormatInfo De = Paradise.Core.Util.GermanFormat.Number;
+
     static long PrizeFor(int place, int reward)
     {
         var share = ChampionshipConfig.PrizeShare;
@@ -631,6 +590,22 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         var def = _def!;
         switch (def.Kind)
         {
+            case RaceMode.Race when _elimOn && _elim.FinalPlace.Length == st.Count + 1:
+                {
+                    // Eliminator: Platz = Reihenfolge des Ausscheidens; noch Fahrende nach Weg vor den Ausgeschiedenen
+                    var act = new List<int>();
+                    for (int i = 0; i < st.Count + 1; i++) if (!_elim.IsOut(i)) act.Add(i);
+                    act.Sort((a, b) => Progress(b, st).CompareTo(Progress(a, st)));
+                    var place = (int[])_elim.FinalPlace.Clone();
+                    for (int k = 0; k < act.Count; k++) place[act[k]] = k + 1;
+                    me.Value = place[0];
+                    me.Text = place[0] == 1 && _race.Result != null && !failed ? RaceHud.FormatRaceTimeMs(_race.Result.FinalTimeMs) : "--";
+                    for (int i = 0; i < st.Count; i++)
+                        rows.Add(new Row { Name = st[i].Name, Car = st[i].Car, Value = place[i + 1], Text = "--", Finished = !st[i].Out, BotIndex = i });
+                    rows.Sort((a, b) => a.Value.CompareTo(b.Value));
+                    for (int i = 0; i < rows.Count; i++) rows[i].Place = i + 1;
+                    return rows;
+                }
             case RaceMode.Race:
                 {
                     float now = _race.ElapsedSeconds;
@@ -646,26 +621,23 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
                 }
             case RaceMode.SpeedTrap:
                 {
-                    float sum = 0f; foreach (var v in _playerRadar) sum += v;
-                    me.Value = failed ? 0f : sum;
+                    // Wertung = Durchschnitt aller Radare (exe 0xb640f0, Text 0xc7)
+                    float avg = failed ? 0f : _race.TrapAverageKmh;
+                    me.Value = avg;
                     if (st.Count > 0)
                     {
-                        if (_botRadar == null) TrackBotRadar(st);
                         for (int i = 0; i < st.Count; i++)
-                        {
-                            float s2 = 0f;
-                            for (int k = 0; k < _cpDist.Count; k++) s2 += _botRadar![i][k] > 0f ? _botRadar[i][k] : st[i].Def.MaxSpeed * 3.6f * 0.75f;
-                            rows.Add(new Row { Name = st[i].Name, Car = st[i].Car, Value = s2, Finished = true, BotIndex = i });
-                        }
+                            rows.Add(new Row { Name = st[i].Name, Car = st[i].Car, Value = _race.OpponentTrapAverageKmh(i), Finished = true, BotIndex = i });
                     }
-                    else AddGeneratedBots(rows, sum > 0f ? sum : 600f, true);
+                    else AddGeneratedBots(rows, avg > 0f ? avg : 200f, true);
                     rows.Sort((a, b) => b.Value.CompareTo(a.Value));
                     break;
                 }
             case RaceMode.Speed:
                 {
-                    me.Value = _speedT > 0.1f ? _speedDist / _speedT * 3.6f : 0f;
-                    AddGeneratedBots(rows, 105f, true);
+                    // Punkte = Meter über dem Mindesttempo (GMCompSpeed); Gegner um die Referenz SPPG gestreut
+                    me.Value = _speed.Score;
+                    AddGeneratedBots(rows, _speed.RefPoints > 0f ? _speed.RefPoints : MathF.Max(1f, _speed.Score), true);
                     rows.Sort((a, b) => b.Value.CompareTo(a.Value));
                     break;
                 }
@@ -720,8 +692,9 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     {
         if (_rows == null || _cup == null || _def == null) return false;
         bool time = _def.Kind == RaceMode.Race || _def.Kind == RaceMode.TimeAttack;
-        string Val(Row r) => time ? (r.Value >= float.MaxValue * 0.5f ? "--'--\"--" : RaceHud.FormatRaceTime(r.Value))
-                                  : r.Value.ToString("0.0", De) + " km/h";
+        string Val(Row r) => r.Text != null ? r.Text : time ? (r.Value >= float.MaxValue * 0.5f ? "--'--\"--" : RaceHud.FormatRaceTime(r.Value))
+                           : _def.Kind == RaceMode.Speed ? ((int)r.Value).ToString(CultureInfo.InvariantCulture) + " " + RaceTexts.Get(0x2fd, "Punkte").Trim()
+                           : r.Value.ToString("0.00", CultureInfo.InvariantCulture) + " " + ChallengeModes.UnitName;
         var race = new List<RaceResults.Row>();
         foreach (var r in _rows)
             race.Add(new RaceResults.Row { Place = r.Place, Name = r.Name, Car = r.Car, Player = r.Player, Score = Val(r) + " (" + r.Points + " Pkt.)" });
@@ -800,7 +773,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     {
         ShowPosition(false);
         var h = Hud;
-        if (h != null) { h.GotoLabel("/HUD/speed_gauge", "default", false); h.GotoLabel("/HUD/time_cd", "default", false); }
+        if (h != null) { h.SetVisible("/HUD/speed_gauge", false); h.SetVisible("/HUD/ref_points", false); h.SetVisible("/HUD/time_cd", false); }
         _autopilot.End();
         _results.Close();
         var vm = Vm;

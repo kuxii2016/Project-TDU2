@@ -30,6 +30,24 @@ namespace Paradise.Core.Vehicles
         public bool OnlineStatus = false;
         public int PlayerCount = 1;
         bool? _appliedOnline; int _appliedPlayers = -1; string? _lastOnlineVar, _lastPlayersVar;
+        int _appliedRace;
+
+        /// <summary>
+        /// Teilnehmer des laufenden Rennens (Spieler + Gegner, ohne Ausgeschiedene); 0 = kein Rennen. Die exe zeigt in
+        /// /:nb_FRplayers die Spieler der aktuellen Sitzung (0xcf96d0: "%i" nur bei mehr als einem, sonst leer, dazu
+        /// /HUD/minimap/nb_players/in_out "in") – im Rennen ist das die Rennsitzung, nicht die Lobby. Gesetzt von den Renn-Modi.
+        /// Solange ein Rennen läuft, wird /:NbPlayers nicht als Spielerzahl zurückgelesen: diese Variable ist im Renn-HUD die
+        /// Teilnehmerzahl der Platzierung (/HUD/position "von N").
+        /// </summary>
+        public static int RaceParticipants;
+
+        /// <summary>
+        /// Online-Status und Spielerzahl kommen von der Sitzung (TDU2GameData, angemeldet). Dann gelten Änderungen von /:IsOnline bzw.
+        /// /:NbPlayers im HUD-Film nicht als neue Werte: hud.vmf setzt beim Initialisieren (Wurzel "default") selbst
+        /// _root.IsOnline = 0 – die Minimap übernahm das bisher als "offline" und das Symbol blieb auf "disconnected".
+        /// Ohne Sitzung (Flash Debugger) werden Änderungen der Variablen wie bisher übernommen.
+        /// </summary>
+        public bool SessionOwnsStatus;
 
         /// <summary>
         /// Online-Blip und Spielerzahl wie das Spiel setzen (Unity TDU2Minimap.UpdateOnlineDisplay, jedes Bild):
@@ -41,10 +59,31 @@ namespace Paradise.Core.Vehicles
         {
             if (_hud == null) return;
             string? ov = _hud.GetVariable("/:IsOnline"), pv = _hud.GetVariable("/:NbPlayers");
-            if (_lastOnlineVar != null && ov != _lastOnlineVar) OnlineStatus = ov == "1" || string.Equals(ov, "true", StringComparison.OrdinalIgnoreCase);
+            if (_lastOnlineVar != null && ov != _lastOnlineVar)
+            {
+                if (SessionOwnsStatus) _appliedOnline = null;   // Film hat zurückgesetzt -> eigenen Status erneut setzen
+                else OnlineStatus = ov == "1" || string.Equals(ov, "true", StringComparison.OrdinalIgnoreCase);
+            }
             _lastOnlineVar = ov;
-            if (_lastPlayersVar != null && pv != _lastPlayersVar && int.TryParse(pv, out int n)) PlayerCount = n;
+            if (RaceParticipants <= 0 && _lastPlayersVar != null && pv != _lastPlayersVar)
+            {
+                if (SessionOwnsStatus) _appliedPlayers = -1;
+                else if (int.TryParse(pv, out int n)) PlayerCount = n;
+            }
             _lastPlayersVar = pv;
+            // Symbol wurde vom Film zurückgesetzt (Bild "default"/anderes Label) -> neu setzen
+            if (_appliedOnline != null && RaceParticipants <= 0 && !IcStatusShows(OnlineStatus ? "connected" : "disconnected")) _appliedOnline = null;
+            if (RaceParticipants > 0)
+            {
+                if (_appliedRace != RaceParticipants)
+                {
+                    _appliedRace = RaceParticipants;
+                    _hud.SetVariable("/:nb_FRplayers", RaceParticipants > 1 ? RaceParticipants.ToString() : "");
+                    _hud.GotoLabel("/HUD/minimap/nb_players/in_out", "in", true);
+                }
+                return;
+            }
+            if (_appliedRace != 0) { _appliedRace = 0; _appliedPlayers = -1; _appliedOnline = null; }   // Rennen vorbei: Sitzung wieder zeigen
             if (_appliedOnline != OnlineStatus)
             {
                 _appliedOnline = OnlineStatus;
@@ -63,6 +102,14 @@ namespace Paradise.Core.Vehicles
                 if (OnlineStatus || !first) _hud.GotoLabel("/HUD/minimap/nb_players/in_out", "in", true);
             }
         }
+        bool IcStatusShows(string label)
+        {
+            var d = _hud?.Find("/HUD/minimap/ic_status");
+            var lb = d?.Sprite?.Timeline?.Labels;
+            if (d?.Sprite == null || lb == null || !lb.TryGetValue(label, out int fr)) return true;   // unbekannt: nichts erzwingen
+            return d.Sprite.Frame == fr;
+        }
+
         /// <summary>Aktualisierungen der Kartentextur je Sekunde (Unity: jedes Bild per Kamera).</summary>
         public float RefreshRate = 20f;
 
@@ -82,12 +129,71 @@ namespace Paradise.Core.Vehicles
         public static readonly List<V3> RaceBlips = new();
         /// <summary>Gegner im Rennen (KI) – wie normale Spieler weiß (Unity PlayerColors.Opponent).</summary>
         public static Color32 OpponentColor = new Color32(255, 255, 255, 255);
+        /// <summary>
+        /// Radar (gmth = 1): blaue Punkte an jedem Portal, unabhängig von Reihenfolge oder Route.
+        /// </summary>
+        public static readonly List<V3> RacePortalBlips = new();
+        public static Color32 RacePortalColor = new Color32(40, 140, 255, 255);
+
+        // ------------------------------------------------------------------ Ziel-Symbole (exe HudMap 0xc9e0b0 / 0xc9ee20)
+        /// <summary>Ein Ziel-Symbol der Minimap: Clip /HUD/minimap/objectif_0n (hud.vmf, Labels checkpoint/finish/start/radar_on/
+        /// radar_off/…), im Radar-Bild die Nummer in "num_radar".</summary>
+        public struct Objective { public bool Active; public V3 Pos; public string Label; public int Num; }
+        /// <summary>8 Plätze wie im Original (HudMap +0x1f0, je 32 Byte: Lage, Label, Nummer, Größe 1).</summary>
+        public static readonly Objective[] Objectives = new Objective[8];
+        static readonly string?[] _objLabel = new string?[8];
+        static readonly int[] _objNum = { int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue };
+        static readonly bool[] _objShown = new bool[8];
+        // Kartenfeld von mmap_lure in /HUD/minimap (siehe LureCenter): 181.6 x 180.3 Bühnenpixel
+        const float LureW = 181.6f, LureH = 180.3f;
+
+        /// <summary>exe 0xc9e0b0: Platz 0..7 belegen (Inselkoordinaten, Label des objectif-Clips, Nummer −1 = keine).</summary>
+        public static void SetObjective(int slot, V3 pos, string label, int num = -1)
+        {
+            if (slot < 0 || slot >= Objectives.Length) return;
+            Objectives[slot] = new Objective { Active = true, Pos = pos, Label = label, Num = num };
+        }
+
+        /// <summary>exe 0x409354: Platz leeren (Label "" = Symbol aus).</summary>
+        public static void ClearObjective(int slot) { if (slot >= 0 && slot < Objectives.Length) Objectives[slot] = default; }
+        public static void ClearObjectives() { for (int i = 0; i < Objectives.Length; i++) Objectives[i] = default; }
+
+        /// <summary>
+        /// exe 0xc9ee20: Jedes belegte Symbol wird über die Kartenmatrix in 0..1 umgerechnet, auf den Rand des Kartenfelds
+        /// begrenzt (Symbole außerhalb kleben am Rand) und in /HUD/minimap/objectif_0n gesetzt: Label, num_radar, Lage.
+        /// </summary>
+        void UpdateObjectives(V3 car, V3 fwd, V3 right)
+        {
+            if (_hud == null) return;
+            fwd.Y = 0; right.Y = 0;
+            fwd = fwd.LengthSquared() > 1e-6f ? V3.Normalize(fwd) : V3.UnitZ;
+            right = right.LengthSquared() > 1e-6f ? V3.Normalize(right) : V3.UnitX;
+            float span = 2f * MathF.Max(1f, _range);
+            for (int i = 0; i < Objectives.Length; i++)
+            {
+                string path = "/HUD/minimap/objectif_" + (i + 1).ToString("00");
+                var o = Objectives[i];
+                if (!o.Active || string.IsNullOrEmpty(o.Label))
+                {
+                    if (_objShown[i]) { _hud.SetVisible(path, false); _objShown[i] = false; _objLabel[i] = null; _objNum[i] = int.MinValue; }
+                    continue;
+                }
+                float rx = o.Pos.X - car.X, rz = o.Pos.Z - car.Z;
+                float u = System.Math.Clamp((rx * right.X + rz * right.Z) / span + 0.5f, 0f, 1f);
+                float v = System.Math.Clamp(0.5f - (rx * fwd.X + rz * fwd.Z) / span, 0f, 1f);   // Bühne: y nach unten, oben = Fahrtrichtung
+                if (!_objShown[i]) { _hud.SetVisible(path, true); _objShown[i] = true; }
+                if (_objLabel[i] != o.Label) { _hud.GotoLabel(path, o.Label, false); _objLabel[i] = o.Label; _objNum[i] = int.MinValue; }
+                if (_objNum[i] != o.Num) { _hud.SetVariable(path + ":num_radar", o.Num >= 0 ? o.Num.ToString() : ""); _objNum[i] = o.Num; }
+                _hud.SetPosition(path, new Vector2(LureCenter.x - LureW * 0.5f + u * LureW, LureCenter.y - LureH * 0.5f + v * LureH));
+            }
+        }
         readonly List<(V3 w, Color32 c)> _dots = new();
 
         void CollectDots()
         {
             _dots.Clear();
             if (RaceCount > 0) foreach (var w in RaceBlips) _dots.Add((w, OpponentColor));
+            foreach (var w in RacePortalBlips) _dots.Add((w, RacePortalColor));
             if (ShowPlayerDots) foreach (var d in PlayerDots) _dots.Add((d.pos, d.col));
         }
 
@@ -606,6 +712,7 @@ namespace Paradise.Core.Vehicles
             var dir = new Vector2(-MathF.Sin(h), -MathF.Cos(h));
             float kk = (NorthRadius / MathF.Max(MathF.Abs(dir.x), MathF.Abs(dir.y))) * 1.45f;
             _hud.SetPosition("/HUD/minimap/north", LureCenter + dir * kk);
+            UpdateObjectives(carGame, forwardGame, rightGame);
 
             _refreshT -= dt;
             if (_refreshT > 0f && _tex != null && _texSize == px) return;
@@ -683,6 +790,19 @@ namespace Paradise.Core.Vehicles
             _route = race;
             _routeNext = race != null ? 1 : -1;
             _routeBuiltNext = -2;   // Neubau erzwingen
+            _refreshT = 0f;
+        }
+
+        /// <summary>
+        /// Radar: blaue Punkte an allen Portalen setzen (Reihenfolge ist egal); null = ausblenden.
+        /// Es wird bewusst keine Route gebaut – nur die Dots werden gezeichnet.
+        /// </summary>
+        public void SetRacePortals(Paradise.Core.Racing.RaceDefinition? race)
+        {
+            RacePortalBlips.Clear();
+            if (race != null)
+                foreach (var cp in race.Checkpoints)
+                    RacePortalBlips.Add(cp.Position);
             _refreshT = 0f;
         }
 
@@ -902,6 +1022,54 @@ namespace Paradise.Core.Vehicles
             _roadMat ??= r.CreateMaterial(new Paradise.Core.Render.MaterialDesc { Kind = Paradise.Core.Render.MaterialKind.MapRoad, Name = "TDU2 Kartenstraßen" });
             r.DrawMesh(mesh, _roadMat, root);
             DrawMapRoute(r, root, MathF.Pow(2f, lvl), height);
+            DrawMapRacePath(r, root, MathF.Pow(2f, lvl), height);
+        }
+
+        // ------------------------------------------------------------------ Strecke eines Rennens auf der großen Karte
+        /// <summary>
+        /// Strecke des Rennens unter dem Kartencursor (Wettbewerbsmodus der Karte, Spielkoordinaten XZ); null = keine.
+        /// Farbe wie die Renn-Strecke der Minimap (<see cref="Paradise.Core.Racing.RaceRoute.RouteColor"/>). Gezeichnet über dem
+        /// Straßennetz und der GPS-Route, so breit wie eine Hauptstraße.
+        /// </summary>
+        public static IReadOnlyList<V3>? MapRacePath { get; private set; }
+        static int _mapRacePathVersion;
+        public static void SetMapRacePath(IReadOnlyList<V3>? path)
+        {
+            if (ReferenceEquals(path, MapRacePath)) return;
+            MapRacePath = path; _mapRacePathVersion++;
+        }
+
+        Paradise.Core.Render.IGpuMesh? _racePathMesh;
+        int _racePathMeshVersion = -1; float _racePathMeshMul;
+
+        void DrawMapRacePath(Paradise.Core.Render.IRenderer r, System.Numerics.Matrix4x4 root, float widthMul, Func<float, float, float> height)
+        {
+            var path = MapRacePath;
+            if (path == null || path.Count < 2 || _roadMat == null) return;
+            if (_racePathMesh == null || _racePathMeshVersion != _mapRacePathVersion || _racePathMeshMul != widthMul)
+            {
+                _racePathMesh?.Dispose(); _racePathMesh = null;
+                _racePathMeshVersion = _mapRacePathVersion; _racePathMeshMul = widthMul;
+                var verts = new List<(float x, float z, Color32 c)>(path.Count * 4);
+                var idx = new List<uint>(path.Count * 6);
+                var col = Paradise.Core.Racing.RaceRoute.RouteColor;
+                float half = HalfOf(6) * widthMul;
+                for (int i = 0; i + 1 < path.Count; i++) AddQuad(verts, idx, path[i].X, path[i].Z, path[i + 1].X, path[i + 1].Z, half, col);
+                if (idx.Count == 0) return;
+                var ov = new Paradise.Core.Render.ObjectVertex[verts.Count];
+                for (int k = 0; k < ov.Length; k++)
+                {
+                    var (x, z, c) = verts[k];
+                    ov[k] = new Paradise.Core.Render.ObjectVertex
+                    {
+                        Position = new V3(x, height(x, z) + 0.5f, z),
+                        Normal = V3.UnitY,
+                        Color = c.r | ((uint)c.g << 8) | ((uint)c.b << 16) | ((uint)c.a << 24)
+                    };
+                }
+                _racePathMesh = r.CreateMesh(ov, idx.ToArray());
+            }
+            if (_racePathMesh != null) r.DrawMesh(_racePathMesh, _roadMat, root);
         }
 
         // GPS-Route auf der großen Karte: die Straßen der Route in der GPS-Farbe (wie die Minimap), über dem Straßennetz

@@ -48,6 +48,44 @@ public sealed class RaceManager
     public float ElapsedSeconds { get; private set; }
     public float CountdownLeft { get; private set; }
     public int PassedCount { get; private set; }          // erledigte Ziele (ohne Startlinie)
+    /// <summary>
+    /// Radar (gmth 1, exe GMCompTraps 0xb64690): je Radar (Tor 1..n−1, die Startlinie ist kein Radar) das höchste gemessene Tempo
+    /// in m/s (0 = noch nicht geblitzt). Gemessen wird nur ab <see cref="RaceDefinition.SpeedTrapMin"/>; eine langsamere Durchfahrt
+    /// ersetzt keinen besseren Wert (exe 0xb64aad).
+    /// </summary>
+    public float[] RadarSpeeds { get; private set; } = Array.Empty<float>();
+    /// <summary>Radar: Wertung = Durchschnitt aller Radare (auch ungeblitzte mit 0), km/h (exe 0xb640f0, /:Score "%.2f").</summary>
+    public float TrapAverageKmh
+    {
+        get
+        {
+            var r = RadarSpeeds; if (r.Length == 0) return 0f;
+            float sum = 0f; foreach (var v in r) sum += v;
+            return sum / r.Length * 3.6f;
+        }
+    }
+    /// <summary>Radar: höchster Einzelwert aller Radare (km/h) – nur Anzeige/Debug, gewertet wird <see cref="TrapAverageKmh"/>.</summary>
+    public float BestTrapSpeedKmh { get { float m = 0f; foreach (var v in RadarSpeeds) m = MathF.Max(m, v); return m * 3.6f; } }
+    /// <summary>
+    /// Radar: Durchfahrt des Spielers (Radar-Index 0-basiert, Tempo m/s, über dem Mindesttempo, neuer eigener Höchstwert dieses
+    /// Radars, neuer Bestwert aller Teilnehmer an diesem Radar).
+    /// </summary>
+    public event Action<RaceManager, int, float, bool, bool, bool>? RadarPassed;
+    /// <summary>Radar: ein Gegner hat an einem Radar den Bestwert aller Teilnehmer überboten (Radar-Index, Tempo m/s).</summary>
+    public event Action<RaceManager, int, float>? RadarRecordByOpponent;
+    /// <summary>
+    /// Radar (exe 0xb648e0, Tabelle je Radar 0x6c Byte an GMCompTraps+0x34): Bestwert aller Teilnehmer je Radar (m/s). Ein neuer
+    /// Bestwert steht in Klammern in der Radarzeile (/HUD/radars/n:PosRadar "(%d)", 0xb63ac0), die Zeile wird "good" (vom Spieler)
+    /// bzw. "bad" (von einem Gegner, 0xb638d0).
+    /// </summary>
+    public float[] RadarBest { get; private set; } = Array.Empty<float>();
+    /// <summary>Radar: Durchschnitt eines Gegners über alle Radare (ungeblitzte mit 0), km/h – wie <see cref="TrapAverageKmh"/>.</summary>
+    public float OpponentTrapAverageKmh(int opp)
+    {
+        if (opp < 0 || opp >= _oppRadar.Length || _oppRadar[opp].Length == 0) return 0f;
+        float sum = 0f; foreach (var v in _oppRadar[opp]) sum += v;
+        return sum / _oppRadar[opp].Length * 3.6f;
+    }
     public int PenaltyMs { get; private set; }
     public int Lap => Race == null ? 1 : Mathf.Min(Race.Laps, 1 + (Race.TargetsPerLap > 0 ? PassedCount / Race.TargetsPerLap : 0));
     public bool InBrakingZone { get; private set; }
@@ -69,9 +107,24 @@ public sealed class RaceManager
 
     /// <summary>Aktuell anzuvisierendes Tor (null, wenn nicht aktiv).</summary>
     public RaceCheckpoint? Next => Race != null && _seq != null && _target < _seq.Count ? Race.Checkpoints[_seq[_target]] : null;
-    public int TargetCount => _seq != null ? _seq.Count : 0;
-    /// <summary>Index des nächsten Tors in <see cref="RaceDefinition.Checkpoints"/> (für die Minimap).</summary>
-    public int NextCheckpointIndex => Next != null ? Next.Index : -1;
+    public int TargetCount => Race != null && Race.Kind == RaceMode.SpeedTrap
+        ? Race.RadarCount
+        : (_seq != null ? _seq.Count : 0);
+    /// <summary>Index des nächsten Tors in <see cref="RaceDefinition.Checkpoints"/> (für die Minimap).
+    /// SpeedTrap hat keine Reihenfolge: hier wird das nächste noch nicht passierte Tor beliebig markiert.</summary>
+    public int NextCheckpointIndex
+    {
+        get
+        {
+            if (Race != null && Race.Kind == RaceMode.SpeedTrap)
+            {
+                for (int i = 1; i < Race.Checkpoints.Count; i++)
+                    if (!_trapPassed.Contains(i)) return i;
+                return -1;
+            }
+            return Next != null ? Next.Index : -1;
+        }
+    }
 
     /// <summary>Bestanden (für den laufenden/fertigen Lauf) – Zielzeit eingehalten.</summary>
     public bool WithinTarget => Race != null && (Race.TargetTimeMs <= 0 || (int)(ElapsedSeconds * 1000f) + PenaltyMs <= Race.TargetTimeMs);
@@ -89,6 +142,10 @@ public sealed class RaceManager
     Vehicle? _locked;   // Auto mit Startsperre (Countdown)
     VehicleManager? _hooked;
     readonly List<int> _splits = new();
+    readonly List<int> _trapPassed = new();   // SpeedTrap: ungeordnet passierte Tore
+    float[] _trapPrev = Array.Empty<float>(); // SpeedTrap: vorheriger Abstand je Tor
+    float[][] _oppRadar = Array.Empty<float[]>();   // SpeedTrap: je Gegner und Radar höchster Wert (m/s)
+    float[][] _oppPrev = Array.Empty<float[]>();    // SpeedTrap: je Gegner und Tor vorheriger Abstand
     RaceOpponents? _opponents;
 
     // ------------------------------------------------------------------ Steuerung
@@ -102,6 +159,8 @@ public sealed class RaceManager
         Race = race;
         _seq = race.TargetSequence();
         _target = 0;
+        _trapPassed.Clear(); _trapPrev = Array.Empty<float>(); RadarSpeeds = new float[race.RadarCount];
+        RadarBest = new float[race.RadarCount]; _oppRadar = Array.Empty<float[]>(); _oppPrev = Array.Empty<float[]>();
         PassedCount = 0; PenaltyMs = 0; ElapsedSeconds = 0f; CountdownLeft = RaceConfig.CountdownSeconds;
         Result = null; InBrakingZone = false; _stopT = 0f; _prepareT = 0f; _haveGround = false;
         State = RaceState.Preparing;
@@ -213,8 +272,19 @@ public sealed class RaceManager
         if (_locked != null) { _locked.StartLock = false; _locked.BrakePedal = 0f; _locked.HandBrake = 0f; _locked = null; }
         ElapsedSeconds = 0f;
         var pos = VehicleIsland();
-        var n = Next;
-        _prevSigned = pos.HasValue && n != null ? Signed(n, pos.Value) : 0f;
+        if (Race.Kind == RaceMode.SpeedTrap)
+        {
+            // Kein "nächstes" Tor: alle Tore sind von Anfang an gleichwertig.
+            _trapPrev = new float[Race.Checkpoints.Count];
+            if (pos.HasValue)
+                for (int i = 0; i < _trapPrev.Length; i++) _trapPrev[i] = Signed(Race.Checkpoints[i], pos.Value);
+            _prevSigned = 0f;
+        }
+        else
+        {
+            var n = Next;
+            _prevSigned = pos.HasValue && n != null ? Signed(n, pos.Value) : 0f;
+        }
         _opponents?.OnRaceStarted();
         Started?.Invoke(this);
     }
@@ -226,14 +296,25 @@ public sealed class RaceManager
         ElapsedSeconds += deltaSeconds;
         int elapsedMs = (int)(ElapsedSeconds * 1000f);
 
-        // Zeitlimit
+        // Zeitlimit. Bei SpeedTrap ist der Ablauf kein Scheitern, sondern das reguläre Ende: Die beste
+        // Durchfahrt zählt – bis dahin kann der Spieler schlechte Tore immer wieder neu anfahren.
+        if (Race.Kind == RaceMode.SpeedTrap && Race.TimeLimitMs > 0 && elapsedMs + PenaltyMs >= Race.TimeLimitMs)
+        {
+            Finish();
+            return;
+        }
         if (Race.HasTimeLimit && Race.TimeLimitMs > 0 && elapsedMs + PenaltyMs >= Race.TimeLimitMs) { Fail(true); return; }
         if (!Race.HasTimeLimit && Race.TimeLimitMs > 0 && elapsedMs >= Race.TimeLimitMs) { Fail(true); return; }
 
         var p = VehicleIsland();
-        var cp = Next;
-        if (p == null || cp == null) return;
+        if (p == null) return;
         var pos = p.Value;
+
+        // SpeedTrap: keine Tor-Reihenfolge, gewertet wird nur die schnellste Durchfahrt.
+        if (Race.Kind == RaceMode.SpeedTrap) { TickSpeedTrap(pos); return; }
+
+        var cp = Next;
+        if (cp == null) return;
 
         if (cp.IsBrakingZone && _target == _seq.Count - 1)
         {
@@ -256,6 +337,101 @@ public sealed class RaceManager
         bool close = MathF.Abs(signed) < 1.0f && lateral <= half;
         if (crossed || close) Advance(pos);
         else _prevSigned = signed;
+    }
+
+    /// <summary>
+    /// Radar (exe GMCompTraps, Durchfahrt 0xb648e0): Tor 1..n−1 sind Radare ohne Reihenfolge, beliebig oft anfahrbar. Bei einer
+    /// Durchfahrt ab dem Mindesttempo (ig2 "tras") blitzt es (/HUD/flash "on"); ist das Tempo höher als der bisherige Wert dieses
+    /// Radars, wird es übernommen. Wertung = Durchschnitt der Radare (<see cref="TrapAverageKmh"/>). Das Ende kommt mit dem
+    /// Zeitlimit (CtDw, siehe Tick).
+    /// </summary>
+    void TickSpeedTrap(Vector3 pos)
+    {
+        int ms = (int)(ElapsedSeconds * 1000f);
+        for (int i = 1; i < Race!.Checkpoints.Count; i++)
+        {
+            var cp = Race.Checkpoints[i];
+            float signed = Signed(cp, pos);
+            Vector3 d = pos - cp.Position; d.Y = 0f;
+            float lateral = MathF.Abs(Vector3.Dot(d, cp.Right));
+            float half = cp.HalfAcceptWidth(Race.School == 'B');
+            bool crossed = (_trapPrev[i] < 0f) != (signed < 0f) && MathF.Abs(signed - _trapPrev[i]) < 30f && lateral <= half;
+            _trapPrev[i] = signed;
+            if (!crossed) continue;
+
+            float v = Vehicles?.Current != null ? MathF.Abs(Vehicles.Current.SpeedKmh) / 3.6f : 0f;
+            int r = i - 1;
+            bool above = v >= Race.SpeedTrapMin;
+            bool improved = above && r < RadarSpeeds.Length && v > RadarSpeeds[r];
+            bool record = improved && r < RadarBest.Length && v > RadarBest[r];
+            if (improved) RadarSpeeds[r] = v;
+            if (record) RadarBest[r] = v;
+            if (!_trapPassed.Contains(i))
+            {
+                _trapPassed.Add(i);
+                PassedCount = _trapPassed.Count;
+                _opponents?.OnCheckpoint(i);
+                HighlightNext();
+            }
+            RadarPassed?.Invoke(this, r, v, above, improved, record);
+            CheckpointPassed?.Invoke(this, i);
+            _splits.Add(ms);
+            Log.Debug($"Radar {Race.Name}: {r + 1} mit {v * 3.6f:0.0} km/h (Mindesttempo {Race.SpeedTrapMin * 3.6f:0.0} km/h)" +
+                      (improved ? ", neuer Höchstwert" : "") + $" – Schnitt {TrapAverageKmh:0.00} km/h");
+        }
+        TickOpponentTraps();
+        // Kein Finish hier: erst das Zeitlimit beendet den Lauf (siehe Tick).
+    }
+
+    /// <summary>
+    /// Radar: Gegner werden an denselben Toren gemessen wie der Spieler (exe 0xb648e0 läuft für jeden Teilnehmer; nur der
+    /// Spieler blitzt und schreibt seine Zeile). Durchfahrt = Wechsel der Torseite innerhalb der Torbreite, gewertet ab dem
+    /// Mindesttempo, je Radar der höchste Wert. Überbietet ein Gegner den Bestwert aller Teilnehmer, meldet das
+    /// <see cref="RadarRecordByOpponent"/>.
+    /// </summary>
+    void TickOpponentTraps()
+    {
+        var opp = _opponents;
+        if (opp == null || opp.Count == 0 || Race == null) return;
+        var st = opp.Standings();
+        int nCp = Race.Checkpoints.Count, nRad = RadarSpeeds.Length;
+        if (_oppRadar.Length != st.Count)
+        {
+            _oppRadar = new float[st.Count][]; _oppPrev = new float[st.Count][];
+            for (int k = 0; k < st.Count; k++)
+            {
+                _oppRadar[k] = new float[nRad]; _oppPrev[k] = new float[nCp];
+                for (int i = 1; i < nCp; i++) _oppPrev[k][i] = Signed(Race.Checkpoints[i], st[k].Position);
+            }
+        }
+        for (int k = 0; k < st.Count; k++)
+        {
+            if (st[k].Out) continue;
+            var pos = st[k].Position;
+            for (int i = 1; i < nCp && i - 1 < nRad; i++)
+            {
+                var cp = Race.Checkpoints[i];
+                float signed = Signed(cp, pos);
+                Vector3 d = pos - cp.Position; d.Y = 0f;
+                float lateral = MathF.Abs(Vector3.Dot(d, cp.Right));
+                bool crossed = (_oppPrev[k][i] < 0f) != (signed < 0f) && MathF.Abs(signed - _oppPrev[k][i]) < 30f
+                               && lateral <= cp.HalfAcceptWidth(Race.School == 'B');
+                _oppPrev[k][i] = signed;
+                if (!crossed) continue;
+                float v = st[k].Speed;
+                int r = i - 1;
+                if (v < Race.SpeedTrapMin || v <= _oppRadar[k][r]) continue;
+                _oppRadar[k][r] = v;
+                if (v > RadarBest[r]) { RadarBest[r] = v; RadarRecordByOpponent?.Invoke(this, r, v); }
+            }
+        }
+    }
+
+    /// <summary>Lauf von außen beenden (Eliminator, exe LapElimination Zustand 1 = gewonnen / 2 = ausgeschieden).</summary>
+    public void ForceFinish(bool passed)
+    {
+        if (State != RaceState.Running || Race == null) return;
+        if (passed) Finish(); else Fail(false);
     }
 
     void Advance(Vector3 pos)
@@ -366,6 +542,7 @@ public sealed class RaceManager
 
     bool IsPassed(int cpIndex)
     {
+        if (Race != null && Race.Kind == RaceMode.SpeedTrap) return _trapPassed.Contains(cpIndex);
         if (_seq == null || Race == null) return false;
         // im aktuellen Durchgang schon passiert?
         int lapStart = Race.TargetsPerLap > 0 ? (_target / Race.TargetsPerLap) * Race.TargetsPerLap : 0;

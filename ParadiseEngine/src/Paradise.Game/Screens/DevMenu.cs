@@ -23,7 +23,7 @@ public sealed partial class DevMenu : GameModule
     static readonly uint CBlue = ObjectVertex.PackColor(140, 179, 255, 255);
     static readonly uint CWhite = ObjectVertex.PackColor(235, 235, 235, 255);
     static readonly uint CGray = ObjectVertex.PackColor(150, 150, 150, 255);
-    static readonly uint CBack = ObjectVertex.PackColor(0, 0, 0, 128);
+    static readonly uint CBack = ObjectVertex.PackColor(0, 0, 0, 255);
     static readonly uint CPanel = ObjectVertex.PackColor(0, 0, 0, 184);
     static readonly uint COrange = ObjectVertex.PackColor(255, 170, 60, 255);
 
@@ -85,9 +85,11 @@ public sealed partial class DevMenu : GameModule
         _time = time.TotalTime;
 #if WINDOWS
         FlashBrowser.Pump();   // Flash-Browser (F1 > Flash Debug > Browse Flash) – auch bei geschlossenem Menü aktiv
+        Paradise.Editor.SceneEditor.Pump();   // Szenen-Editor (F1 > Tools > Open Editor) – Snapshots + Auswahl im 3D-Bild (DebugLines)
 #endif
         SampleFrame(time.DeltaTime);
         CollectCarDebug();   // Radstrahlen/Kräfte am Auto (Car > Physics debug), auch bei geschlossenem Menü
+        CollectCollisionDebug();  // Kollisionsboxen in der Nähe (Debug-Ansicht), auch bei geschlossenem Menü
         CollectRaceDebug();  // gewählte Strecke (Race Debug), auch bei geschlossenem Menü
         UpdateTools(time.DeltaTime);   // Cutscene Tester / Animation Viewer
 
@@ -404,8 +406,7 @@ public sealed partial class DevMenu : GameModule
                 y += lh;
             }
 
-            Text(f, x, ry + lh * (shown + 3) + 12f - lh - 6f,
-                 "Grey values: not available in the engine yet  |  " + ToggleKeyName() + ": Toggle Control (menu / drive)", CGray, rx + w - 10f, cw, ch);
+            //Text(f, x, ry + lh * (shown + 3) + 12f - lh - 6f, "Grey values: not available in the engine yet  |  " + ToggleKeyName() + ": Toggle Control (menu / drive)", CGray, rx + w - 10f, cw, ch);
 
             if (_toast != null && _time <= _toastUntil)
             {

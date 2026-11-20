@@ -44,9 +44,14 @@ public sealed class RaceOpponents
         public float Spin, Steer;
         public float[]? VLim;          // Kurventempo je Routenpunkt (m/s), null = keine Begrenzung
         public float Traveled;         // gefahrener Weg ab der Startlinie (m)
+        public bool Out;               // Eliminator: ausgeschieden
         public float FinishTime = -1f; // Rennzeit beim Überqueren der Ziellinie (s), -1 = noch nicht
         public float Shift, ShiftTarget, ClearSince;   // seitliches Ausweichen/Überholen (m, zusätzlich zur Spur)
         public float HalfLen = 1.8f;
+        // Bodenschatten (wie VehicleEffects des Spielers / stehende Autos im Interieur)
+        public IGpuMesh? ShadowMesh;
+        public IGpuMaterial? ShadowMat;
+        public IGpuTexture? ShadowBlob;
         // kinematischer Körper (Unity: Rigidbody isKinematic + BoxCollider)
         public BodyHandle? Body;
         public Vector3 BoxCenter, BoxSize;
@@ -63,6 +68,9 @@ public sealed class RaceOpponents
         public RaceOpponentDef Def;
         public string Name, Car;
         public float Traveled, FinishTime, Speed;
+        /// <summary>Eliminator: ausgeschieden (<see cref="Eliminate"/>).</summary>
+        public bool Out;
+        public Vector3 Position;   // Inselkoordinaten des Autos (für SpeedTrap-Portale)
         public bool Finished => FinishTime >= 0f;
     }
 
@@ -87,11 +95,22 @@ public sealed class RaceOpponents
         foreach (var o in _opps) if (o.Model != null && !o.Done) into.Add(o.Island);
     }
 
+    /// <summary>Karosserie-Boxen der Gegner in Spielkoordinaten (Mitte, Drehung, Größe) für die Debug-Ansicht.</summary>
+    public IEnumerable<(Vector3 center, Quaternion rot, Vector3 size)> DebugBoxes()
+    {
+        foreach (var o in _opps)
+        {
+            if (o.Model == null || !o.Active || o.Done) continue;
+            // Gleiche Lage wie beim Zeichnen des Modells (RenderActive); die Körperpose hinkt im FixedUpdate hinterher.
+            yield return (o.Pos + Vector3.Transform(o.BoxCenter, o.Rot), o.Rot, o.BoxSize);
+        }
+    }
+
     public List<Standing> Standings()
     {
         var l = new List<Standing>(_opps.Count);
         foreach (var o in _opps)
-            l.Add(new Standing { Def = o.Def, Name = o.Def.Name ?? "", Car = o.Assets?.Car?.ModelName ?? "", Traveled = o.Traveled, FinishTime = o.FinishTime, Speed = o.Speed });
+            l.Add(new Standing { Def = o.Def, Name = o.Def.Name ?? "", Car = o.Assets?.Car?.ModelName ?? "", Traveled = o.Traveled, FinishTime = o.FinishTime, Speed = o.Speed, Position = o.Island, Out = o.Out });
         return l;
     }
 
@@ -280,6 +299,9 @@ public sealed class RaceOpponents
     {
         var rend = Renderer ?? throw new InvalidOperationException("kein Renderer (VehicleModule)");
         o.Assets = a;
+        // Bodenschatten unter dem KI-Auto: gleiche Textur/Größe wie beim Spieler (VehicleEffects), nur statisch.
+        var (sm, smat, sblob) = VehicleEffects.CreateStaticShadow(rend, a, 0.7f);
+        o.ShadowMesh = sm; o.ShadowMat = smat; o.ShadowBlob = sblob;
         var model = CarModel.Build(a, rend);
         o.Model = model;
         // Unterkante (Reifen) bestimmen, damit das Auto auf dem Boden steht und nicht darin; Räder (Vorzeichen am Modell ausprobiert)
@@ -622,6 +644,16 @@ public sealed class RaceOpponents
             var root = Matrix4x4.CreateFromQuaternion(o.Rot) * Matrix4x4.CreateTranslation(o.Pos) * gameToRender;
             o.Model.UpdateTransforms(root);
             o.Model.Draw(rend);
+            // Schatten liegt auf dem Boden (Island-Y), 3 cm darüber, in Fahrtrichtung des Autos.
+            if (o.ShadowMesh != null && o.ShadowMat != null)
+            {
+                var size = o.BoxSize;
+                var pose = Matrix4x4.CreateScale(MathF.Max(1f, size.X * 1.25f), 1f, MathF.Max(1f, size.Z * 1.12f))
+                         * Matrix4x4.CreateFromQuaternion(o.Rot)
+                         * Matrix4x4.CreateTranslation(new Vector3(o.Island.X, o.Island.Y + 0.03f, o.Island.Z))
+                         * gameToRender;
+                rend.DrawMesh(o.ShadowMesh, o.ShadowMat, pose);
+            }
         }
     }
 
@@ -630,7 +662,22 @@ public sealed class RaceOpponents
         RemoveBody(o);
         o.Model?.Destroy(); o.Model = null;
         o.Assets?.DestroyTextures(); o.Assets = null;
+        o.ShadowMesh?.Dispose(); o.ShadowMesh = null;
+        o.ShadowMat?.Dispose(); o.ShadowMat = null;
+        o.ShadowBlob?.Dispose(); o.ShadowBlob = null;
         o.Wheels = null;
+    }
+
+    /// <summary>
+    /// Eliminator: Gegner scheidet aus (exe 0xb595e0 ruft am Teilnehmer die Methode +0x18 auf). Er fährt nicht weiter und wird
+    /// entfernt (Modell, Körper, Name). [Darstellung des Ausscheidens im Original nicht verfolgt – Entfernen angenommen]
+    /// </summary>
+    public void Eliminate(int index)
+    {
+        if (index < 0 || index >= _opps.Count) return;
+        var o = _opps[index];
+        o.Out = true; o.Done = true;
+        DestroyModel(o);
     }
 
     public void Clear()

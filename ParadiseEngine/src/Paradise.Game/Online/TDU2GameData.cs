@@ -53,6 +53,17 @@ public static class TDU2GameData
     public static float StatusSeconds = 3f;
     public static bool ShowPlayerEvents = true;
 
+    /// <summary>Statusabfrage des Servers (fürs Netzwerk-Debug-Menü).</summary>
+    public static bool LastStatusOk { get; private set; }
+    public static string LastStatusError { get; private set; } = "";
+    public static bool LastStatusP2PEnabled { get; private set; }
+    public static long LastStatusP2PToken { get; private set; }
+    /// <summary>Fehlgeschlagene Statusabfragen in Folge; aktiver Abfrageabstand (Serverwert, falls vorhanden).</summary>
+    public static int StatusFailCount => _failCount;
+    public static float StatusIntervalSeconds => _serverStatusSeconds > 0f ? _serverStatusSeconds : StatusSeconds;
+    /// <summary>Sekunden seit der letzten beantworteten Statusabfrage; -1 = noch keine.</summary>
+    public static float LastStatusAge => _lastStatusAt < 0f ? -1f : _clock - _lastStatusAt;
+
     public static bool Online { get; private set; } = true;
     public static int PlayerCount { get; private set; }
     public static int Lobby { get; private set; }
@@ -73,7 +84,7 @@ public static class TDU2GameData
     public static int IslandCode(string? island) => string.IsNullOrEmpty(island) ? 0 : island.StartsWith("ib", StringComparison.OrdinalIgnoreCase) ? 1 : island.StartsWith("ha", StringComparison.OrdinalIgnoreCase) ? 2 : 0;
 
     static Task<NetResponse>? _status;
-    static float _clock, _nextStatus, _serverStatusSeconds, _nextPush;
+    static float _clock, _nextStatus, _serverStatusSeconds, _nextPush, _lastStatusAt = -1f;
     static int _failCount;
     static bool _wasOnline, _firstList = true;
     static VehicleManager? _vm;
@@ -127,6 +138,14 @@ public static class TDU2GameData
         if (_status == null || !_status.IsCompleted) return;
         var r = _status.Status == TaskStatus.RanToCompletion ? _status.Result : null;
         _status = null;
+        _lastStatusAt = _clock;
+        LastStatusOk = r != null && r.ok;
+        LastStatusError = r != null ? (r.error ?? "") : "no_response";
+        if (LastStatusOk && r != null)
+        {
+            LastStatusP2PEnabled = r.p2pEnabled;
+            LastStatusP2PToken = r.p2pToken;
+        }
         bool ok = r != null && r.ok;
         if (ok && r!.playerId == 0) { TDU2Session.SaveAsync(); ok = false; }   // Sitzung verloren (Server neu gestartet?) -> mit Token neu anmelden
         if (!ok) _failCount++; else _failCount = 0;
@@ -435,15 +454,20 @@ public static class TDU2GameData
     static void PushToFlash()
     {
         var mm = _vm?.Minimap;
+        if (mm != null) mm.SessionOwnsStatus = TDU2Session.LoggedIn;
         if (mm != null && TDU2Session.LoggedIn) { mm.OnlineStatus = Online; mm.PlayerCount = System.Math.Max(1, PlayerCount); }
 
         var vars = new Dictionary<string, string>
         {
             ["/:IsOnline"] = Online ? "1" : "0",
-            ["/:NbPlayers"] = PlayerCount.ToString(),
-            ["/:nb_players"] = PlayerCount.ToString(),
-            ["/:nb_FRplayers"] = PlayerCount.ToString(),
         };
+        // Im Rennen gehören /:NbPlayers (Platz "von N") und die Spielerzahl der Minimap dem Rennen (Minimap.RaceParticipants)
+        if (Paradise.Core.Vehicles.Minimap.RaceParticipants <= 0)
+        {
+            vars["/:NbPlayers"] = PlayerCount.ToString();
+            vars["/:nb_players"] = PlayerCount.ToString();
+            vars["/:nb_FRplayers"] = PlayerCount.ToString();
+        }
         if (TDU2Session.LoggedIn)
         {
             string money = Money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $";

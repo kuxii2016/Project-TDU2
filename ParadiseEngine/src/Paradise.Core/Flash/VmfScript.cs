@@ -701,8 +701,9 @@ namespace Paradise.Core.Flash
             if (path.StartsWith("_root/")) path = path.Substring(5);
             if (path.StartsWith("/")) return Find(path)?.Sprite ?? (path == "/" ? Root : null);
             var inst = from;
-            // Slash-Syntax ("../sq0", "../../:x") nur an '/' trennen – sonst zerfällt ".." in leere Teile; Punkt-Syntax ("_parent.sq0") an '.'
-            var parts = path.IndexOf('/') >= 0 ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+            // Slash-Syntax ("../sq0", "../../:x", auch nur "..": tellTarget("..") im Bild 43 der Menü-Buttons von gmeditor.vmf) nur an
+            // '/' trennen – sonst zerfällt ".." in leere Teile und das Ziel bliebe der Clip selbst; Punkt-Syntax ("_parent.sq0") an '.'
+            var parts = IsSlashPath(path) ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
                                                : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
             {
@@ -715,6 +716,9 @@ namespace Paradise.Core.Flash
             }
             return inst;
         }
+
+        /// <summary>Pfad in Slash-Syntax ("a/b", "../x", ".."); sonst Punkt-Syntax ("_parent.a").</summary>
+        internal static bool IsSlashPath(string path) => path.IndexOf('/') >= 0 || path.StartsWith("..", StringComparison.Ordinal);
 
         Instance Child(Instance inst, string name)
         {
@@ -1081,7 +1085,11 @@ namespace Paradise.Core.Flash
                 case "Object": return new AsObject();
                 case "stopDrag": EndDrag(); return Undefined;
                 case "getTextLength": return (double)MeasureVarText(args.Length > 0 ? ToStr(args[0]) : "");   // nativ im Spiel
-                case "setInputFocus": SetInputFocus(args.Length > 0 ? ToStr(args[0]) : null); return Undefined;   // nativ: Texteingabe (VmfHelpers)
+                case "setInputFocus": case "SetInputFocus":   // nativ: Texteingabe (VmfHelpers); gmeditor.vmf /vk ruft beide Schreibweisen
+                    SetInputFocus(args.Length > 0 ? ToStr(args[0]) : null); return Undefined;
+                case "setInputMaxLength":   // nativ: setInputMaxLength(Variable, Länge) – gmeditor.vmf /vk (VK_MaxLength), initText
+                    if (args.Length > 1 && ToNum(args[1]) > 0) InputMaxLength = (int)ToNum(args[1]);
+                    return Undefined;
                 case "ASFlashList":
                     {
                         // ASFlashList(Besitzer-Clip, Listenname, sichtbare Zeilen, Spalten) – im Spiel nativ

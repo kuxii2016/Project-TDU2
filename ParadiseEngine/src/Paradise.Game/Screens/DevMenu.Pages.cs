@@ -24,45 +24,54 @@ public sealed partial class DevMenu
 
     List<Item> MainMenu() => new List<Item>
     {
-        Head("RACING & TESTS"),
+        Head("RACE"),
         Menu("Race Debug / Start Race (.ig2)", RaceMenu),
-        Menu("Cutscene Tester", CutsceneMenu),
-        Menu("Animation Viewer", AnimViewerMenu),
 
         Head("VEHICLES & TRAFFIC"),
         Menu("Cars", CarsMenu),
         Menu("Traffic", TrafficMenu),
+        Menu("Traffic Debug View + AI paths", TrafficDebugViewMenu),
 
         Head("WORLD"),
         Menu("World / Island", WorldMenu),
         Menu("Streaming", StreamingMenu),
         Menu("Weather & Time of Day", WeatherMenu),
         Menu("GPS / Bookmarks", GpsMenu),
-        Menu("Audio ", AudioMenu),
+        Menu("Audio", AudioMenu),
 
-        Head("INPUT"),
-        Bool("Toggle Control: drive with the menu open (" + ToggleKeyName() + ")", () => _drive, SetDrive, false),
-        Menu("Controls / Input Devices", ControlsMenu),
-        PhBool("Input overlay (axes, pedals, buttons)", false),
-
-        Head("PLAYER & ONLINE"),
+        Head("PLAYER & SAVE"),
         Menu("Avatar", AvatarMenu),
-        Menu("Network", NetworkMenu),
         Menu("Savegame / Profile / Money", SavegameMenu),
+        Menu("Savegame Debug (Save/Load, View Data, JSON/XMBF)", SavegameDebugMenu),
+
+        Head("NETWORK & MULTIPLAYER"),
+        Menu("Network / Session", NetworkMenu),
+        Menu("Network Traffic (server / P2P / relay)", NetworkTrafficMenu),
+        Menu("Players", PlayersMenu),
+
+        Head("DEBUG VIEWS"),
+        Menu("Debug Views (one page per view)", DebugViewMenu),
+        Menu("Collision Debug View", CollisionViewMenu),
+        Menu("Camera / Free-fly", CameraDebugViewMenu),
+
+        Head("TOOLS"),
+#if WINDOWS
+        Action_("Open Editor (Hierarchy + Inspector)", OpenEditor),
+#endif
+        Menu("Cutscene Tester", CutsceneMenu),
+        Menu("Animation Viewer", AnimViewerMenu),
+        Menu("Flash Debug", FlashMenu),
+        Menu("Flash Profiler", FlashProfilerMenu),
 
         Head("VISUALS & PERFORMANCE"),
         Menu("Rendering", RenderingMenu),
         Menu("Performance", UsageMenu),
         Menu("Jobs & Threads", JobsMenu),
 
-        Head("DEBUG VIEW"),
-        Menu("Debug View Toggles (race / traffic / camera)", DebugViewMenu),
-        Bool("Free-fly camera", () => _terrain.FreeFly, SetFreeFly, false),
-        Bool("Race debug in the 3D world", () => RaceView.ShowInWorld, v => RaceView.ShowInWorld = v, true),
-
-        Head("FLASH"),
-        Menu("Flash Debug", FlashMenu),
-        Menu("Flash Profiler", FlashProfilerMenu),
+        Head("INPUT"),
+        Bool("Toggle Control: drive with the menu open (" + ToggleKeyName() + ")", () => _drive, SetDrive, false),
+        Menu("Controls / Input Devices", ControlsMenu),
+        PhBool("Input overlay (axes, pedals, buttons)", false),
 
         Head(""),
         Info("Close F1 | Up/Down Entry | Left/Right Value (Shift x10) | Enter to open | Backspace to go back | Delete (default)"),

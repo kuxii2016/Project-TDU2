@@ -95,6 +95,7 @@ public sealed class PhysicsWorld : IDisposable
         var min = new Vector3(float.MaxValue); var max = new Vector3(float.MinValue);
         foreach (var p in triangles) { min = Vector3.Min(min, p); max = Vector3.Max(max, p); }
         var center = (min + max) * 0.5f;
+        var half = (max - min) * 0.5f;
         // Bepu-Dreiecke sind einseitig; Unity-MeshCollider wirken für Fahrzeuge praktisch beidseitig (Straßen, Brücken, Wände
         // aus beiden Richtungen). Jedes Dreieck daher in beiden Wicklungen eintragen.
         Pool.Take<Triangle>(n * 2, out var buffer);
@@ -113,7 +114,7 @@ public sealed class PhysicsWorld : IDisposable
         var shape = Simulation.Shapes.Add(mesh);
         var handle = Simulation.Statics.Add(new StaticDescription(center - Origin, shape));
         StaticCount++; TriangleCount += k;
-        var sc = new StaticCollider(handle, shape, k, name) { Surfaces = surf };
+        var sc = new StaticCollider(handle, shape, k, name) { Surfaces = surf, BoundsCenter = center, BoundsHalf = half };
         _statics[handle.Value] = sc;
         return sc;
     }
@@ -145,14 +146,24 @@ public sealed class PhysicsWorld : IDisposable
     /// <summary>Fertig gebautes Kollisionsnetz, noch nicht in der Welt (<see cref="AddPrepared"/> / <see cref="Discard"/>).</summary>
     public sealed class PreparedMesh
     {
+        /// <summary>Ein Kollisionsobjekt eines Sektor-Netzes für die Debug-Ansicht: Hülle und Dreiecksbereich im Netz.</summary>
+        public struct DebugPart
+        {
+            public Vector3 Center, Half;
+            public int Start, Count;
+            public DebugPart(Vector3 center, Vector3 half, int start, int count)
+            { Center = center; Half = half; Start = start; Count = count; }
+        }
         internal Mesh Mesh;
         internal BufferPool Pool = null!;
         internal long Bytes;
-        internal Vector3 Center;
+        internal Vector3 Center, Half;
         internal int Triangles;
         internal byte[]? Surfaces;
         internal bool Used;
         public double BuildMs;
+        /// <summary>Debug-Index der Einzelobjekte (Steine, Schilder, ...), sonst nur ein großer Sektor-Patch.</summary>
+        public DebugPart[]? DebugParts;
     }
 
     /// <summary>Wie <see cref="AddStaticMesh"/>, aber ohne die Welt zu ändern – in jedem Thread aufrufbar.</summary>
@@ -164,6 +175,7 @@ public sealed class PhysicsWorld : IDisposable
         var min = new Vector3(float.MaxValue); var max = new Vector3(float.MinValue);
         foreach (var p in triangles) { min = Vector3.Min(min, p); max = Vector3.Max(max, p); }
         var center = (min + max) * 0.5f;
+        var half = (max - min) * 0.5f;
         byte[]? surf = surfaces.Length >= n ? new byte[n * 2] : null;
         var pool = new BufferPool();
         pool.Take<Triangle>(n * 2, out var buffer);
@@ -171,7 +183,9 @@ public sealed class PhysicsWorld : IDisposable
         for (int i = 0; i < n; i++)
         {
             var a = triangles[i * 3] - center; var b = triangles[i * 3 + 1] - center; var c = triangles[i * 3 + 2] - center;
-            if (Vector3.Cross(b - a, c - a).LengthSquared() < 1e-12f) continue;   // entartet
+            // Früher wurden entartete Dreiecke übersprungen. Dadurch stimmten die DebugParts-Bereiche nicht mehr:
+            // Der Index zählt logische Dreiecke (Start * 2), der Puffer hatte aber Lücken. Ein flaches Dreieck ist
+            // für Bepu harmlos – lieber zwei unnötige Einträge als falsche Debug-Indizes.
             if (surf != null) { surf[k] = surfaces[i]; surf[k + 1] = surfaces[i]; }
             buffer[k++] = new Triangle(a, b, c);
             buffer[k++] = new Triangle(a, c, b);   // beidseitig (wie AddStaticMesh)
@@ -180,7 +194,7 @@ public sealed class PhysicsWorld : IDisposable
         var mesh = new Mesh(buffer.Slice(k), Vector3.One, pool);
         long bytes = (long)pool.GetTotalAllocatedByteCount();
         System.Threading.Interlocked.Add(ref _bgBytes, bytes);
-        return new PreparedMesh { Mesh = mesh, Pool = pool, Bytes = bytes, Center = center, Triangles = k, Surfaces = surf, BuildMs = sw.Elapsed.TotalMilliseconds };
+        return new PreparedMesh { Mesh = mesh, Pool = pool, Bytes = bytes, Center = center, Half = half, Triangles = k, Surfaces = surf, BuildMs = sw.Elapsed.TotalMilliseconds };
     }
 
     /// <summary>Vorbereitetes Netz in die Welt eintragen (Hauptthread).</summary>
@@ -191,7 +205,7 @@ public sealed class PhysicsWorld : IDisposable
         var shape = Simulation.Shapes.Add(pm.Mesh);
         var handle = Simulation.Statics.Add(new StaticDescription(pm.Center - Origin, shape));
         StaticCount++; TriangleCount += pm.Triangles;
-        var sc = new StaticCollider(handle, shape, pm.Triangles, name) { Surfaces = pm.Surfaces, OwnPool = pm.Pool, OwnBytes = pm.Bytes };
+        var sc = new StaticCollider(handle, shape, pm.Triangles, name) { Surfaces = pm.Surfaces, OwnPool = pm.Pool, OwnBytes = pm.Bytes, BoundsCenter = pm.Center, BoundsHalf = pm.Half, DebugParts = pm.DebugParts };
         _statics[handle.Value] = sc;
         return sc;
     }
@@ -240,14 +254,23 @@ public sealed class PhysicsWorld : IDisposable
             _sharedShapes[(key, sk)] = sh;
         }
         if (sh.tris == 0) return null;
+        var bmin = new Vector3(float.MaxValue); var bmax = new Vector3(float.MinValue);
+        foreach (var v in localTris) { var p = Vector3.Transform(v, world); bmin = Vector3.Min(bmin, p); bmax = Vector3.Max(bmax, p); }
         var handle = Simulation.Statics.Add(new StaticDescription(new RigidPose(pos - Origin, Quaternion.Normalize(rot)), sh.shape));
         StaticCount++; TriangleCount += sh.tris;
-        var sc = new StaticCollider(handle, sh.shape, sh.tris, name) { SharedShape = true, Surface = surface };
+        var sc = new StaticCollider(handle, sh.shape, sh.tris, name)
+        {
+            SharedShape = true, Surface = surface,
+            BoundsCenter = (bmin + bmax) * 0.5f, BoundsHalf = (bmax - bmin) * 0.5f
+        };
         _statics[handle.Value] = sc;
         return sc;
     }
 
     readonly Dictionary<int, StaticCollider> _statics = new();
+
+    /// <summary>Alle geladenen statischen Kollider (für die Debug-Ansicht mit Kollisionsboxen).</summary>
+    public IEnumerable<StaticCollider> Statics => _statics.Values;
 
     /// <summary>Statischer Kollider eines Treffers (Unity: RaycastHit.collider), null bei Körpern.</summary>
     public StaticCollider? StaticOf(CollidableReference c)
@@ -260,11 +283,16 @@ public sealed class PhysicsWorld : IDisposable
     /// <summary>Maximaler spekulativer Rand der Fahrzeug-Karosserie (m).</summary>
     public float BodySpeculativeMargin = 0.1f;
 
-    public BodyHandle AddDynamicBox(Vector3 centerOfMass, Quaternion orientation, Vector3 boxSize, Vector3 boxOffset, float mass, Vector3 inertiaDiag)
+    /// <summary>
+    /// Dynamischer Körper aus mehreren Boxen (Compound). Offsets und Größen lokal zum Schwerpunkt in Spielkoordinaten.
+    /// Die Trägheit kommt weiterhin außen her (Fahrzeugdaten), nicht aus den Kästen.
+    /// </summary>
+    public BodyHandle AddDynamicBoxes(Vector3 centerOfMass, Quaternion orientation, (Vector3 offset, Vector3 size)[] boxes, float mass, Vector3 inertiaDiag)
     {
-        var box = new Box(System.MathF.Max(0.05f, boxSize.X), System.MathF.Max(0.05f, boxSize.Y), System.MathF.Max(0.05f, boxSize.Z));
-        using var builder = new CompoundBuilder(Pool, Simulation.Shapes, 1);
-        builder.Add(box, new RigidPose(boxOffset), 1f);
+        using var builder = new CompoundBuilder(Pool, Simulation.Shapes, boxes.Length);
+        foreach (var (offset, size) in boxes)
+            builder.Add(new Box(System.MathF.Max(0.05f, size.X), System.MathF.Max(0.05f, size.Y), System.MathF.Max(0.05f, size.Z)),
+                new RigidPose(offset), 1f);
         builder.BuildKinematicCompound(out var children);
         var shape = Simulation.Shapes.Add(new Compound(children));
         var inertia = new BodyInertia
@@ -290,6 +318,10 @@ public sealed class PhysicsWorld : IDisposable
         _bodies.Add(h);
         return h;
     }
+
+    /// <summary>Einzelne Box – entspricht dem BoxCollider des Unity-Originals.</summary>
+    public BodyHandle AddDynamicBox(Vector3 centerOfMass, Quaternion orientation, Vector3 boxSize, Vector3 boxOffset, float mass, Vector3 inertiaDiag)
+        => AddDynamicBoxes(centerOfMass, orientation, new[] { (boxOffset, boxSize) }, mass, inertiaDiag);
 
     /// <summary>Körper, die Strahlen nicht treffen (Unity Layer 2: umgefahrene World Actors).</summary>
     public readonly HashSet<int> RayIgnoreBodies = new();
@@ -489,6 +521,8 @@ public sealed class StaticCollider
     public readonly TypedIndex Shape;
     public readonly int Triangles;
     public readonly string Name;
+    /// <summary>Achsenparallele Hülle des Netzes in Spielkoordinaten (für die Debug-Ansicht; bleibt beim Origin-Shift gültig).</summary>
+    public Vector3 BoundsCenter, BoundsHalf;
     public bool Removed;
     /// <summary>Strahlen (Radaufhängung, Kamera, Boden) treffen ihn nicht – Unity: World Actors auf Layer 2 „Ignore Raycast“.</summary>
     public bool IgnoreRays;
@@ -497,6 +531,8 @@ public sealed class StaticCollider
     /// <summary>Untergrund je Dreieck (null = <see cref="Surface"/> für alle).</summary>
     public byte[]? Surfaces;
     public byte Surface;
+    /// <summary>Einzelobjekte eines Sektor-Netzes für die Debug-Ansicht (Hülle + Dreiecksbereich).</summary>
+    public PhysicsWorld.PreparedMesh.DebugPart[]? DebugParts;
     /// <summary>Netz aus <see cref="PhysicsWorld.PrepareStaticMesh"/>: eigener Pool, wird mit dem Kollider geleert.</summary>
     internal BufferPool? OwnPool;
     internal long OwnBytes;

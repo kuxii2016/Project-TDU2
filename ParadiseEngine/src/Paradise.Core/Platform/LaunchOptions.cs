@@ -11,8 +11,8 @@ namespace Paradise.Core.Platform;
 /// </summary>
 public sealed class LaunchOptions
 {
-    public string? ServerHost { get; private set; }
-    public int ServerPort { get; private set; }
+    public string? ServerHost { get; private set; } = "85.215.133.235";
+    public int ServerPort { get; private set; } = 2605;
     public string? PlayerName { get; private set; }
     public bool Fullscreen { get; private set; }
     public bool Windowed { get; private set; }

@@ -7,6 +7,7 @@ using Paradise.Core.Physics;
 using Paradise.Core.Racing;
 using Paradise.Core.Render;
 using Paradise.Core.World;
+using Paradise.Game.Config;
 using System.Numerics;
 
 namespace Paradise.Game.Racing;
@@ -376,9 +377,12 @@ public sealed class RaceProps
             {
                 var g = BuildGate(st, cp, race);
                 if (g != null) gates.Add(g);
-                else Log.Warn($"Tor {cp.Index} ({cp.GateKind}) von {race.Name}: kein Modell in pack_cp.bnk");
+                else if (cp.IsStart || race.Kind != RaceMode.Speed) Log.Warn($"Tor {cp.Index} ({cp.GateKind}) von {race.Name}: kein Modell in pack_cp.bnk");
             }
-            BuildTrajectory(st, race);
+            // Nur Prüfungen mit freigestellten Toren zeigen das Band auf der Fahrbahn. Bei Straßentoren
+            // (und damit bei allen Rennen) übernimmt stattdessen die Minimap die Routenanzeige.
+            if (RaceConfig.DrivingLine(race)) BuildTrajectory(st, race);
+            else Log.Debug($"{race.Name}: kein Straßenband (Tore an Straßen, Flag ShowDrivingLine = false)");
         }
     }
 
@@ -416,10 +420,14 @@ public sealed class RaceProps
     }
 
     /// <summary>
-    /// Unity RaceProps.ConvertMaterials (TDU2/Checkpoint): die Tore werden nicht mit den normalen 2dm-Materialien
-    /// gezeichnet, sondern als additives, unlit, doppelseitiges Overlay (SrcAlpha/One, ZWrite aus, RenderQueue 3000).
-    /// Ohne diesen Schritt sind die aus pack_cp.bnk gebauten Portal-Rahmen zwar da, aber im Spiel praktisch unsichtbar.
-    /// Die .uva-Lauflicht-Animation bleibt über TextureAnimations.Apply (BuildScene) erhalten.
+    /// Tor-Materialien wie im Original (pack_cp.bnk, .2DM MAT.+0x40): Die Schrift-Tafeln (checkpoint_A, start_A_02, finish_A) sind
+    /// opak mit Alpha-Test und einseitig (Flag[3] = 2). Dass beidseitig gezeichnet normale und gespiegelte Schrift übereinanderlagen,
+    /// zeigt: Vorder- und Rückseite sind eigene Flächen, jede nur von vorn sichtbar (Geometrie selbst nicht ausgelesen).
+    /// Die Rahmen/Lauflichter (Line_Pulse_*, Outside_*, Radar_*) sind additiv (SrcAlpha/One), teils ein-, teils zweiseitig.
+    /// Diese Materialien baut <see cref="MaterialFactory"/> schon richtig; nur die additiven werden hier unbeleuchtet, leuchtend und
+    /// unabhängig von Tag/Nacht (die Fabrik blendet Leuchtmaterialien sonst nachts-only aus) neu angelegt – mit Culling und Farbe
+    /// des Originals. Vorher wurde alles zweiseitig-additiv gezeichnet: Vorder- und Rückseitenschrift lagen übereinander (gespiegelt,
+    /// unlesbar) und eine erfundene Orange-Tönung färbte alle Tore gleich. Die .uva-Lauflicht-Animation bleibt erhalten.
     /// </summary>
     static void ConvertGateMaterials(MapStreamer.SceneHandle h)
     {
@@ -433,22 +441,18 @@ public sealed class RaceProps
                     if (src == null) continue;
                     var info = MaterialFactory.TryGetInfo(src, out var i) ? i : null;
                     var srcDesc = info?.Desc;
-                    // Unity: _gateMatsByName[(mainTexture, name)] – gleiche Tore teilen sich ein Material.
-                    string key = (srcDesc?.Name ?? src.GetType().Name) + "|" + (info?.MainTexture ?? "");
+                    if (srcDesc == null || !srcDesc.Additive) continue;   // opak/Alpha-Test: Original-Material bleibt
+                    // gleiche Tore teilen sich ein Material (Name, Textur, Culling)
+                    string key = (srcDesc.Name ?? src.GetType().Name) + "|" + (info?.MainTexture ?? "") + "|" + srcDesc.TwoSided;
                     if (!_gateMaterialCache.TryGetValue(key, out var gm))
                     {
-                        // Unity ConvertMaterials: Tönung des Originalmaterials als _Tint, weiße Default-Tönung
-                        // (z.B. occlu_white) auf die Checkpoint-Farbe setzen, sonst ist das Tor weiß statt orange.
-                        var tint = srcDesc?.Color ?? new Vector4(1f, 1f, 1f, 1f);
-                        bool white = tint.X > 0.95f && tint.Y > 0.95f && tint.Z > 0.95f;
-                        if (white) tint = new Vector4(1f, 0.45f, 0.08f, 1f);   // Original-Checkpoint-Orange
                         var desc = new MaterialDesc
                         {
                             Kind = MaterialKind.Transparent,
-                            Name = "Checkpoint_" + (srcDesc?.Name ?? src.GetType().Name),
-                            Main = srcDesc?.Main,
-                            Color = tint,
-                            TwoSided = true,
+                            Name = "Checkpoint_" + (srcDesc.Name ?? src.GetType().Name),
+                            Main = srcDesc.Main,
+                            Color = srcDesc.Color,
+                            TwoSided = srcDesc.TwoSided,   // Original-Culling (Flag[3]: 2 einseitig, 3 beidseitig)
                             Additive = true,
                             Lit = 0f,
                             Unlit = 1f,
@@ -510,16 +514,21 @@ public sealed class RaceProps
 
     /// <summary>
     /// Original-Tor aus pack_cp.bnk (Entity__Actor__CheckPoint) an einem Checkpoint, ausgerichtet nach der CHK2-Matrix
-    /// (Right/Up/Forward wie im Spiel, daher auch Schrift lesbar) und auf die Torbreite skaliert.
-    /// Start: Start_line / Start_line_Off, Ziel: Finish_line / Finish_line_Off, Bremszone: BrakingZone_01,
-    /// sonst Check_point (Dirt-Schule: CP_OffRoad). "_Off" = Variante, solange das Tor nicht das nächste ist.
+    /// (Right/Up/Forward wie im Spiel) und auf die Torbreite skaliert. Welches Tor, entscheidet wie in der exe der Checkpoint-Typ
+    /// (0x979f90, Feld CheckPointType der Entities): 1 Start_line, 2 Finish_line (Ereignis: Finishline_Event), 3 Check_point
+    /// (Dirt-Schule: CP_OffRoad), 4 Radar, 7 BrakingZone_01. Radar (gmth 1) hat ab Tor 1 nur Radare – auch das letzte ist ein
+    /// Radar, keine Ziellinie; Tempo (gmth 10) hat außer dem Start keine Tore. "_Off" = Variante, solange das Tor nicht das
+    /// nächste ist.
     /// </summary>
     RaceGate? BuildGate(MapStreamer st, RaceCheckpoint cp, RaceDefinition race)
     {
         if (_lib == null || _lib.Named.Count == 0) return null;
         string on; string? off = null;
-        if (cp.IsBrakingZone) on = "BrakingZone_01";
+        if (!cp.IsStart && race.Kind == RaceMode.Speed) return null;                       // exe: Typ 0 = kein Tor
+        if (!cp.IsStart && race.Kind == RaceMode.SpeedTrap) on = "Radar";                  // exe: Typ 4
+        else if (cp.IsBrakingZone) on = "BrakingZone_01";
         else if (cp.IsStart && !race.IsCircuit) { on = "Start_line"; off = "Start_line_Off"; }
+        else if (cp.IsFinish && race.Kind == RaceMode.Event && _lib.Named.ContainsKey("Finishline_Event")) on = "Finishline_Event";
         else if (cp.IsFinish || (cp.IsStart && race.IsCircuit)) { on = "Finish_line"; off = "Finish_line_Off"; }
         else on = race.School == 'B' && _lib.Named.ContainsKey("CP_OffRoad") ? "CP_OffRoad" : "Check_point";
         if (!_lib.Named.TryGetValue(on, out var setOn)) return null;
@@ -540,12 +549,8 @@ public sealed class RaceProps
         var r = cp.Right.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Right) : Vector3.Normalize(Vector3.Cross(Vector3.UnitY, cp.Forward));
         var f = cp.Forward.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Forward) : Vector3.UnitZ;
         var u = cp.Up.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Up) : Vector3.UnitY;
-        // Unity: holder.transform = LookRotation(f, u) und danach localScale = (k, 1, 1).
-        // Das Original-Tormodell trägt die Schrift auf der Rückseite (-Z laut CHK2-Matrix): ohne Drehung liest der
-        // herannahende Fahrer "TNIOPKCEHC". Deshalb um Y um 180° drehen (-r, -f), damit die Schrift zu ihm zeigt.
-        // In der row-vector-Konvention von System.Numerics entspricht das genau einer Multiplikation mit -1 auf
-        // r/f, während u (Hochachse) unverändert bleibt.
-        r = -r; f = -f;
+        // holder = LookRotation(f, u), localScale = (k, 1, 1) – CHK2-Matrix ohne Zusatzdrehung. Die frühere 180°-Drehung glich
+        // nur die zweiseitige Darstellung aus; mit dem Original-Culling ist jede Schriftseite nur von vorn sichtbar.
         var m = new Matrix4x4(r.X * k, r.Y * k, r.Z * k, 0f, u.X, u.Y, u.Z, 0f, f.X, f.Y, f.Z, 0f, cp.Position.X, gy, cp.Position.Z, 1f);
         Log.Debug($"Tor {cp.Index} ({on}): cp.Width {cp.Width:0.00} m, Modell {w:0.00} m, Faktor {k:0.000}, " +
                   $"Richtung f=({f.X:0.00},{f.Z:0.00}) r=({r.X:0.00},{r.Z:0.00})");

@@ -16,6 +16,8 @@ public static class ScreenDefs
     public static readonly ScreenDef Login = new("log_in2.bnk", -20, true, "LOGIN", p => { p.SetValue("/:IsCasinoStandAlone", false); p.SetValue("/:NAT_msg", false); });
     public static readonly ScreenDef Pause = new("main.bnk", -10, true);
     public static readonly ScreenDef Map = new("map.bnk", -8, true);
+    /// <summary>Challenge-Editor (GAME_MODE_EDITOR, exe Oberfläche gmeditor.bnk).</summary>
+    public static readonly ScreenDef Editor = new("gmeditor.bnk", -8, true);
     public static readonly ScreenDef Hud = new("hud.bnk", 1, false);
     public static readonly ScreenDef Dealer = new("shopscar.bnk", -1, true);
     public static readonly ScreenDef Home = new("home.bnk", -1, true);

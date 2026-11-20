@@ -20,6 +20,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TDU2Server", "..\Server\TDU
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.FlashDebug", "src\Paradise.FlashDebug\Paradise.FlashDebug.csproj", "{E924A3CE-07D9-A9E7-D73E-842A8FF8D68F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Paradise.Editor", "src\Paradise.Editor\Paradise.Editor.csproj", "{6B1F3C2A-8E47-4D5B-9A10-3C7E5F2D9B41}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -54,6 +56,10 @@ Global
 		{E924A3CE-07D9-A9E7-D73E-842A8FF8D68F}.Debug|x64.Build.0 = Debug|x64
 		{E924A3CE-07D9-A9E7-D73E-842A8FF8D68F}.Release|x64.ActiveCfg = Release|x64
 		{E924A3CE-07D9-A9E7-D73E-842A8FF8D68F}.Release|x64.Build.0 = Release|x64
+		{6B1F3C2A-8E47-4D5B-9A10-3C7E5F2D9B41}.Debug|x64.ActiveCfg = Debug|x64
+		{6B1F3C2A-8E47-4D5B-9A10-3C7E5F2D9B41}.Debug|x64.Build.0 = Debug|x64
+		{6B1F3C2A-8E47-4D5B-9A10-3C7E5F2D9B41}.Release|x64.ActiveCfg = Release|x64
+		{6B1F3C2A-8E47-4D5B-9A10-3C7E5F2D9B41}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

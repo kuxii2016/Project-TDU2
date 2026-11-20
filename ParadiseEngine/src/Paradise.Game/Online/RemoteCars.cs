@@ -80,6 +80,18 @@ public static class RemoteCars
     public static Remote? Get(int id) => _remotes.TryGetValue(id, out var r) ? r : null;
     public static IEnumerable<Remote> All => _remotes.Values;
 
+    /// <summary>Karosserie-Boxen der Mitspieler in Spielkoordinaten (Mitte, Drehung, Größe) für die Debug-Ansicht.</summary>
+    public static IEnumerable<(Vector3 center, Quaternion rot, Vector3 size)> DebugBoxes()
+    {
+        foreach (var r in _remotes.Values)
+        {
+            if (!r.HasVis || r.Model == null) continue;
+            // Gleiche geglättete Lage wie beim Zeichnen des Modells (Render). Die Körperpose wird nur im FixedUpdate
+            // nachgezogen und lässt die Box gegenüber dem smooth gezeichneten Auto zappeln.
+            yield return (r.VisPos + Vector3.Transform(r.BoxCenter, r.VisRot), r.VisRot, r.BoxSize);
+        }
+    }
+
     internal static Remote GetOrAdd(int id)
     {
         if (!_remotes.TryGetValue(id, out var r)) { r = new Remote { Id = id }; _remotes[id] = r; }

@@ -30,7 +30,7 @@ namespace Paradise.Game.Gameplay;
 ///   * Wer ein fremdes Auto rammt, übernimmt es (Unfallphysik beim Verursacher). Verschwindet ein Besitzer, übernimmt der Nächste.
 /// Paket (Online/Multiplayer.SendTraffic): [ver 1][Insel][u32 Zeit ms][u8 Anzahl][0] + je Auto 54 Byte (siehe WriteCar).
 /// </summary>
-public sealed class Traffic : IDisposable
+public sealed partial class Traffic : IDisposable
 {
     sealed class TypeInfo
     {
@@ -104,6 +104,19 @@ public sealed class Traffic : IDisposable
     public float Alpha = 1f;
     public int CarCount => _cars.Count;
     public TrafficLanes? Lanes => _lanes;
+
+    /// <summary>Karosserie-Boxen der Verkehrsautos in Spielkoordinaten (Mitte, Drehung, Größe) für die Debug-Ansicht.</summary>
+    public IEnumerable<(Vector3 center, Quaternion rot, Vector3 size)> DebugBoxes()
+    {
+        foreach (var c in _cars.Values)
+        {
+            if (!c.Visible || c.Model == null) continue;
+            // Dieselbe interpolierte Lage wie beim Zeichnen des Modells (VisPos/VisRot), sonst zappelt die Box
+            // gegenüber dem smooth interpolierten Auto im festen KI-Takt.
+            var rot = VisRot(c);
+            yield return (VisPos(c) + Vector3.Transform(c.BoxCenter, rot), rot, c.BoxSize);
+        }
+    }
 
     public Traffic(IRenderer r, TerrainModule terrain, Func<VehicleManager?> vm) { _r = r; _terrain = terrain; _vm = vm; }
 

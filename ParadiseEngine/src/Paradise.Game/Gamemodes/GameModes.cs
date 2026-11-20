@@ -46,6 +46,7 @@ public static class GameModes
         Gamemode.GAME_MODE_FIRST_WM => new GAME_MODE_FIRST_WM(),
         Gamemode.GAME_MODE_CINE => new GAME_MODE_CINE(),
         Gamemode.GAME_MODE_CLUB => new GAME_MODE_CLUB(),
+        Gamemode.GAME_MODE_EDITOR => new GAME_MODE_EDITOR(),
         _ => Empty(mode),
     };
 

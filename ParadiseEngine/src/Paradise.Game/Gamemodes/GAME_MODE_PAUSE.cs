@@ -33,10 +33,22 @@ public class GAME_MODE_PAUSE : GameModeHandler
         GameMode.Push(Gamemode.GAME_MODE_PAUSE);
     }
 
-    /// <summary>Weiterspielen: zurück in den pausierten Modus.</summary>
+    /// <summary>
+    /// Modus nach dem Schließen statt des pausierten (exe: Pausemenü +0xac, z.B. "goed" -> 5 = GAME_MODE_EDITOR, 0x9e97a0).
+    /// </summary>
+    public static Gamemode? Next { get; set; }
+
+    /// <summary>Weiterspielen: zurück in den pausierten Modus (oder in <see cref="Next"/>).</summary>
     public static void Resume()
     {
         if (GameMode.Current != Gamemode.GAME_MODE_PAUSE) return;
+        if (Next is Gamemode n)
+        {
+            Next = null;
+            GameMode.Set(n);   // gilt erst nach Pop (Pause ist ausdrücklich gesetzt)
+            GameMode.Pop();
+            return;
+        }
         if (_returnForced) GameMode.Push(Return);
         else GameMode.Pop();
     }

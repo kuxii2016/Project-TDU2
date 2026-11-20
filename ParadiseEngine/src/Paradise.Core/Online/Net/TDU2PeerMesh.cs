@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace Paradise.Core.Online.Net;
 
@@ -43,12 +44,32 @@ public sealed class TDU2PeerMesh
     int _myId; uint _myToken;
     readonly byte[] _punch = new byte[8];
 
+    // Traffic-Zähler fürs Dev-Menü: direkte Wege, Relay-Umschläge und Hole-Punching.
+    long _directPacketsOut, _directBytesOut, _directPacketsIn, _directBytesIn;
+    long _relayPacketsOut, _relayBytesOut, _punchPacketsOut, _punchPacketsIn;
+    long _directSendErrors;
+
     public TDU2PeerMesh(Func<double> now) { _now = now; }
 
     /// <summary>Server erlaubt P2P und dieser Client nutzt es.</summary>
     public bool Active { get; private set; }
     public int PeerCount => _peers.Count;
     public int DirectCount { get { int n = 0; double t = _now(); foreach (var p in _peers.Values) if (IsDirect(p, t)) n++; return n; } }
+    /// <summary>Peers ohne bestätigten direkten Weg – laufen aktuell über den Server-Relay.</summary>
+    public int RelayCount => PeerCount - DirectCount;
+
+    /// <summary>Geoeffnete direkte Wege: Pakete/Bytes gesendet und empfangen.</summary>
+    public long DirectPacketsOut => Interlocked.Read(ref _directPacketsOut);
+    public long DirectBytesOut => Interlocked.Read(ref _directBytesOut);
+    public long DirectPacketsIn => Interlocked.Read(ref _directPacketsIn);
+    public long DirectBytesIn => Interlocked.Read(ref _directBytesIn);
+    public long DirectSendErrors => Interlocked.Read(ref _directSendErrors);
+    /// <summary>Relay-Umschlaege des Servers (ein Umschlag kann mehrere Peers enthalten).</summary>
+    public long RelayPacketsOut => Interlocked.Read(ref _relayPacketsOut);
+    public long RelayBytesOut => Interlocked.Read(ref _relayBytesOut);
+    /// <summary>Hole-Punching-Pakete (NAT-Wege aufbauen und offen halten).</summary>
+    public long PunchPacketsOut => Interlocked.Read(ref _punchPacketsOut);
+    public long PunchPacketsIn => Interlocked.Read(ref _punchPacketsIn);
 
     public void Bind(UdpClient udp) { _udp = udp; _byEp.Clear(); foreach (var p in _peers.Values) lock (p.Lock) { p.Direct = null; p.LastHeard = -100; } }
 
@@ -118,7 +139,7 @@ public sealed class TDU2PeerMesh
         b[1] = (byte)_myId; b[2] = (byte)(_myId >> 8);
         b[3] = (byte)_myToken; b[4] = (byte)(_myToken >> 8); b[5] = (byte)(_myToken >> 16); b[6] = (byte)(_myToken >> 24);
         b[7] = (byte)(reply ? 1 : 0);
-        try { _udp.Send(b, 8, to); } catch (Exception) { }
+        try { _udp.Send(b, 8, to); Interlocked.Increment(ref _punchPacketsOut); } catch (Exception) { }
     }
 
     /// <summary>Empfangs-Thread: Punch-Paket eines Peers. Token passt -&gt; direkter Weg über den Absender-Endpunkt.</summary>
@@ -131,6 +152,7 @@ public sealed class TDU2PeerMesh
         lock (p.Lock)
         {
             if (p.Token == 0 || token != p.Token) return;
+            Interlocked.Increment(ref _punchPacketsIn);
             var ep = new IPEndPoint(from.Address, from.Port);
             if (p.Direct == null || !p.Direct.Equals(ep))
             {
@@ -144,10 +166,12 @@ public sealed class TDU2PeerMesh
     }
 
     /// <summary>Empfangs-Thread: Datenpaket direkt von einem Peer? Nur bekannter Endpunkt mit passender Nummer.</summary>
-    public bool AcceptDirect(IPEndPoint from, int senderId)
+    public bool AcceptDirect(IPEndPoint from, int senderId, int bytes = 0)
     {
         if (from == null || !_byEp.TryGetValue(from, out var id) || id != senderId || !_peers.TryGetValue(id, out var p)) return false;
         lock (p.Lock) p.LastHeard = _now();
+        Interlocked.Increment(ref _directPacketsIn);
+        Interlocked.Add(ref _directBytesIn, bytes);
         return true;
     }
 
@@ -167,7 +191,16 @@ public sealed class TDU2PeerMesh
             if (include != null && !include(p.Id)) continue;
             IPEndPoint direct = null;
             lock (p.Lock) if (IsDirect(p, t)) { direct = p.Direct; p.LastSent = t; }
-            if (direct != null) { try { _udp.Send(peerPacket, len, direct); } catch (Exception) { relay.Add(p.Id); } }
+            if (direct != null)
+            {
+                try
+                {
+                    _udp.Send(peerPacket, len, direct);
+                    Interlocked.Increment(ref _directPacketsOut);
+                    Interlocked.Add(ref _directBytesOut, len);
+                }
+                catch (Exception) { Interlocked.Increment(ref _directSendErrors); relay.Add(p.Id); }
+            }
             else relay.Add(p.Id);
         }
         if (relay.Count == 0 && !forceServer) return;
@@ -178,7 +211,13 @@ public sealed class TDU2PeerMesh
         b[7] = inner; b[8] = (byte)n;
         for (int i = 0; i < n; i++) { b[9 + 2 * i] = (byte)relay[i]; b[10 + 2 * i] = (byte)(relay[i] >> 8); }
         Buffer.BlockCopy(peerPacket, UdpPacketId.ServerHeader, b, 9 + 2 * n, plen);
-        try { _udp.Send(b, b.Length, server); } catch (Exception) { }
+        try
+        {
+            _udp.Send(b, b.Length, server);
+            Interlocked.Increment(ref _relayPacketsOut);
+            Interlocked.Add(ref _relayBytesOut, b.Length);
+        }
+        catch (Exception) { }
     }
 
     public static IPEndPoint ParseEp(string s)

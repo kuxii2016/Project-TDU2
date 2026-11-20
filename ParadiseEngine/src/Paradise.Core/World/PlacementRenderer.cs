@@ -17,7 +17,7 @@ public readonly struct DrawItem
 /// LOD-Auswahl. Portiert aus dem Unity-Projekt (VegetationRenderer). Matrizen in Spielkoordinaten.
 /// Kollision (Kapseln/Mesh-Collider) folgt mit der Physik.
 /// </summary>
-public sealed class PlacementRenderer
+public sealed partial class PlacementRenderer
 {
     sealed class Batch
     {

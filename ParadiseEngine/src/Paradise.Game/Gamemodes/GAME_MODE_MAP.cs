@@ -24,6 +24,11 @@ using Spot = Paradise.Core.Formats.Spot;
 using SpotsFile = Paradise.Core.Formats.SpotsFile;
 using TDU2Bookmarks = Paradise.Core.Vehicles.TDU2Bookmarks;
 using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
+using CultureInfo = System.Globalization.CultureInfo;
+using RaceMode = Paradise.Core.Racing.RaceMode;
+using RaceTexts = Paradise.Core.Racing.RaceTexts;
+using ChallengeModes = Paradise.Game.Racing.ChallengeModes;
+using RaceRoadPath = Paradise.Game.Racing.RaceRoadPath;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -55,6 +60,7 @@ public class GAME_MODE_MAP : GameModeHandler
     public override void Enter(IGameModeContext ctx, Gamemode from)
     {
         _ctx = ctx;
+        _view.Bind(ctx);
         Attach(ctx.Open(ScreenDefs.Map));
         int contest = _reqContest; bool direct = _reqDirect;
         _reqContest = -1; _reqDirect = false;
@@ -79,30 +85,33 @@ public class GAME_MODE_MAP : GameModeHandler
 
     int _contestCup = -1;            // Meisterschaft, deren Rennen gezeigt werden (-1 = normale Karte)
     bool _contestDirect;             // vom Treffpunkt aus geöffnet: zurück = Karte schließen
-    int _contestEnterCup = -1;       // nach dem Öffnen in den Wettbewerb wechseln (wartet auf das Ende von map_open)
-    float _contestEnterAt;
     (int cup, int race) _pendingStart = (-1, -1);   // nach dem Schließen dieses Rennen starten
 
-    void EnterContest(int cup)
+    /// <param name="setFlag">false beim direkten Öffnen vom Treffpunkt/nach dem Rennen: /:IsContest setzt dann der Film selbst
+    /// (map.vmf Bild 42: /:ContestDirectAccess = 1 -> "co_direct_enter" -> "contest" setzt IsContest = 1).</param>
+    void EnterContest(int cup, bool setFlag = true)
     {
         var mc = Championships.MapCupAt(cup);
         var ui = _ui; var s = _ctx.Terrain?.Streamer;
         if (mc == null || ui == null) return;
         _contestCup = cup;
         HideTooltip(); _extended = false;
+        SetMapRacePath(null);
         SetContestVars(cup);
         ui.SetVariable("/:ContestName", mc.Name);
         ui.SetVariable("/:ContestType", mc.ContestType);
-        ui.SetValue("/:IsContest", true);
+        // Meisterschafts-Seite: Bild der Meisterschaft in championship/pages/cont/p/picture/lure_c (exe 0xb28f20, Bild über 0xb28c30)
+        ui.SetClipTexture("/championship/pages/cont/p/picture/lure_c", CupPicture(mc));
+        if (setFlag) ui.SetValue("/:IsContest", true);
         BuildSpots();
         // Kamera auf die Rennen der Meisterschaft
         if (s != null)
         {
             var min = s.GameToRender(mc.Hub); var max = min;
             foreach (var r in Championships.MapRaces(cup)) { var p = s.GameToRender(r.Start); min = Vector3.Min(min, p); max = Vector3.Max(max, p); }
-            _target = (min + max) * 0.5f; _target.Y = SeaY();
+            _view.Target = (min + max) * 0.5f; _view.Target.Y = SeaY();
             float ext = MathF.Max(max.X - min.X, max.Z - min.Z) * 1.35f + 400f;
-            int z = 1; while (z < 4 && WidthFor(z) < ext) z++;
+            int z = 1; while (z < 4 && _view.WidthFor(z) < ext) z++;
             SetZoom(z);
         }
         Log.Info("Karte: Wettbewerb " + mc.Name + " (" + mc.RaceCount + " Rennen, " + mc.RacesDone + " gefahren)" + (_contestDirect ? " vom Treffpunkt" : ""));
@@ -121,6 +130,7 @@ public class GAME_MODE_MAP : GameModeHandler
     {
         if (_contestCup < 0) return;
         _contestCup = -1;
+        SetMapRacePath(null);
         HideTooltip(); _extended = false;
         _ui?.SetValue("/:IsContest", false);
         BuildSpots();
@@ -132,7 +142,11 @@ public class GAME_MODE_MAP : GameModeHandler
         var ui = _ui; var mc = Championships.MapCupAt(cup);
         if (ui == null || mc == null) return;
         var races = Championships.MapRaces(cup);
+        // exe 0xb18f60: /:nb_chall_done (gefahrene Rennen, 0x435d2d) und /:nb_chall (Rennen, 0x40bc53) – der Film setzt daraus
+        // "Challenges done n/m" zusammen (ohne nb_chall_done stand nur "/6" da); /:WhatCup = Medaille der Meisterschaft (0x42564e)
+        ui.SetValue("/:nb_chall_done", mc.RacesDone);
         ui.SetValue("/:nb_chall", System.Math.Min(8, races.Count));
+        ui.SetVariable("/:WhatCup", mc.Done && mc.Place == 1 ? "gold" : mc.Done && mc.Place == 2 ? "silver" : mc.Done && mc.Place == 3 ? "bronze" : "empty");
         for (int i = 0; i < 8; i++)
         {
             ui.SetVariable("/:chall" + i + "_type", i < races.Count ? races[i].Label : "empty");
@@ -159,6 +173,67 @@ public class GAME_MODE_MAP : GameModeHandler
         ui.SetVariable("/:LevelCount", mc.RacesDone + "/" + mc.RaceCount);
     }
 
+    /// <summary>
+    /// Tooltip eines Rennens wie exe 0xb19600 (Infos einer Challenge auf der großen Karte):
+    ///  /:IsSolo (solo = 1), /:IsDone "on"/"off", /:GMDescription = Beschreibung der Spielart (Text 0xc2/0xc7/0xc5/0x88e),
+    ///  /:Distance = "%.1f %s" (ig2 "leme"/1000, Einheit Text 0x2e6, exe 0xae2940), /:WhatCup = Medaille ("gold"/"silver"/"bronze"/
+    ///  "empty", exe 0x42564e), /:GoldReward = Preisgeld, /:NbGames = "--" (solo), dann je Spielart (Sprungtabelle 0xb19efc):
+    ///  Zeitfahren/Rennen /:NbLaps ("%d %s", Text 0x10d2 "Runde" bzw. 0x44 "Runden", Punkt-zu-Punkt "--", exe 0x4c9b80),
+    ///  Tempo /:SpeedMin = "%.2f %s" (tras in der Anzeigeeinheit), Radar /:NbTraps = "".
+    /// Die Regel-Symbole rules_ic_0..7 (Verkehr/Polizei/Wetter) sind noch nicht portiert.
+    /// </summary>
+    void SetChallengeVars(Championships.MapRace r, Championships.MapCup? mc)
+    {
+        var ui = _ui!;
+        var inv = CultureInfo.InvariantCulture;
+        ui.SetValue("/:IsSolo", true);
+        ui.SetVariable("/:IsDone", r.State == 2 ? "on" : "off");
+        ui.SetVariable("/:GMDescription", RaceTexts.Get(ChallengeModes.DescriptionHc(r.Def), r.ModeName));
+        ui.SetVariable("/:Distance", r.LengthM > 0f ? (r.LengthM / 1000f).ToString("0.0", inv) + " " + RaceTexts.Get(0x2e6, "Km") : "");
+        ui.SetVariable("/:WhatCup", r.State == 2 && r.Place == 1 ? "gold" : r.State == 2 && r.Place == 2 ? "silver" : r.State == 2 && r.Place == 3 ? "bronze" : "empty");
+        ui.SetVariable("/:GoldReward", mc != null && mc.RaceReward > 0 ? Money(mc.RaceReward) : "");
+        ui.SetVariable("/:NbGames", "--");
+        switch (r.Kind)
+        {
+            case RaceMode.SpeedTrap:
+                ui.SetVariable("/:NbTraps", "");
+                break;
+            case RaceMode.Speed:
+                ui.SetVariable("/:SpeedMin", ChallengeModes.ToUnit(r.SpeedMin).ToString("0.00", inv) + " " + ChallengeModes.UnitName);
+                break;
+            case RaceMode.TimeAttack:
+            case RaceMode.Race:
+                {
+                    int laps = r.IsCircuit ? r.LapsRaw : 0;
+                    ui.SetVariable("/:NbLaps", laps <= 0 ? "--" : laps + " " + RaceTexts.Get(laps == 1 ? 0x10d2UL : 0x44UL, laps == 1 ? "Runde" : "Runden"));
+                    break;
+                }
+        }
+    }
+
+    /// <summary>Strecke des Rennens unter dem Cursor auf die Karte (Minimap.MapRacePath); andere Spots: keine Strecke.</summary>
+    void ShowRacePath(MapSpot? ms)
+    {
+        var r = RaceOf(ms);
+        if (r == null) { SetMapRacePath(null); return; }
+        var def = r.Def;
+        if (def.RoadPath == null || def.RoadPath.Count < 2)
+        {
+            RaceRoadPath.Lanes ??= _ctx.Vehicles?.Traffic?.Lanes;
+            if (RaceRoadPath.FindLanes() != null)
+            {
+                try { RaceRoadPath.Compute(def); }
+                catch (Exception ex) { Log.Warn("Karte: Straßenroute " + def.Name + ": " + ex.Message); }
+            }
+        }
+        IReadOnlyList<Vector3> path;
+        if (def.RoadPath != null && def.RoadPath.Count > 1) path = def.RoadPath;
+        else { var l = new List<Vector3>(def.Checkpoints.Count); foreach (var c in def.Checkpoints) l.Add(c.Position); path = l; }
+        SetMapRacePath(path);
+    }
+
+    static void SetMapRacePath(IReadOnlyList<Vector3>? path) => Minimap.SetMapRacePath(path);
+
     static string Money(long v) => v.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $";
     string Txt(string key, string fallback) => _texts != null && _texts.TryGetValue(key, out var t) && !string.IsNullOrEmpty(t) ? t.Trim() : fallback;
 
@@ -168,12 +243,7 @@ public class GAME_MODE_MAP : GameModeHandler
     }
 
     /// <summary>Unity TDU2BigMap.DrawRoads: Straßennetz (und GPS-Route) über dem Kartengelände (MapMetersPerPixel 0 = ShowRoads aus).</summary>
-    public override void Render(IGameModeContext ctx, in GameTime time)
-    {
-        var t = ctx.Terrain; var s = t?.Streamer; var vm = ctx.Vehicles?.Manager; var r = ctx.Vehicles?.Renderer;
-        if (t == null || s == null || vm?.Minimap == null || r == null || !t.MapView || t.MapMetersPerPixel <= 0f) return;
-        vm.Minimap.DrawMapRoads(r, s.RootMatrix, t.MapMetersPerPixel, (x, z) => s.TryGetMapGroundHeight(x, z, out float y) ? y + 1f : 0f);
-    }
+    public override void Render(IGameModeContext ctx, in GameTime time) => _view.DrawRoads();
 
     public override void Exit(IGameModeContext ctx, Gamemode to)
     {
@@ -186,24 +256,13 @@ public class GAME_MODE_MAP : GameModeHandler
     /// <summary>Spot mit Interieur, das nach dem Schließen der Karte betreten wird (Unity _pendingEnter).</summary>
     Spot? _pendingEnter;
 
-    // Kamera je Zoomstufe (WhatZoom 1 = nah … 4 = ganze Insel) – Unity-Inspektorwerte
-    public float[] ViewWidth = { 1536f, 6144f, 0f, 0f };
-    public float[] Inclination = { 45f, 25f, 0f, 0f };
-    public float FarFactor = 0.5f;
-    public float FieldOfView = 40f;
-    public float Smooth = 4f;
-    public float PanSpeed = 0.25f;
+    // Kamera/Zoom/Straßennetz der Kartenansicht (gemeinsam mit dem Challenge-Editor): Gamemodes/Utils/MapView.cs
+    readonly MapView _view = new();
 
     public bool IsOpen => _open;
     bool _open, _closing;
     float _closeAt, _clock;
-    int _zoom = 3, _openFrames;
-    Vector3 _target;               // Kartenmitte (Render-Raum, Höhe = Meeresspiegel)
-    float _curWidth, _curIncl;
-    /// <summary>Straßennetz über der Karte zeichnen (Unity TDU2BigMap.ShowRoads).</summary>
-    public bool ShowRoads = true;
-    bool _savedMinimap = true, _savedHud = true;
-    float _savedFov, _savedNear, _savedFar;
+    int _openFrames;
     bool _dragging; Vector2 _lastMouse;
     static int _filter;            // Reiter der Filterleiste (_root.numIcFilter), bleibt bis zum nächsten Öffnen
 
@@ -251,36 +310,24 @@ public class GAME_MODE_MAP : GameModeHandler
         var ui = _ui; var terrain = _ctx.Terrain; var cam = terrain?.Camera; var s = terrain?.Streamer;
         if (ui == null || terrain == null || cam == null || s == null || _open) return false;
         _open = true; _closing = false; _openFrames = 0; _clock = 0f;
-        _contestCup = -1; _contestDirect = direct && contestCup >= 0; _contestEnterCup = -1; _pendingStart = (-1, -1);
+        _contestCup = -1; _contestDirect = direct && contestCup >= 0; _pendingStart = (-1, -1);
 
         // Spiel anhalten wie das Pausemenü, HUD aus
-        var vehicles = _ctx.Vehicles; var vm = vehicles?.Manager;
-        if (vehicles != null) vehicles.Frozen = true;
+        var vm = _ctx.Vehicles?.Manager;
         AudioEngine.Paused = true;   // Unity: AudioListener.pause = true (Menü-Sounds laufen weiter)
         // Kartenmusik wie im Spiel (MngMusic "MAP" → sound/musics/map.wav, 0,5); Spot-Musik im Interieur solange aus
         Paradise.Core.Audio.SpotMusic.Duck(true);
         Paradise.Core.Audio.FrontendMusic.Play("MAP");
-        if (vm?.Minimap != null) { _savedMinimap = vm.Minimap.ShowMinimap; vm.Minimap.ShowMinimap = false; }
-        if (vm != null) { _savedHud = vm.ShowHud; vm.ShowHud = false; vm.ApplyHudVisibility(); }
 
-        // Kamera
-        _savedFov = terrain.FieldOfView; _savedNear = terrain.NearClip; _savedFar = terrain.FarClip;
-        terrain.FlyCameraEnabled = false;
-        terrain.StreamFocus = cam.Position;   // Unity: eigene Kartenkamera – Streaming/Ursprung bleiben an der Spielkamera
-        terrain.MapView = true;
-        s.RequestMapTerrain();   // falls noch nicht im Hintergrund geladen
-        terrain.FieldOfView = FieldOfView;
+        // Kamera (Fahrzeuge anhalten, HUD/Minimap aus): MapView
         var veh = vm?.Current;
-        _target = veh != null ? s.GameToRender(vm!.PositionGame) : cam.Position;
-        _target.Y = SeaY();
-        _zoom = 2;
-        UpdateCamera(true);
+        _view.Begin(_ctx, veh != null ? s.GameToRender(vm!.PositionGame) : cam.Position, 2);
         ui.SetValue("/:WhatPlatform", 1);
         ui.SetVariable("/:MenuType", "pc");
         ui.SetValue("/:IsPC_X360", true);
         ui.SetValue("/:fake", false);
         ui.SetValue("/:MapMode", 0);
-        ui.SetValue("/:WhatZoom", _zoom);
+        ui.SetValue("/:WhatZoom", _view.Zoom);
         ui.SetValue("/:Input", true);
         ui.SetValue("/:IsContest", false);
         ui.SetValue("/:ContestDirectAccess", _contestDirect);
@@ -302,31 +349,26 @@ public class GAME_MODE_MAP : GameModeHandler
         ui.MouseIgnore.Add("/curseur"); ui.MouseIgnore.Add("/curseur_ghost"); ui.MouseIgnore.Add("/target");
         ui.SetValue("/:CanAddMySpot", TDU2Bookmarks.CanAdd);
         ui.SetVariable("/:lockGotoStatus", "none");
-        ui.SetVariable("/:money", TDU2Session.LoggedIn
-            ? TDU2Session.Save.money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $" : "999 999 999 $");
-        var car = veh?.Car;
-        ui.SetVariable("/:cur_upgrade", Paradise.Core.Vehicles.CarUpgrades.LevelLabel(Paradise.Core.Vehicles.CarUpgrades.Get(car?.FileName).Global));   // Tuningstufe (Tuner)
-        ui.SetVariable("/:player_group", GroupLabel(car?.Raw != null ? car.Raw.I("_vehiclecategory") : 0));
-        if (car != null)
-        {
-            string name = ((car.Brand ?? "") + " " + car.ModelName).Trim();
-            ui.SetVariable("/:player_car", name);
-            ui.SetVariable("/:m_MapPlayerVehicle", name);
-        }
+        // Geld, Tuningstufe, Gruppe, Name (gemeinsam mit dem Challenge-Editor): Gamemodes/Utils/PlayerCarInfo.cs
+        string? carName = PlayerCarInfo.Apply(ui, _ctx);
+        if (carName != null) ui.SetVariable("/:m_MapPlayerVehicle", carName);
         if (_texts == null)
         {
             try { _texts = FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language); }
             catch (Exception ex) { Log.Warn("Karte: Texte nicht geladen: " + ex.Message); _texts = new(); }
         }
         BuildSpots();
+        // Treffpunkt bzw. "Weiter" nach einem Meisterschaftsrennen: Daten des Wettbewerbs VOR map_open setzen. Den Sprung nach
+        // "co_direct_enter" macht der Film selbst (map.vmf Bild 42 prüft /:ContestDirectAccess == 1; das Testdaten-Init in Bild 0
+        // läuft nur mit /:fake == 1). Vorher sprang die Engine nach 1,3 s ein zweites Mal hinein – der Film lief co_direct_enter
+        // doppelt (sbdd/stof, Vorschau) und die Ansicht stand erst nach Schließen/Öffnen der Karte richtig.
+        if (contestCup >= 0) EnterContest(contestCup, false);
         _gpsMarkerShown = false; ui.SetVisible("/target", false);   // Unity: GPS-Ziel beim Öffnen neu einblenden ("open")
         ui.Visible = true;
         ui.GotoLabel("/", "map_open", true);
         // Laufschrift des Autonamens neu messen (Bild 0 von /infos/car liest _root.player_car per getTextLength)
         ui.GotoLabel("/infos/car", "empty", false);
         ui.GotoLabel("/infos/car", "set", false);
-        // Treffpunkt: nach dem Aufbau der Karte (map_open) direkt in den Wettbewerb der Meisterschaft
-        if (contestCup >= 0) { _contestEnterCup = contestCup; _contestEnterAt = _clock + 1.3f; }
         Log.Info("Große Karte geöffnet" + (contestCup >= 0 ? " (Wettbewerb " + contestCup + ")" : ""));
         ui.PlayLabel("/curseur/cible", "on");
         ui.PlayLabel("/curseur", "lod2");
@@ -358,21 +400,12 @@ public class GAME_MODE_MAP : GameModeHandler
         if (!_open) return;
         _open = false; _closing = false;
         if (_ui != null) _ui.Visible = false;   // bleibt am Ende der Schließanimation; nächstes Öffnen springt nach "map_open"
-        var terrain = _ctx.Terrain;
-        if (terrain != null)
-        {
-            terrain.MapView = false;
-            terrain.StreamFocus = null;
-            terrain.FieldOfView = _savedFov; terrain.NearClip = _savedNear; terrain.FarClip = _savedFar;
-        }
-        var vehicles = _ctx.Vehicles; var vm = vehicles?.Manager;
-        if (vehicles != null) vehicles.Frozen = false;
+        _view.End();
         AudioEngine.Paused = false;
         Paradise.Core.Audio.FrontendMusic.Stop();
         Paradise.Core.Audio.SpotMusic.Duck(false);
-        if (vm?.Minimap != null) vm.Minimap.ShowMinimap = _savedMinimap;
-        if (vm != null) vm.ShowHud = _savedHud;
-        _contestCup = -1; _contestEnterCup = -1;
+        _contestCup = -1;
+        SetMapRacePath(null);
         _ui?.SetValue("/:IsContest", false);
         // Meisterschaftsrennen gewählt: Start im nächsten Bild der Freifahrt (Unity StartFromMap nach dem Schließen)
         var ps = _pendingStart; _pendingStart = (-1, -1);
@@ -385,18 +418,9 @@ public class GAME_MODE_MAP : GameModeHandler
     public bool Update(float dt)
     {
         _clock += dt;
-        _lastDt = MathF.Max(1e-4f, dt);
+        _view.LastDt = MathF.Max(1e-4f, dt);
         if (!_open || _ui == null) return false;
         _openFrames++;
-        // nur nach Zeit: co_direct_enter erst nach map_open (sonst läuft map_open darüber = leere Karte)
-        if (_contestEnterCup >= 0 && !_closing && _clock >= _contestEnterAt && _openFrames > 2)
-        {
-            int c = _contestEnterCup; _contestEnterCup = -1;
-            _ui.SetValue("/:ContestDirectAccess", true);
-            _ui.SetValue("/:IsFirstTime", 0);
-            _ui.GotoLabel("/", "co_direct_enter", true);
-            EnterContest(c);
-        }
         if (_closing)
         {
             if (_clock >= _closeAt) { Finish(); return false; }
@@ -421,8 +445,8 @@ public class GAME_MODE_MAP : GameModeHandler
 
     void SetZoom(int z)
     {
-        _zoom = System.Math.Clamp(z, 1, 4);
-        _ui?.SetValue("/:WhatZoom", _zoom);
+        _view.Zoom = System.Math.Clamp(z, 1, 4);
+        _ui?.SetValue("/:WhatZoom", _view.Zoom);
         ApplyLod(false);
     }
 
@@ -494,13 +518,13 @@ public class GAME_MODE_MAP : GameModeHandler
 
     void ApplyLod(bool force)
     {
-        bool lod = _zoom >= 3;   // weit weg: kleine Punkte (point/spot "lod")
+        bool lod = _view.Zoom >= 3;   // weit weg: kleine Punkte (point/spot "lod")
         if (_ui == null || (!force && lod == _lod)) return;
         _lod = lod;
         foreach (var kv in _slotLabel) _ui.CallClip("/pack/point" + kv.Key.ToString("000"), "LOD", lod ? 1 : 0);
     }
 
-    Vector2? ToGui(Vector3 render) => _ctx.Terrain != null && _ctx.Terrain.WorldToScreen(render, out var p) ? p : null;
+    Vector2? ToGui(Vector3 render) => _view.ToGui(render);
     static FVec F(Vector2 v) => new(v.X, v.Y);
 
     /// <summary>Unity UpdateOverlay: Spielersymbol, Kartencursor, Spots (Filter, nächste zuerst), Spot unter dem Cursor + Tooltip.</summary>
@@ -591,6 +615,7 @@ public class GAME_MODE_MAP : GameModeHandler
             ui.SetVariable("/:WhatSpot", hover >= 0 ? _spots[hover].label : "noSpot");
             ui.SetVariable("/:WhatSpotType", hover >= 0 ? (contest ? "contest" : "spot") : "none");
             if (hover >= 0) ShowTooltip(_spots[hover]); else HideTooltip();
+            ShowRacePath(hover >= 0 ? _spots[hover] : null);   // Wettbewerb: Strecke des Rennens unter dem Cursor
         }
     }
 
@@ -728,15 +753,12 @@ public class GAME_MODE_MAP : GameModeHandler
             var mc = Championships.MapCupAt(ms.cup);
             if (ms.race >= 0)
             {
-                // Rennen im Wettbewerbsmodus: Name, Runden/Länge, Preisgeld
+                // Rennen im Wettbewerbsmodus
                 var r = RaceOf(ms);
                 if (r != null)
                 {
                     name = (ms.race + 1) + ". " + r.Title;
-                    ui.SetVariable("/:NbLaps", r.Laps.ToString());
-                    ui.SetVariable("/:Distance", r.LengthM > 0f ? (r.LengthM / 1000f).ToString("0.0", Paradise.Core.Util.GermanFormat.Number) + " km" : "");
-                    ui.SetVariable("/:GMDescription", r.ModeName + (r.State == 2 ? " – " + r.Points + " " + Txt("m_Pts_", "Pkt.") : ""));
-                    ui.SetVariable("/:GoldReward", mc != null && mc.RaceReward > 0 ? Money(mc.RaceReward) : "");
+                    SetChallengeVars(r, mc);
                 }
             }
             else if (mc != null)
@@ -918,6 +940,26 @@ public class GAME_MODE_MAP : GameModeHandler
         catch (Exception) { return null; }
     }
 
+    /// <summary>Bild einer Meisterschaft (frontend/AllRes/MapScreens/&lt;Picture&gt;.bnk, wie die Rennen der Meisterschaft).</summary>
+    FlashTexture? CupPicture(Championships.MapCup mc)
+    {
+        string bnkDir = FlashHost.BnkDir;
+        if (string.IsNullOrEmpty(mc.Picture) || string.IsNullOrEmpty(bnkDir)) return null;
+        string key = "#CUP|" + mc.Picture;
+        if (_pics.TryGetValue(key, out var t)) return t;
+        t = null;
+        try
+        {
+            string dir = Path.Combine(bnkDir, "frontend", "AllRes", "MapScreens", Path.GetDirectoryName(mc.Picture) ?? "");
+            string? f = CarDatabase.FindFile(dir, Path.GetFileName(mc.Picture) + ".bnk");
+            if (f != null) t = FlashTextures.FirstTexture(f);
+        }
+        catch (Exception ex) { Log.Warn("Karte: Bild der Meisterschaft " + mc.Picture + ": " + ex.Message); }
+        _pics[key] = t;
+        if (t == null) Log.Debug("Karte: kein Bild für Meisterschaft " + mc.Code + " (" + mc.Picture + ")");
+        return t;
+    }
+
     FlashTexture? SpotPicture(Spot s)
     {
         string bnkDir = FlashHost.BnkDir;
@@ -1058,8 +1100,7 @@ public class GAME_MODE_MAP : GameModeHandler
             if (TDU2Controls.Held("menu_right")) move += east;
             if (TDU2Controls.Held("menu_left")) move -= east;
         }
-        float speed = PanSpeed * _curWidth * (IsDown(0x10) ? 2.5f : 1f);   // Umschalt = schneller
-        _target += move * speed * dt;
+        _view.Pan(move, dt, IsDown(0x10));   // Umschalt = schneller
 
         // Ziehen mit der Maus (Weltpunkt unter der Maus bleibt unter der Maus)
         var mp = MousePixel();
@@ -1068,8 +1109,7 @@ public class GAME_MODE_MAP : GameModeHandler
         if (!FlashInput.GetMouseButton(0) && !FlashInput.GetMouseButton(1) && !FlashInput.GetMouseButton(2)) _dragging = false;
         if (_dragging)
         {
-            var a = GroundPoint(_lastMouse); var b = GroundPoint(mp);
-            if (a.HasValue && b.HasValue) _target += a.Value - b.Value;
+            _view.Drag(_lastMouse, mp);
             _lastMouse = mp;
         }
 
@@ -1078,12 +1118,12 @@ public class GAME_MODE_MAP : GameModeHandler
         bool zin = wheel > 0.1f || _ctx.Pressed(0x21) || _ctx.Pressed(0x6B) || _ctx.Pressed(0xBB) || _ctx.Pressed(0x45);
         bool zout = wheel < -0.1f || _ctx.Pressed(0x22) || _ctx.Pressed(0x6D) || _ctx.Pressed(0xBD) || _ctx.Pressed(0x51);
         // an den Grenzen nicht an den Film geben (weiter rauszoomen startet dort den Abspann)
-        if (zin && _zoom > 1) { if (!ui.CallClip("/navigator", "setZoom", "in")) SetZoom(_zoom - 1); }
-        if (zout && _zoom < 4) { if (!ui.CallClip("/navigator", "setZoom", "out")) SetZoom(_zoom + 1); }
+        if (zin && _view.Zoom > 1) { if (!ui.CallClip("/navigator", "setZoom", "in")) SetZoom(_view.Zoom - 1); }
+        if (zout && _view.Zoom < 4) { if (!ui.CallClip("/navigator", "setZoom", "out")) SetZoom(_view.Zoom + 1); }
 
         // Leertaste: zum Fahrzeug
         var vm = _ctx.Vehicles?.Manager; var s = _ctx.Terrain?.Streamer;
-        if (_ctx.Pressed(0x20) && vm?.Current != null && s != null) { _target = s.GameToRender(vm.PositionGame); _target.Y = SeaY(); }
+        if (_ctx.Pressed(0x20) && vm?.Current != null && s != null) { _view.Target = s.GameToRender(vm.PositionGame); _view.Target.Y = SeaY(); }
 
         // A wie im Spiel: auf einem Spot -> Tooltip mit Infos; auf freier Fläche -> Mini-Menü. Klick ohne Ziehen; über Knöpfen
         // des ausgeklappten Tooltips und über den Leisten des Films gehört der Klick dem Film.
@@ -1211,7 +1251,7 @@ public class GAME_MODE_MAP : GameModeHandler
         var mm = _ctx.Vehicles?.Manager?.Minimap; var s = _ctx.Terrain?.Streamer;
         if (mm == null || s == null || !_cursorWorld.HasValue) return false;
         var g = s.RenderToGame(_cursorWorld.Value);
-        if (!mm.NearestRoad(g, MathF.Max(25f, _curWidth * 0.025f), out var rp)) return false;
+        if (!mm.NearestRoad(g, MathF.Max(25f, _view.CurWidth * 0.025f), out var rp)) return false;
         game = new Vector3(rp.X, s.TryGetMapGroundHeight(rp.X, rp.Z, out float y) ? y : float.NaN, rp.Z);
         return true;
     }
@@ -1251,7 +1291,7 @@ public class GAME_MODE_MAP : GameModeHandler
         if (vm?.Current == null || s == null) return;
         // Zielhöhe aus den Spieldaten: das Auto wartet dort, bis der Boden geladen ist
         vm.TeleportSafe(game, dir ?? vm.ForwardGame);
-        _target = s.GameToRender(new Vector3(game.X, 0f, game.Z)); _target.Y = SeaY();
+        _view.Target = s.GameToRender(new Vector3(game.X, 0f, game.Z)); _view.Target.Y = SeaY();
         Log.Info($"Karte: Teleport nach {game}");
     }
 
@@ -1272,106 +1312,16 @@ public class GAME_MODE_MAP : GameModeHandler
         return (g.X < w * 0.45f && g.Y < h * 0.2f) || (g.X > w * 0.62f && g.Y < h * 0.18f) || g.Y > h * 0.87f;
     }
 
-    /// <summary>Maus in Pixeln, Ursprung oben links.</summary>
-    static Vector2 MousePixel()
-    {
-        var m = FlashInput.mousePosition;   // Unity: y von unten
-        return new Vector2(m.x, FlashScreen.height - m.y);
-    }
+    // Kartenansicht (Kamera, Meeresebene, Begrenzung): Gamemodes/Utils/MapView.cs
+    static Vector2 MousePixel() => MapView.MousePixel();
+    static Vector3 North() => MapView.North;
+    static Vector3 East() => MapView.East;
+    float SeaY() => _view.SeaY();
+    Vector3? GroundPoint(Vector2 pixel) => _view.GroundPoint(pixel);
+    void ClampTarget() => _view.ClampTarget();
+    void UpdateCamera(bool snap) => _view.UpdateCamera(snap);
 
-    // Spiel -Z = oben auf der Karte (Unity North: MapRoot.TransformVector(Vector3.back)); Render-Raum = Spiel + Verschiebung
-    static Vector3 North() => new(0f, 0f, -1f);
-    static Vector3 East() => new(1f, 0f, 0f);
-
-    /// <summary>Meeresspiegel (Spiel-y 0) im Render-Raum.</summary>
-    float SeaY() => _ctx.Terrain?.Streamer?.GameToRender(Vector3.Zero).Y ?? 0f;
-
-    /// <summary>Schnittpunkt des Strahls durch den Bildpunkt mit der Meeresebene (Unity GroundPoint).</summary>
-    Vector3? GroundPoint(Vector2 pixel)
-    {
-        var t = _ctx.Terrain;
-        if (t == null || !t.ScreenRay(pixel.X, pixel.Y, out var o, out var d)) return null;
-        if (MathF.Abs(d.Y) < 1e-4f) return null;
-        float k = (SeaY() - o.Y) / d.Y;
-        return k > 0f ? o + d * k : null;
-    }
-
-    void ClampTarget()
-    {
-        var s = _ctx.Terrain?.Streamer; var idx = s?.Index;
-        if (s == null || idx == null) return;
-        var g = s.RenderToGame(_target);
-        g.X = System.Math.Clamp(g.X, 0f, System.Math.Max(1, idx.AreasX) * 6144f);
-        g.Z = System.Math.Clamp(g.Z, 0f, System.Math.Max(1, idx.AreasZ) * 6144f);
-        var r = s.GameToRender(g); _target.X = r.X; _target.Z = r.Z;
-    }
-
-    // ------------------------------------------------------------------ Kamera
-    float IslandWidth()
-    {
-        var idx = _ctx.Terrain?.Streamer?.Index;
-        float a = idx != null ? System.Math.Max(idx.AreasX, idx.AreasZ) : 8;
-        return a * 6144f;
-    }
-
-    float WidthFor(int z)
-    {
-        int i = System.Math.Clamp(z, 1, 4) - 1;
-        float w = i < ViewWidth.Length ? ViewWidth[i] : 0f;
-        if (w > 0f) return w;
-        return z >= 4 ? IslandWidth() : IslandWidth() * FarFactor;
-    }
-
-    float InclFor(int z)
-    {
-        int i = System.Math.Clamp(z, 1, 4) - 1;
-        return i < Inclination.Length ? Inclination[i] : 0f;
-    }
-
-    /// <summary>Unity UpdateCamera: Abstand so, dass die Sichtbreite genau ins Bild passt; Neigung je Zoomstufe, Norden oben.</summary>
-    void UpdateCamera(bool snap)
-    {
-        var terrain = _ctx.Terrain; var cam = terrain?.Camera;
-        if (terrain == null || cam == null) return;
-        float tw = WidthFor(_zoom), ti = InclFor(_zoom);
-        if (snap || _curWidth <= 0f) { _curWidth = tw; _curIncl = ti; }
-        else
-        {
-            float k = 1f - MathF.Exp(-Smooth * _lastDt);
-            _curWidth = MathF.Exp(MathF.Log(_curWidth) + (MathF.Log(tw) - MathF.Log(_curWidth)) * k);
-            _curIncl += (ti - _curIncl) * k;
-        }
-        float aspect = FlashScreen.height > 0 ? (float)FlashScreen.width / FlashScreen.height : 16f / 9f;
-        float vfov = FieldOfView * MathF.PI / 180f;
-        float hfov = 2f * MathF.Atan(MathF.Tan(vfov * 0.5f) * MathF.Max(0.1f, aspect));
-        float dist = _curWidth * 0.5f / MathF.Tan(hfov * 0.5f);
-        float incl = _curIncl * MathF.PI / 180f;
-        var north = North();
-        var pos = _target + Vector3.UnitY * (dist * MathF.Cos(incl)) - north * (dist * MathF.Sin(incl));
-        var fwd = Vector3.Normalize(_target - pos);
-        // Oben = Norden, senkrecht zur Blickrichtung (Unity LookRotation(fwd, north))
-        var up = Vector3.Normalize(north - fwd * Vector3.Dot(north, fwd));
-        cam.Position = pos;
-        cam.Override = (fwd, up);
-        terrain.MapMetersPerPixel = ShowRoads ? _curWidth / MathF.Max(1f, FlashScreen.width) : 0f;
-        terrain.FieldOfView = FieldOfView;
-        terrain.NearClip = MathF.Max(1f, dist * 0.02f);
-        terrain.FarClip = dist * 3f + 20000f;
-    }
-
-    float _lastDt = 1f / 60f;   // Bildzeit für die weiche Kamerafahrt
-
-    /// <summary>Fahrzeuggruppe (Unity GroupLabel): A1–A7, B1–B5, C1–C4, mA1/2, mB1–3, mC1/2.</summary>
-    static string GroupLabel(int cat)
-    {
-        if (cat >= 1 && cat <= 7) return "A" + cat;
-        if (cat >= 9 && cat <= 13) return "B" + (cat - 8);
-        if (cat >= 14 && cat <= 17) return "C" + (cat - 13);
-        if (cat >= 18 && cat <= 19) return "mA" + (cat - 17);
-        if (cat >= 20 && cat <= 22) return "mB" + (cat - 19);
-        if (cat >= 23 && cat <= 24) return "mC" + (cat - 22);
-        return "empty";
-    }
+    static string GroupLabel(int cat) => PlayerCarInfo.GroupLabel(cat);
 
 
     /// <summary>
@@ -1391,8 +1341,8 @@ public class GAME_MODE_MAP : GameModeHandler
         }
         switch (c)
         {
-            case "zoin": SetZoom(_zoom - 1); break;   // setZoom("in")  -> Spiel verkleinert WhatZoom
-            case "zoou": SetZoom(_zoom + 1); break;   // setZoom("out")
+            case "zoin": SetZoom(_view.Zoom - 1); break;   // setZoom("in")  -> Spiel verkleinert WhatZoom
+            case "zoou": SetZoom(_view.Zoom + 1); break;   // setZoom("out")
             case "gofr": BeginClosing(); break;       // B im Navigator: zurück ins freie Fahren (Schließanimation läuft)
             case "bmap:ttip:extd":                    // A auf einem Spot: Tooltip mit Infos/Menü ausklappen
                 _ui!.CallClip("/tool_tip", "Extend", 1);

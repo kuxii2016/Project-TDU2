@@ -1,6 +1,7 @@
 using BepuPhysics;
 using Paradise.Core.Math;
 using Paradise.Core.Physics;
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace Paradise.Core.Vehicles
@@ -60,6 +61,15 @@ namespace Paradise.Core.Vehicles
 
     public enum ForceMode { Force, Acceleration, Impulse, VelocityChange }
 
+    /// <summary>Form des Karosserie-Kolliders im Physikkörper.</summary>
+    public enum BodyColliderMode
+    {
+        /// <summary>Eine Box – entspricht dem BoxCollider des Unity-Originals.</summary>
+        Simple,
+        /// <summary>Drei Boxen: Kabine in der Mitte (volle Höhe), flachere Kästen für Haube und Heck.</summary>
+        Extended,
+    }
+
     /// <summary>
     /// Ersatz für UnityEngine.Rigidbody (+ BoxCollider) des Fahrzeugs auf einem Bepu-Körper. Die API arbeitet wie in Unity im
     /// Unity-Raum (+X = rechts) und relativ zum Physik-Ursprung (Floating Origin, PhysicsWorld.Origin); die Physikwelt liegt in
@@ -86,13 +96,45 @@ namespace Paradise.Core.Vehicles
         public BodyHandle Handle => _h;
         public bool Created => _created;
         public PhysicsWorld World => _w;
+        /// <summary>Karosserieform neuer Fahrzeuge – gesetzt aus Game/Config/VehicleConfig.cs.</summary>
+        public static BodyColliderMode BodyCollider = BodyColliderMode.Simple;
+        /// <summary>Alle Karosserie-Kästen im Fahrzeugraum (Unity) – für die Debug-Ansicht der Kollisionen.</summary>
+        public IReadOnlyList<(Vector3 center, Vector3 size)> DebugBoxes => _debugBoxes;
+        readonly List<(Vector3 center, Vector3 size)> _debugBoxes = new();
+        /// <summary>Hauptkasten (für bestehende Nutzer der alten Debug-Eigenschaften).</summary>
+        public Vector3 DebugBoxCenter => _debugBoxes.Count > 0 ? _debugBoxes[0].center : Vector3.Zero;
+        public Vector3 DebugBoxSize => _debugBoxes.Count > 0 ? _debugBoxes[0].size : Vector3.Zero;
 
-        /// <summary>Körper anlegen (nach dem Setzen von mass/centerOfMass/inertiaTensor). Box im Fahrzeugraum (Unity).</summary>
-        public void Create(Vector3 position, Quaternion rotation, Vector3 boxCenter, Vector3 boxSize)
+        /// <summary>
+        /// Körper anlegen (nach dem Setzen von mass/centerOfMass/inertiaTensor). Maße im Fahrzeugraum (Unity).
+        /// Extended: Kabine in der Mitte in voller Höhe, dazu flachere Kästen für Haube und Heck. Alle Kästen enden
+        /// unten auf derselben Höhe wie bei Simple, damit die Karosserie nicht unter die Räder greift.
+        /// </summary>
+        public void Create(Vector3 position, Quaternion rotation, Vector3 boxCenter, Vector3 boxSize, bool extendedAllowed = true)
         {
             if (_created) _w.RemoveBody(_h);
+            _debugBoxes.Clear();
+
+            List<(Vector3 center, Vector3 size)> parts;
+            if (BodyCollider == BodyColliderMode.Extended && extendedAllowed)
+            {
+                float w = boxSize.X, h = boxSize.Y, l = boxSize.Z;
+                parts = new()
+                {
+                    (boxCenter, new Vector3(w, h, l * 0.52f)),
+                    (boxCenter + new Vector3(0f, -h * 0.22f, l * 0.37f), new Vector3(w * 0.9f, h * 0.56f, l * 0.26f)),
+                    (boxCenter + new Vector3(0f, -h * 0.22f, -l * 0.37f), new Vector3(w * 0.9f, h * 0.56f, l * 0.26f)),
+                };
+            }
+            else parts = new() { (boxCenter, boxSize) };
+
+            foreach (var p in parts) _debugBoxes.Add(p);
             var comW = position + U.Rot(rotation, centerOfMass);
-            _h = _w.AddDynamicBox(U.Mirror(comW), U.Mirror(rotation), boxSize, U.Mirror(boxCenter - centerOfMass), mass, inertiaTensor);
+            var local = new (Vector3 offset, Vector3 size)[parts.Count];
+            for (int i = 0; i < parts.Count; i++)
+                // Nur der Offset wird gespiegelt; die Kantenlängen bleiben positiv.
+                local[i] = (U.Mirror(parts[i].center - centerOfMass), parts[i].size);
+            _h = _w.AddDynamicBoxes(U.Mirror(comW), U.Mirror(rotation), local, mass, inertiaTensor);
             _created = true;
         }
 

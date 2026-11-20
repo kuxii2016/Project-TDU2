@@ -22,6 +22,8 @@ public sealed class VehicleConfig
     public bool AutomaticGearbox { get; set; } = true;
     /// <summary>Physiktakt während der Fahrt (s), 0,005–0,02.</summary>
     public float FixedTimeStep { get; set; } = 0.01f;
+    /// <summary> Karosserie-Kollider: Simple = eine Box wie das Unity-Original, Extended = mittiger Kabinenkasten in voller Höhe plus zwei flachere Kästen für Motorhaube/Heck. Greift beim nächsten Aufbau des Autos (F9 oder Neustart). </summary>
+    public BodyColliderMode BodyCollider { get; set; } = BodyColliderMode.Extended;
     /// <summary>Startkamera: 20 Verfolger nah, 21 fern, 22 Stoßstange, 23 Cockpit, 24 Motorhaube (Taste C wechselt).</summary>
     public int CameraMode { get; set; } = 20;
     /// <summary>Lautstärke des Fahrzeugs (zusätzlich zu AudioConfig.Master).</summary>
@@ -62,6 +64,7 @@ public sealed class VehicleConfig
         Vehicle.WheelMaxRise = System.Math.Clamp(WheelMaxRise, 0f, 20f);
         Vehicle.DamperKnee = System.Math.Clamp(DamperKnee, 0.05f, 5f);
         Vehicle.DamperHighRatio = System.Math.Clamp(DamperHighRatio, 0.05f, 1f);
+        VehicleRigidbody.BodyCollider = BodyCollider;
         vm.StartCar = StartCar;
         vm.LoadSound = LoadSound;
         vm.EngineOffAtSpawn = EngineOffAtSpawn;

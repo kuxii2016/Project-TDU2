@@ -332,10 +332,10 @@ namespace Paradise.Core.Flash
             if (Root == null || string.IsNullOrEmpty(path)) return null;
             var inst = path.StartsWith("/") ? Root : (from ?? Root);
             DisplayObject cur = null;
-            foreach (var part in (path.IndexOf('/') >= 0 ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
+            foreach (var part in (IsSlashPath(path) ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
             {
                 if (part == "_root") { inst = Root; continue; }
-                if (part == "..") { inst = inst?.Owner?.Parent; continue; }
+                if (part == "..") { inst = inst?.Owner?.Parent; cur = inst?.Owner; continue; }   // "x/.." endet auf dem Elternclip
                 if (inst == null) return null;
                 cur = null;
                 // "#12" = unbenanntes Objekt auf Tiefe 12 (so zeigt es der Flash Debugger)
@@ -782,7 +782,7 @@ namespace Paradise.Core.Flash
         Instance FindRelative(Instance from, string path)
         {
             var inst = from;
-            foreach (var part in (path.IndexOf('/') >= 0 ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
+            foreach (var part in (IsSlashPath(path) ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
             {
                 if (inst == null) return null;
                 if (part == "..") { inst = inst.Owner?.Parent; continue; }

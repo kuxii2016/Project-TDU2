@@ -41,6 +41,7 @@ public sealed class WorldActorBodies
     readonly PhysicsWorld _w;
     readonly List<Entry> _fixed = new();
     readonly List<Entry> _free = new();
+    readonly List<Entry> _heavy = new();   // Bänke/große Teile: bleiben statisch (für die Debug-Ansicht trotzdem zeigen)
     Entry? _last;
 
     /// <summary>
@@ -123,7 +124,7 @@ public sealed class WorldActorBodies
         e.Static = stc;
 
         bool heavy = n.StartsWith("SF_BEN") || n.StartsWith("SF_BNC") || size.X * size.Y * size.Z > 6f;
-        if (heavy) return stc;
+        if (heavy) { _heavy.Add(e); return stc; }
 
         float vol = size.X * size.Y * size.Z;
         e.Mass = n.StartsWith("SF_XIN") ? 120f : n.StartsWith("RS_") || n.StartsWith("SF_PANOR") || n.StartsWith("SF_STUD") ? 15f : System.Math.Clamp(vol * 80f, 5f, 150f);
@@ -153,6 +154,7 @@ public sealed class WorldActorBodies
     public void RemoveSector(string sector)
     {
         _fixed.RemoveAll(e => e.Sector == sector);
+        _heavy.RemoveAll(e => e.Sector == sector);
         for (int i = _free.Count - 1; i >= 0; i--)
             if (_free[i].Sector == sector) { _w.RemoveBody(_free[i].Body); _free.RemoveAt(i); }
     }
@@ -200,6 +202,24 @@ public sealed class WorldActorBodies
         _free.Add(e);
         Log.Info($"World Actor umgefahren: {e.Mass:0} kg bei {hitVel.Length() * 3.6f:0} km/h");
         Broken?.Invoke(e.Sector, e.Name, hitVel.Length());
+    }
+
+    /// <summary>
+    /// Boxen aller geladenen World Actors in Spielkoordinaten (Mitte, Drehung, Größe, umfallbar) für die Debug-Ansicht.
+    /// Feste Teile kommen aus der Registrierung, umgefahrene aus dem Physikkörper; schwere Teile sind nicht umfallbar.
+    /// </summary>
+    public IEnumerable<(Vector3 center, Quaternion rot, Vector3 size, bool breakable)> DebugBoxes()
+    {
+        foreach (var e in _fixed)
+            yield return (e.Center, e.Rot, e.Size, true);
+        foreach (var e in _heavy)
+            yield return (e.Center, e.Rot, e.Size, false);
+        foreach (var e in _free)
+            if (_w.Simulation.Bodies.BodyExists(e.Body))
+            {
+                var pose = _w.Body(e.Body).Pose;
+                yield return (_w.ToGame(pose.Position), pose.Orientation, e.Size, true);
+            }
     }
 
     /// <summary>Je Bild: Render-Matrizen der gelösten Teile aus den Körpern übernehmen; nach 90 s entfernen.</summary>

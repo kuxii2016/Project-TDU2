@@ -638,7 +638,7 @@ namespace Paradise.Core.Vehicles
 
             // Körper anlegen (Unity: Rigidbody + BoxCollider am Auto-GameObject)
             var pos = _pendingPos ?? Vector3.Zero;
-            rb.Create(pos, _pendingRot, boxCenter, boxSize);
+            rb.Create(pos, _pendingRot, boxCenter, boxSize, !isBike);   // Bikes bleiben bei einer Box
             veh.CaptureVisualBase();
             // LogDiagnosis(veh, bmin, bmax, boxCenter, boxSize, wheelBottom);   // Rad-Diagnose bei Bedarf wieder einschalten
 

@@ -105,6 +105,10 @@ public static class DebugLines
             var mid = (a + b) * 0.5f;
             var toCam = camRender - mid;
             var side = Vector3.Cross(d, toCam);
+            // Steht die Kamera fast genau auf der Linie, wird das Kreuzprodukt null und die Linie würde einfach
+            // ausgelassen – bei naher Betrachtung ein „Verschwinden“. Dann eine bezugsgerichtete Seite nehmen.
+            if (side.LengthSquared() < 1e-12f) side = Vector3.Cross(d, Vector3.UnitY);
+            if (side.LengthSquared() < 1e-12f) side = Vector3.Cross(d, Vector3.UnitX);
             if (side.LengthSquared() < 1e-12f) continue;
             side = Vector3.Normalize(side);
             float wa = MathF.Max(0.002f, (camRender - a).Length() * halfPx);

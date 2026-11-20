@@ -6,6 +6,7 @@ using Paradise.Core.Online;
 using Paradise.Core.Savegame;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
+using Paradise.Game.Config;
 using Paradise.Game.Gamemodes;
 using Paradise.Game.Input;
 using Paradise.Game.Online;
@@ -267,6 +268,9 @@ public sealed partial class DevMenu
             Info("Own island", () => IslandTravel.DisplayName(Streamer?.Island) + "  (code " + TDU2GameData.LocalIsland + ")"),
             Info("Server time", () => DateTimeOffset.FromUnixTimeMilliseconds((long)(TDU2Session.ServerSeconds * 1000.0)).ToLocalTime().ToString("HH:mm:ss", Inv)),
             Info("Saving", () => TDU2Session.Saving ? "running" : "-"),
+            Head("NETWORK TRAFFIC"),
+            Menu("Network Traffic (server / P2P / relay)", NetworkTrafficMenu),
+            Info("Remote player cars", () => { int n = 0; foreach (var _ in RemoteCars.All) n++; return n.ToString(Inv); }),
             Head("SETTINGS"),
             Bool("Player join/leave messages", () => TDU2GameData.ShowPlayerEvents, v => TDU2GameData.ShowPlayerEvents = v, true),
             Float("Status message duration", () => TDU2GameData.StatusSeconds, v => TDU2GameData.StatusSeconds = v, 0.5f, 0.5f, 15f, 3f, "0.0", " s"),
@@ -276,7 +280,6 @@ public sealed partial class DevMenu
             PhBool("Other players' engine sounds", true),
             PhFloat("Send rate", 1f, 2f, 60f, 20f, "0", " /s"),
             PhFloat("Interpolation", 0.01f, 0f, 1f, 0.12f, "0.00", " s"),
-            PhMenu("Network Debug (detailed)", "Multiplayer (UDP positions) is not ported yet"),
             Head("ACTIONS"),
             Action_("Save game now", () =>
             {
@@ -304,6 +307,86 @@ public sealed partial class DevMenu
         return l;
     }
 
+    /// <summary>
+    /// Netzwerk-Traffic: echte Zaehler fuer TCP-Server, UDP-Server, P2P-Direktwege und Server-Relay.
+    /// Remote-Autos gehoeren dazu (UDP/P2P); lokaler KI-Traffic steht unter VEHICLES &amp; TRAFFIC.
+    /// </summary>
+    List<Item> NetworkTrafficMenu()
+    {
+        static string B(long n) => n <= 0 ? "0 B" : n < 1024 ? n.ToString(Inv) + " B"
+            : n < 1024 * 1024 ? (n / 1024.0).ToString("0.0", Inv) + " KiB"
+            : (n / (1024.0 * 1024.0)).ToString("0.0", Inv) + " MiB";
+        static string Ms(double ms) => ms < 0 ? "-" : ms.ToString("0", Inv) + " ms";
+
+        var mesh = Multiplayer.Mesh;
+        var tc = TDU2Session.Client;
+        var l = new List<Item> { Head("NETWORK TRAFFIC  (server · P2P direct · relay)") };
+
+        l.Add(Head("SERVER TCP  (login / status / savegame)"));
+        l.Add(Info("Connection", () => TDU2Session.Offline ? "offline profile" : tc == null ? "-" : tc.Connected ? "CONNECTED" : "disconnected"));
+        l.Add(Info("Host / port", () => tc != null ? tc.Host + ":" + tc.Port.ToString(Inv) : "-"));
+        l.Add(Info("Requests / responses", () => tc != null ? tc.Requests.ToString(Inv) + " / " + tc.Responses.ToString(Inv) : "-"));
+        l.Add(Info("Bytes in / out", () => tc != null ? B(tc.BytesIn) + " / " + B(tc.BytesOut) : "-"));
+        l.Add(Info("Request time (last)", () => tc != null ? Ms(tc.LastRttMs) : "-"));
+        l.Add(Info("Connect generations / failures", () => tc != null ? tc.Generation.ToString(Inv) + " / " + tc.Failures.ToString(Inv) : "-"));
+        l.Add(Info("Last error", () => tc != null && !string.IsNullOrEmpty(tc.LastError) ? tc.LastError : "-"));
+
+        l.Add(Head("SERVER UDP  (positions / chat / traffic relay)"));
+        l.Add(Info("Socket", () => Multiplayer.ServerSocketUp ? "UP  " + Multiplayer.LocalEndpoint : "down"));
+        l.Add(Info("Server endpoint", () => Multiplayer.ServerEndpoint));
+        l.Add(Info("Packets in / out", () => Multiplayer.ServerPacketsIn.ToString(Inv) + " / " + Multiplayer.ServerPacketsOut.ToString(Inv)));
+        l.Add(Info("Bytes in / out", () => B(Multiplayer.ServerBytesIn) + " / " + B(Multiplayer.ServerBytesOut)));
+        l.Add(Info("RTT last / smooth", () => Ms(Multiplayer.PingLastMs) + " / " + Ms(Multiplayer.PingMs)));
+        l.Add(Info("Status poll", () => TDU2GameData.StatusIntervalSeconds.ToString("0.0", Inv) + " s  ·  age " +
+            (TDU2GameData.LastStatusAge < 0 ? "-" : TDU2GameData.LastStatusAge.ToString("0.0", Inv) + " s") +
+            "  ·  fails " + TDU2GameData.StatusFailCount.ToString(Inv)));
+        l.Add(Info("Status result", () => !TDU2GameData.LastStatusOk ? "-" :
+            "ok" + (string.IsNullOrEmpty(TDU2GameData.LastStatusError) ? "" : " (" + TDU2GameData.LastStatusError + ")")));
+        l.Add(Info("UDP send / recv errors", () => Multiplayer.UdpSendErrors.ToString(Inv) + " / " + Multiplayer.UdpRecvErrors.ToString(Inv)));
+
+        l.Add(Head("P2P DIRECT  (client <-> client)"));
+        l.Add(Info("P2P active", () => mesh == null ? "-" : mesh.Active ? "YES" : "no"));
+        l.Add(Info("Server allows / local config", () =>
+            (TDU2GameData.LastStatusOk ? (TDU2GameData.LastStatusP2PEnabled ? "yes" : "no") : "-") + " / " + (OnlineConfig.UseP2P ? "yes" : "no")));
+        l.Add(Info("Peers / direct / relay", () => mesh == null ? "-" : mesh.PeerCount.ToString(Inv) + " / " + mesh.DirectCount.ToString(Inv) + " / " + mesh.RelayCount.ToString(Inv)));
+        l.Add(Info("Direct packets in / out", () => mesh == null ? "-" : mesh.DirectPacketsIn.ToString(Inv) + " / " + mesh.DirectPacketsOut.ToString(Inv)));
+        l.Add(Info("Direct bytes in / out", () => mesh == null ? "-" : B(mesh.DirectBytesIn) + " / " + B(mesh.DirectBytesOut)));
+        l.Add(Info("Punch packets in / out", () => mesh == null ? "-" : mesh.PunchPacketsIn.ToString(Inv) + " / " + mesh.PunchPacketsOut.ToString(Inv)));
+        l.Add(Info("Direct send errors", () => mesh == null ? "-" : mesh.DirectSendErrors.ToString(Inv)));
+
+        l.Add(Head("RELAY  (server forwards to unreachable peers)"));
+        l.Add(Info("Relay peers", () => mesh == null ? "-" : mesh.RelayCount.ToString(Inv)));
+        l.Add(Info("Relay envelopes / bytes", () => mesh == null ? "-" : mesh.RelayPacketsOut.ToString(Inv) + " / " + B(mesh.RelayBytesOut)));
+        l.Add(Info("Note", () => "server UDP out also contains relay envelopes"));
+
+        l.Add(Head("QUEUES / PACKET HANDLING"));
+        l.Add(Info("Traffic inbox (waiting)", () => Multiplayer.TrafficInboxCount.ToString(Inv)));
+        l.Add(Info("Dispatcher accepted / dropped", () => Multiplayer.DispatchReceived.ToString(Inv) + " / " + Multiplayer.DispatchDropped.ToString(Inv)));
+        l.Add(Info("Dispatcher drop rate", () =>
+        {
+            long all = Multiplayer.DispatchReceived + Multiplayer.DispatchDropped;
+            return all == 0 ? "-" : (100.0 * Multiplayer.DispatchDropped / all).ToString("0.0", Inv) + " %";
+        }));
+        l.Add(Info("Store router complete / failed / unknown", () => Paradise.Core.Net.PacketRouter.CompletePackets.ToString(Inv) + " / " +
+            Paradise.Core.Net.PacketRouter.FailedPackets.ToString(Inv) + " / " + Paradise.Core.Net.PacketRouter.UnknownPackets.ToString(Inv)));
+
+        l.Add(Head("REMOTE PLAYER CARS (UDP / P2P)"));
+        var remotes = new List<(int id, bool loaded, string car, float age)>(RemoteCars.Info());
+        l.Add(Info("Remote cars", () => remotes.Count.ToString(Inv)));
+        foreach (var r in remotes)
+        {
+            var rr = r;
+            l.Add(Info("#" + rr.id.ToString(Inv), () =>
+                (rr.loaded ? "loaded" : "loading/none") + "  ·  " + rr.car + "  ·  packet " + rr.age.ToString("0.0", Inv) + " s ago" +
+                (mesh != null && mesh.IsDirect(rr.id) ? "  ·  direct" : "  ·  relay/server")));
+        }
+        if (remotes.Count == 0) l.Add(Info("no remote cars"));
+
+        l.Add(Head("PLAYERS"));
+        l.Add(Menu("Players (" + TDU2GameData.Players.Count + ")", PlayersMenu));
+        return l;
+    }
+
     // ------------------------------------------------------------------ Spielstand / Geld (Unity SavegameMenu)
     List<Item> SavegameMenu()
     {
@@ -312,6 +395,7 @@ public sealed partial class DevMenu
         var save = TDU2Session.Save;
         l.Add(Info("Nick", () => TDU2Session.Nick ?? "-"));
         l.Add(Info("Logged in", () => TDU2Session.LoggedIn ? "YES" : "NO"));
+        l.Add(Menu("Savegame Debug (Save/Load, View Data, JSON/XMBF)", SavegameDebugMenu));
         if (save == null) { l.Add(Info("no savegame loaded (log in first)")); return l; }
         l.Add(Info("Island / position", () => (string.IsNullOrEmpty(save.island) ? "-" : save.island) + (save.hasPosition ? "  (" + Num(save.px) + ", " + Num(save.py) + ", " + Num(save.pz) + ")" : "")));
         l.Add(Info("Interior", () => string.IsNullOrEmpty(save.interior) ? "outside" : save.interior));
@@ -428,22 +512,74 @@ public sealed partial class DevMenu
         return l;
     }
 
-    // ------------------------------------------------------------------ Debug-Ansicht (Unity DebugViewMenu)
+    // ------------------------------------------------------------------ Debug-Ansichten (Hub: eine Seite pro Ansicht)
     List<Item> DebugViewMenu()
     {
         var l = new List<Item>
         {
-            Head("RACE DEBUG VIEW"),
+            Head("CHOOSE A VIEW  (toggles, ranges and colors live on the view's own page)"),
+            Menu("Race Debug View", RaceDebugViewMenu),
+            Menu("Traffic Debug View (+ AI paths)", TrafficDebugViewMenu),
+            Menu("Car Physics Debug View", CarDebugViewMenu),
+            Menu("Collision Debug View", CollisionViewMenu),
+            Menu("Camera / Free-fly", CameraDebugViewMenu),
+            Head("QUICK MASTERS"),
+            Bool("Traffic debug (3D + overlay)", () => TrafficConfig.ShowDebug, v => TrafficConfig.ShowDebug = v, false),
+            Bool("AI path system (traffic lanes)", () => _aiPaths, v => _aiPaths = v, false),
+            Bool("All car debug lines", () => AnyCarDebug, SetAllCarDebug, false),
+            Bool("Show collision boxes", () => _collisionBoxes, v => _collisionBoxes = v, false),
+            Head(""),
+            Info("Detail pages: main menu > Race Debug · Cars > Physics debug · Cars > Traffic > Traffic Debug Details"),
+            Info("Debug overlay: F12 · object under the crosshair: F10 · Toggle Control: " + ToggleKeyName()),
+            Info("Lines are drawn without depth test (like Unity TDU2DebugLines)"),
         };
+        return l;
+    }
+
+    List<Item> RaceDebugViewMenu()
+    {
+        var l = new List<Item> { Head("RACE DEBUG VIEW") };
         AddRaceDebugToggles(l);
-        l.Add(Head("TRAFFIC DEBUG VIEW"));
+        l.Add(Head(""));
+        l.Add(Menu("Race Debug / Start Race (.ig2)", RaceMenu));
+        return l;
+    }
+
+    List<Item> TrafficDebugViewMenu()
+    {
+        var tr = Traffic;
+        var l = new List<Item> { Head("TRAFFIC DEBUG VIEW") };
         AddTrafficDebugToggles(l);
-        l.Add(Head("CAR PHYSICS DEBUG VIEW"));
-        l.Add(Bool("Suspension rays", () => _dbgRays, v => _dbgRays = v, false));
-        l.Add(Bool("Tire forces", () => _dbgForces, v => _dbgForces = v, false));
-        l.Add(Bool("Velocity / forward arrows", () => _dbgVelocity, v => _dbgVelocity = v, false));
-        l.Add(Bool("Wheel labels", () => _dbgWheelLabels, v => _dbgWheelLabels = v, false));
-        l.Add(Head("CAMERA"));
+        l.Add(Head("AI PATH SYSTEM  (lanes used by traffic and race autopilot)"));
+        AddAiPathToggles(l);
+        l.Add(Menu("AI path settings & color", AiPathMenu));
+        l.Add(Head(""));
+        l.Add(Info("AI traffic cars", () => tr != null ? tr.CarCount.ToString(Inv) : "-"));
+        l.Add(Menu("Traffic settings & debug", TrafficMenu));
+        l.Add(Menu("Traffic Debug Details", TrafficDebugMenu));
+        return l;
+    }
+
+    List<Item> CarDebugViewMenu()
+    {
+        var l = new List<Item>
+        {
+            Head("CAR PHYSICS DEBUG VIEW"),
+            Bool("All car debug lines (master)", () => AnyCarDebug, SetAllCarDebug, false),
+            Bool("   Suspension rays", () => _dbgRays, v => _dbgRays = v, false),
+            Bool("   Tire forces", () => _dbgForces, v => _dbgForces = v, false),
+            Bool("   Velocity / forward arrows", () => _dbgVelocity, v => _dbgVelocity = v, false),
+            Bool("   Wheel labels", () => _dbgWheelLabels, v => _dbgWheelLabels = v, false),
+            Head(""),
+            Menu("Physics settings", CarPhysicsMenu),
+            Menu("Physics debug (live values)", CarDebugMenu),
+        };
+        return l;
+    }
+
+    List<Item> CameraDebugViewMenu()
+    {
+        var l = new List<Item> { Head("CAMERA / FREE-FLY") };
         l.Add(Bool("Free-fly camera", () => _terrain.FreeFly, v => SetFreeFly(v), false));
         var cam = _terrain.Camera;
         if (cam != null)
@@ -462,8 +598,6 @@ public sealed partial class DevMenu
             Toast("Car moved to the camera");
         }));
         l.Add(Head(""));
-        l.Add(Info("Debug overlay: F12 · object under the crosshair: F10 · Toggle Control: " + ToggleKeyName()));
-        l.Add(Info("Lines are drawn without depth test (like Unity TDU2DebugLines)"));
         l.Add(Info("Free camera: RMB look · WASD move · Space/Ctrl up/down · Shift fast"));
         return l;
     }

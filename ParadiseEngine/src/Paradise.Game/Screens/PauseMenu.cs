@@ -134,6 +134,9 @@ public sealed class PauseMenu
         foreach (var n in Unlocked) ui.SetValue("/:" + n, false);
         foreach (var n in Locked) ui.SetValue("/:" + n, true);
         if (_raceMode) { ui.SetValue("/:LockRestart", false); ui.SetValue("/:LockQuit", false); }
+        // exe 0x9eaccb: Editor frei, sobald die Geschichte durch ist (Schritt >= 11) und das Entwickler-Flag DISABLEGME
+        // (0x1b0e384, Konsolenbefehl) nicht gesetzt ist; der Film zeigt den Punkt nur in der Freifahrt (WhatGameMode 1).
+        ui.SetValue("/:LockEditor", StoryProgress.Get(TDU2Session.Nick) < 11);
         ui.SetVariable("/:NbNewsUnread", "0");
         ui.SetVariable("/:Money", TDU2Session.LoggedIn
             ? TDU2Session.Save.money.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $"
@@ -241,6 +244,12 @@ public sealed class PauseMenu
         switch (c)
         {
             case "paou":           // Pause beendet (nach der Schließen-Animation)
+                Close();
+                break;
+            case "goed":           // Menüpunkt "Editor" (valid_menu, exe 0x9ec1bb): nach der Pause in den Challenge-Editor
+                // Die exe schließt das Pausemenü dabei selbst (kein paou: der Film sendet nach goed keins, das Menü blieb offen,
+                // bis ESC kam – das war das lange Warten).
+                GAME_MODE_PAUSE.Next = Gamemode.GAME_MODE_EDITOR;
                 Close();
                 break;
             case "rest" when _raceMode:   // Rennen neu starten

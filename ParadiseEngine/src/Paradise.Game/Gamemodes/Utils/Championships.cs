@@ -131,7 +131,7 @@ public static class Championships
 
     public static string ModeLabel(RaceDefinition d) => d.Kind switch
     {
-        RaceMode.Race => "race",
+        RaceMode.Race => d.IsEliminator ? "eliminator" : "race",
         RaceMode.SpeedTrap => "speedtrap",
         RaceMode.Speed => "speed",
         _ => "timeAttack",
@@ -139,7 +139,7 @@ public static class Championships
 
     public static string ModeName(RaceDefinition d) => d.Kind switch
     {
-        RaceMode.Race => "Rennen",
+        RaceMode.Race => d.IsEliminator ? "Eliminator" : "Rennen",
         RaceMode.SpeedTrap => "Radar",
         RaceMode.Speed => "Tempo",
         _ => "Zeitfahren",
@@ -458,6 +458,13 @@ public static class Championships
         public int State, Laps, Points, Place;
         public float LengthM;
         public Vector3 Start, Forward;
+        /// <summary>Spielart (gmth), Rundkurs ("#"), Runden wie gespeichert (nblp), Mindesttempo "tras"/1000 (m/s).</summary>
+        public RaceMode Kind;
+        public bool IsCircuit;
+        public int LapsRaw;
+        public float SpeedMin;
+        /// <summary>Die Renn-Definition (Tore, Straßenroute) – für die Strecke auf der Karte.</summary>
+        public RaceDefinition Def = null!;
     }
 
     /// <summary>Freigeschaltete Meisterschaften der aktuellen Insel.</summary>
@@ -519,6 +526,11 @@ public static class Championships
                 LengthM = r.Length > 1f ? r.Length : 0f,
                 Start = sp,
                 Forward = f,
+                Kind = r.Kind,
+                IsCircuit = r.IsCircuit,
+                LapsRaw = r.LapsRaw,
+                SpeedMin = r.SpeedTrapMin,
+                Def = r,
             });
         }
         return list;

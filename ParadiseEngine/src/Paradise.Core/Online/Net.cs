@@ -41,12 +41,29 @@ namespace Paradise.Core.Online
         StreamReader _reader;
         StreamWriter _writer;
         int _generation;
+        long _bytesIn, _bytesOut, _requests, _responses, _failures;
+        double _lastRttMs = -1;
+        string _lastError = "";
 
         public TDU2NetClient(string host, int port) { Host = host; Port = port; }
 
         public bool Connected { get { lock (_lock) return _tcp != null && _tcp.Connected; } }
         /// <summary>Zählt jede neue Verbindung (Sitzung des Servers hängt an der Verbindung).</summary>
         public int Generation => _generation;
+        /// <summary>Brutto-Bytes der gelesenen Antwortzeilen (inkl. newline), seit Start dieses Clients.</summary>
+        public long BytesIn { get { lock (_lock) return _bytesIn; } }
+        /// <summary>Brutto-Bytes der gesendeten Anfragezeilen (inkl. newline), seit Start dieses Clients.</summary>
+        public long BytesOut { get { lock (_lock) return _bytesOut; } }
+        /// <summary>Anzahl abgeschickter Anfragen (ein Aufruf = eine Anfrage, auch bei einem Retry).</summary>
+        public long Requests { get { lock (_lock) return _requests; } }
+        /// <summary>Anzahl empfangener Antwortzeilen (auch Fehler-Antworten des Servers).</summary>
+        public long Responses { get { lock (_lock) return _responses; } }
+        /// <summary>Anzahl fehlgeschlagener Anfragen (Socketfehler oder Fehler-Antwort).</summary>
+        public long Failures { get { lock (_lock) return _failures; } }
+        /// <summary>Laufzeit der letzten Anfrage bis zur Antwort in ms; -1 = noch keine Antwort.</summary>
+        public double LastRttMs { get { lock (_lock) return _lastRttMs; } }
+        /// <summary>Letzter Netzwerk-/Protokollfehler (Fürs Dev-Menü).</summary>
+        public string LastError { get { lock (_lock) return _lastError; } }
 
         public Task<NetResponse> Send(NetRequest req) => Task.Run(() => SendBlocking(req));
 
@@ -54,23 +71,37 @@ namespace Paradise.Core.Online
         {
             lock (_lock)
             {
+                _requests++;
                 for (int attempt = 0; attempt < 2; attempt++)
                 {
                     try
                     {
                         EnsureConnected();
-                        _writer.Write(NetJson.ToJson(req));
+                        string json = NetJson.ToJson(req);
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        _writer.Write(json);
                         _writer.Write('\n');
                         _writer.Flush();
+                        _bytesOut += Encoding.UTF8.GetByteCount(json) + 1;
                         string line = _reader.ReadLine();
                         if (line == null) throw new IOException("Verbindung vom Server getrennt");
+                        _bytesIn += Encoding.UTF8.GetByteCount(line) + 1;
+                        _lastRttMs = sw.Elapsed.TotalMilliseconds;
+                        _responses++;
                         var resp = NetJson.FromJson<NetResponse>(line) ?? NetResponse.Error("bad_response");
                         resp.error ??= "";
+                        if (!resp.ok)
+                        {
+                            _lastError = string.IsNullOrEmpty(resp.error) ? "server_error" : resp.error;
+                            _failures++;
+                        }
                         return resp;
                     }
                     catch (Exception ex)
                     {
                         CloseLocked();
+                        _lastError = ex.Message;
+                        _failures++;
                         // ein zweiter Versuch nur, wenn eine alte Verbindung kaputt war
                         if (attempt == 1 || !(ex is IOException || ex is SocketException || ex is ObjectDisposedException))
                             return NetResponse.Error("net:" + ex.Message);
@@ -147,7 +178,8 @@ namespace Paradise.Core.Online
             if (r.serverTime != 0) _radioSkewMs = r.serverTime - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
-        public static void Connect(string host, int port)
+
+        public static void Connect(string host = "85.215.133.235", int port = 2605)
         {
             if (string.IsNullOrEmpty(host) || port <= 0) return;
             if (Client != null && Client.Host == host && Client.Port == port) return;
@@ -206,6 +238,22 @@ namespace Paradise.Core.Online
             s.friendNews ??= new List<FriendNewsEntry>();
             s.storyAvatar ??= "";
             s.island ??= ""; s.currentCar ??= ""; s.avatar ??= ""; s.interior ??= ""; s.savedAt ??= "";
+        }
+
+        /// <summary>
+        /// Spielstand komplett übernehmen (Debug-Import): Felder werden in das bestehende Objekt kopiert, damit
+        /// zwischengespeicherte Referenzen (Händler, Garage, Menüs) gültig bleiben. Ohne Server-Speichern – das macht
+        /// erst die neue Local-DATA (SaveAsync) bzw. der Debug-Menü-Eintrag.
+        /// </summary>
+        public static void ApplySave(SaveData save)
+        {
+            var src = save ?? new SaveData();
+            Normalize(src);
+            var dst = Save ?? new SaveData();
+            foreach (var f in typeof(SaveData).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                f.SetValue(dst, f.GetValue(src));
+            Save = dst;
+            Changed?.Invoke();
         }
 
         public static void End()

@@ -1,3 +1,5 @@
+using Paradise.Core.Racing;
+
 namespace Paradise.Game.Config;
 
 /// <summary>
@@ -11,6 +13,31 @@ public static class RaceConfig
     public static bool ShowGates = true;
     /// <summary>Kegel/Absperrungen (ig2 DEC2, worldactors.bnk) aufstellen.</summary>
     public static bool SpawnProps = true;
+    /// <summary>
+    /// Fahrbahnlinie (Trajectory) erzwingen (true) oder abschalten (false). null = Flag der Prüfung verwenden:
+    /// nur freigestellte Tore (Schulgelände) zeigen das Band. "-noracingline" entspricht false.
+    /// Radar (gmth = 1) bekommt grundsätzlich kein Band – auch nicht mit Override.
+    /// </summary>
+    public static bool? DrivingLineOverride = null;
+
+    static RaceConfig()
+    {
+        foreach (var a in Environment.GetCommandLineArgs())
+            if (string.Equals(a, "-noracingline", StringComparison.OrdinalIgnoreCase)) DrivingLineOverride = false;
+    }
+
+    /// <summary>Einzige Entscheidungsstelle für Straßenband und Minimap-Route (schließen sich aus).</summary>
+    public static bool DrivingLine(RaceDefinition race) =>
+        race.Kind != RaceMode.SpeedTrap && (DrivingLineOverride ?? race.ShowDrivingLine);
+
+    /// <summary>
+    /// Minimap-Route: genau das Gegenteil zum Straßenband – außer beim Radar. Dort ist weder Band noch Route aktiv;
+    /// die Tore erscheinen nur als blaue Punkte.
+    /// </summary>
+    public static bool MinimapRoute(RaceDefinition race) => race.Kind != RaceMode.SpeedTrap && !DrivingLine(race);
+
+    /// <summary>Kennzeichnet die reine Portal-Anzeige des Radars (nur blaue Dots, keine Route).</summary>
+    public static bool MinimapRacePortals(RaceDefinition race) => race.Kind == RaceMode.SpeedTrap;
     /// <summary>Dauer des 3-2-1-GO-Countdowns (s, Echtzeit) – im HUD-Film bis "go" ca. 3,7 s bei 30 fps.</summary>
     public static float CountdownSeconds = 3.7f;
     /// <summary>Zeitstrafe je Treffer (s) – Original: DBEnvironnement.PenaltyTimeLevel01..03 = 10 s.</summary>

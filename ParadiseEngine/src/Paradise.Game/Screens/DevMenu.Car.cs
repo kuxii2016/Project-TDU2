@@ -18,6 +18,10 @@ public sealed partial class DevMenu
     // Physik-Debug am eigenen Auto (nur zur Laufzeit)
     bool _dbgRays, _dbgForces, _dbgVelocity, _dbgWheelLabels;
 
+    /// <summary>Master-Schalter für alle vier Auto-Debug-Linien (Debug-Ansicht und Car-Debugmenü teilen die Werte).</summary>
+    bool AnyCarDebug => _dbgRays || _dbgForces || _dbgVelocity || _dbgWheelLabels;
+    void SetAllCarDebug(bool on) => _dbgRays = _dbgForces = _dbgVelocity = _dbgWheelLabels = on;
+
     static readonly Vector4 LGreen = new(0.3f, 1f, 0.3f, 1f), LRed = new(1f, 0.25f, 0.2f, 1f), LCyan = new(0.3f, 0.95f, 1f, 1f),
         LYellow = new(1f, 0.92f, 0.2f, 1f), LOrange = new(1f, 0.6f, 0.1f, 1f), LMagenta = new(1f, 0.3f, 1f, 1f), LWhite = new(1f, 1f, 1f, 1f);
 
@@ -178,19 +182,26 @@ public sealed partial class DevMenu
         l.Add(Float("Sound radius", () => TrafficConfig.SoundRadius, v => TrafficConfig.SoundRadius = v, 5f, 10f, 300f, 70f, "0", " m"));
         l.Add(Head("DEBUG"));
         AddTrafficDebugToggles(l);
+        AddAiPathToggles(l);
+        l.Add(Menu("AI path system & colors", AiPathMenu));
         l.Add(Menu("Traffic Debug Details", TrafficDebugMenu));
-        l.Add(Menu("Car list", () =>
-        {
-            var cl = new List<Item> { Head("TRAFFIC CARS  (id · model · state · speed · distance · lane)") };
-            foreach (var c in tr.Info())
-            {
-                var cc = c;
-                cl.Add(Info($"{cc.id & 0xFFFF:X4} {cc.model}", () => $"{cc.mode}  {cc.kmh:0} km/h  {cc.dist:0} m  {cc.lane}"));
-            }
-            if (cl.Count == 1) cl.Add(Info("no cars"));
-            return cl;
-        }));
+        l.Add(Menu("Car list", TrafficCarListMenu));
         return l;
+    }
+
+    /// <summary>Live-Liste der KI-Autos – auch aus Network > Traffic &amp; Remote Cars erreichbar.</summary>
+    List<Item> TrafficCarListMenu()
+    {
+        var tr = Traffic;
+        var cl = new List<Item> { Head("TRAFFIC CARS  (id · model · state · speed · distance · lane)") };
+        if (tr == null) { cl.Add(Info("no traffic")); return cl; }
+        foreach (var c in tr.Info())
+        {
+            var cc = c;
+            cl.Add(Info($"{cc.id & 0xFFFF:X4} {cc.model}", () => $"{cc.mode}  {cc.kmh:0} km/h  {cc.dist:0} m  {cc.lane}"));
+        }
+        if (cl.Count == 1) cl.Add(Info("no cars"));
+        return cl;
     }
 
     void AddTrafficDebugToggles(List<Item> l)
@@ -208,6 +219,8 @@ public sealed partial class DevMenu
         var l = new List<Item> { Head("TRAFFIC DEBUG DETAILS") };
         if (tr == null) { l.Add(Info("no traffic")); return l; }
         AddTrafficDebugToggles(l);
+        AddAiPathToggles(l);
+        l.Add(Menu("AI path system & colors", AiPathMenu));
         l.Add(Info("Cars / physics / crash / stopped", () => { var (p, c, s) = tr.Counts(); return tr.CarCount + " / " + p + " / " + c + " / " + s; }));
         l.Add(Info("Physics / Sound", () => "p:" + TrafficConfig.PhysicsMax + "@" + Num(TrafficConfig.PhysicsRadius) + "m  s:" + TrafficConfig.SoundMax + "@" + Num(TrafficConfig.SoundRadius) + "m"));
         l.Add(Info("Road network", () => tr.Lanes != null ? "loaded" : "-"));

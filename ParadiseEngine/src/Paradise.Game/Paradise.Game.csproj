@@ -31,6 +31,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Paradise.Core\Paradise.Core.csproj" />
     <ProjectReference Include="..\Paradise.FlashDebug\Paradise.FlashDebug.csproj" />
+    <ProjectReference Include="..\Paradise.Editor\Paradise.Editor.csproj" />
   </ItemGroup>
 
   <!-- Keine WinForms-Implizit-Usings im Spiel: "Screen" ist sonst mehrdeutig
