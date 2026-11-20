@@ -1,0 +1,66 @@
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build Test Drive Unlimited 2
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      # Repository auschecken
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # .NET 9 installieren
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # Single-File EXE erstellen
+      - name: Publish Single File EXE
+        shell: pwsh
+        run: |
+          dotnet publish "src/Paradise.Game/Paradise.Game.csproj" `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:AssemblyName="Test Drive Unlimited 2" `
+            -o "publish"
+
+      # Prüfen, ob die EXE existiert
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          $exe = "publish/Test Drive Unlimited 2.exe"
+
+          if (!(Test-Path $exe)) {
+            Write-Error "Build failed: $exe not found!"
+            exit 1
+          }
+
+          Write-Host "Build successful!"
+          Write-Host "File size: $([math]::Round((Get-Item $exe).Length / 1MB, 2)) MB"
+
+      # GitHub Release erstellen
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: "publish/Test Drive Unlimited 2.exe"
