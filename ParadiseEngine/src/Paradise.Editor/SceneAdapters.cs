@@ -1,8 +1,13 @@
 // Szenen-Editor: Hierarchie-Einträge für die Engine-Typen aus Paradise.Core (Spiel-Thread).
 //   World (MapStreamer) → Island LOD / Areas / Sectors (Nodes → RenderObjects → LODs, Placements) / Scenes / Map tiles / Water
 //   Fahrzeuge (CarModel) → CarNode-Baum (Unity: GameObject-Hierarchie des Autos)
+//   Avatare (AvatarModel) → Knochen-Baum (XsbSkeleton)
 // Fahrzeuge aus Paradise.Game (eigenes Auto, Verkehr, Mitspieler) meldet das Spiel über SceneEditor.SetRoot an.
+// Aktiv-Schalter: wo die Engine einen eigenen hat (Node/RenderObject/Scene/CarNode/Avatar) dieser, sonst ein Editor-Schalter
+// (Zelle, Platzierungen, Meer), der nur das Zeichnen auslässt – Kollision und Streaming bleiben unverändert.
 
+using Paradise.Core.Avatars;
+using Paradise.Core.Formats;
 using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
@@ -25,9 +30,22 @@ public static class SceneAdapters
                                   Action<InspectorBuilder>? inspect = null, Func<bool>? alive = null, string type = "Gruppe")
         => new SceneNode
         {
-            Id = id, Name = name, Type = type, CountChildren = count, Children = children, Alive = alive,
+            Id = id,
+            Name = name,
+            Type = type,
+            CountChildren = count,
+            Children = children,
+            Alive = alive,
             Inspect = inspect ?? (b => { b.Section(type); b.Info("Einträge", count().ToString(Inv)); }),
         };
+
+    /// <summary>Aktiv-Schalter an einen Eintrag hängen (Haken in Hierarchy und Inspector).</summary>
+    public static SceneNode Toggle(SceneNode n, Func<bool> get, Action<bool> set)
+    {
+        n.GetActive = get;
+        n.SetActive = set;
+        return n;
+    }
 
     // ------------------------------------------------------------------ Welt (MapStreamer)
     public static SceneNode World(MapStreamer s)
@@ -38,6 +56,9 @@ public static class SceneAdapters
             Name = "World (" + (s.Index?.IslandName ?? s.Island) + ")",
             Type = "MapStreamer",
             Target = s,
+            GetActive = () => !s.HideWorld,
+            SetActive = v => s.HideWorld = !v,
+            Pick = (o, d) => PickWorld(s, o, d),
             CountChildren = () => 5 + (s.MapTiles.Count > 0 ? 1 : 0),
             Children = () => WorldChildren(s),
             Inspect = b =>
@@ -51,28 +72,47 @@ public static class SceneAdapters
                 b.Info("Kamera (Spielraum)", s.ViewerGame);
                 b.Info("Render-Ursprung", s.RootOffset);
                 b.Info("Wasserhöhe", s.WaterLevel);
-                b.Bool("Welt ausgeblendet (HideWorld)", s.HideWorld, "hideworld");
+                b.Info("Aktiv-Haken", "aus = Außenwelt ausblenden (HideWorld, nur Szenen + Himmel)");
             },
-            Edit = (k, v) => { if (k != "hideworld") return false; s.HideWorld = v == "1"; return true; },
         };
         return node;
     }
 
     static IEnumerable<SceneNode> WorldChildren(MapStreamer s)
     {
-        yield return Group("g:world/island", "Island LOD", () => s.EditorIslandPieces().Count,
-            () => s.EditorIslandPieces().Select(p => Node(p.Node, "Island " + p.Key, () => true)));
-        yield return Group("g:world/areas", "Areas", () => s.EditorAreas().Count,
-            () => s.EditorAreas().Select(c => Cell(s, c)));
-        yield return Group("g:world/sectors", "Sectors", () => s.EditorSectors().Count,
-            () => s.EditorSectors().Select(c => Cell(s, c)));
+        yield return Toggle(Group("g:world/island", "Island LOD", () => s.EditorIslandPieces().Count,
+            () => s.EditorIslandPieces().Select(p => Node(p.Node, "Island " + p.Key, () => true))),
+            () => s.ShowIslandLod, v => s.ShowIslandLod = v);   // Streamer setzt die Stücke danach selbst (wie F1 > Streaming)
+        yield return Toggle(Group("g:world/areas", "Areas", () => s.EditorAreas().Count,
+            () => s.EditorAreas().Select(c => Cell(s, c))),
+            () => s.EditorAreas().Exists(c => !s.EditorGetHidden(c)), v => { foreach (var c in s.EditorAreas()) s.EditorSetHidden(c, !v); });
+        yield return Toggle(Group("g:world/sectors", "Sectors", () => s.EditorSectors().Count,
+            () => s.EditorSectors().Select(c => Cell(s, c))),
+            () => s.EditorSectors().Exists(c => !s.EditorGetHidden(c)), v => { foreach (var c in s.EditorSectors()) s.EditorSetHidden(c, !v); });
         yield return Group("g:world/scenes", "Scenes (Interieur, Möbel, Tore)", () => s.Scenes.Count,
             () => s.Scenes.ToArray().Select((h, i) => Scene(s, h, i)));
         if (s.MapTiles.Count > 0)
             yield return Group("g:world/maptiles", "Map tiles", () => s.MapTiles.Count,
                 () => s.MapTiles.ToArray().Select(t => MapTile(s, t)));
-        yield return Water(s);
+        yield return Group("g:world/env", "Environment", () => 4, () => EnvironmentChildren(s));
     }
+
+    static IEnumerable<SceneNode> EnvironmentChildren(MapStreamer s)
+    {
+        yield return Water(s);
+        yield return Toggle(Flag("g:world/env/clouds", "Clouds", "Wolkenkuppel (fx/clouds.bnk)", "MapStreamer.ShowClouds"), () => s.ShowClouds, v => s.ShowClouds = v);
+        yield return Toggle(Flag("g:world/env/stars", "Stars / Moon", "Sternenhimmel + Mond", "MapStreamer.ShowStars"), () => s.ShowStars, v => s.ShowStars = v);
+        yield return Toggle(Flag("g:world/env/wires", "Power wires", "Stromleitungen aus den Sektor-.pen", "MapStreamer.ShowPowerWires"), () => s.ShowPowerWires, v => s.ShowPowerWires = v);
+    }
+
+    static SceneNode Flag(string id, string name, string what, string field)
+        => new SceneNode
+        {
+            Id = id,
+            Name = name,
+            Type = what,
+            Inspect = b => { b.Section(name); b.Info("Inhalt", what); b.Info("Schalter", field); },
+        };
 
     static SceneNode Cell(MapStreamer s, MapStreamer.EditorCell c)
     {
@@ -87,6 +127,8 @@ public static class SceneAdapters
             Name = c.Kind + " " + c.Key + (c.Failed ? "  (Fehler)" : c.Built ? "" : "  (lädt)"),
             Type = c.Kind,
             Alive = alive,
+            GetActive = () => !s.EditorGetHidden(c),
+            SetActive = v => s.EditorSetHidden(c, !v),
             CountChildren = () => nodes.Count + plcCount,
             Children = () => CellChildren(id, nodes, plc, alive),
             Inspect = b =>
@@ -103,6 +145,7 @@ public static class SceneAdapters
                 if (plc != null) b.Info("Platzierungen", plc.EditorBatchCount + " Typen, " + plc.InstanceCount + " Instanzen");
                 b.Info("Gras", c.HasGrass ? "ja" : "nein");
                 b.Info("Stromleitungen", c.HasWires ? "ja" : "nein");
+                b.Info("Aktiv-Haken", "aus = Zelle nicht zeichnen (Kollision bleibt)");
             },
             Gizmo = g =>
             {
@@ -241,21 +284,21 @@ public static class SceneAdapters
             case "pos":
             case "rot":
             case "scale":
-            {
-                if (!InspectorBuilder.TryParseV3(v, out var val)) return false;
-                var old = ro.Model;
-                if (!TransformMath.Decompose(old, out var pos, out var rot, out var scale)) return false;
-                if (k == "pos") pos = val; else if (k == "rot") rot = TransformMath.FromEuler(val); else scale = val;
-                var m = TransformMath.Compose(pos, rot, scale);
-                if (!Matrix4x4.Invert(old, out var inv)) return false;
-                // Bounds/Center (Spielraum, Frustum-Test + LOD) mit der Änderung mitziehen
-                var delta = inv * m;
-                TransformMath.TransformAabb(ro.BoundsMin, ro.BoundsMax, delta, out var mn, out var mx);
-                ro.BoundsMin = mn; ro.BoundsMax = mx;
-                ro.Center = Vector3.Transform(ro.Center, delta);
-                ro.Model = m;
-                return true;
-            }
+                {
+                    if (!InspectorBuilder.TryParseV3(v, out var val)) return false;
+                    var old = ro.Model;
+                    if (!TransformMath.Decompose(old, out var pos, out var rot, out var scale)) return false;
+                    if (k == "pos") pos = val; else if (k == "rot") rot = TransformMath.FromEuler(val); else scale = val;
+                    var m = TransformMath.Compose(pos, rot, scale);
+                    if (!Matrix4x4.Invert(old, out var inv)) return false;
+                    // Bounds/Center (Spielraum, Frustum-Test + LOD) mit der Änderung mitziehen
+                    var delta = inv * m;
+                    TransformMath.TransformAabb(ro.BoundsMin, ro.BoundsMax, delta, out var mn, out var mx);
+                    ro.BoundsMin = mn; ro.BoundsMax = mx;
+                    ro.Center = Vector3.Transform(ro.Center, delta);
+                    ro.Model = m;
+                    return true;
+                }
         }
         return false;
     }
@@ -284,7 +327,7 @@ public static class SceneAdapters
 
     // ------------------------------------------------------------------ Platzierungen (.pmi: Bäume, Büsche, Leitplanken …)
     static SceneNode Placements(string id, PlacementRenderer p, Func<bool> alive)
-        => Group(id, "Placements (" + p.EditorBatchCount + " Typen, " + p.InstanceCount + " Instanzen)", () => p.EditorBatchCount,
+        => Toggle(Group(id, "Placements (" + p.EditorBatchCount + " Typen, " + p.InstanceCount + " Instanzen)", () => p.EditorBatchCount,
             () => Enumerable.Range(0, p.EditorBatchCount).Select(i => PlacementBatch(id + "/" + i, p, i, alive)),
             b =>
             {
@@ -292,7 +335,7 @@ public static class SceneAdapters
                 b.Info("Typen", p.EditorBatchCount.ToString(Inv));
                 b.Info("Instanzen", p.InstanceCount.ToString(Inv));
                 b.Info("Sichtweite", N(p.MaxDistance * PlacementRenderer.DistanceMultiplier, "0") + " m");
-            }, alive, "Placements");
+            }, alive, "Placements"), () => !p.EditorHidden, v => p.EditorHidden = !v);
 
     static SceneNode PlacementBatch(string id, PlacementRenderer p, int batch, Func<bool> alive)
     {
@@ -305,8 +348,10 @@ public static class SceneAdapters
             Type = "Library-Objekt (instanziert)",
             Target = obj,
             Alive = alive,
+            GetActive = () => !p.EditorBatchHidden(batch),
+            SetActive = v => p.EditorSetBatchHidden(batch, !v),
             CountChildren = () => mats.Count,
-            Children = () => Enumerable.Range(0, mats.Count).Select(j => PlacementInstance(id + "#" + j, obj, mats, j, alive)),
+            Children = () => Enumerable.Range(0, mats.Count).Select(j => PlacementInstance(id + "#" + j, p, batch, j, alive)),
             Inspect = b => { InspectLibrary(b, obj); b.Section("Instanzen"); b.Info("Anzahl", mats.Count.ToString(Inv)); },
             Gizmo = g =>
             {
@@ -315,13 +360,18 @@ public static class SceneAdapters
         };
     }
 
-    static SceneNode PlacementInstance(string id, LibraryObject obj, IReadOnlyList<Matrix4x4> mats, int j, Func<bool> alive)
-        => new SceneNode
+    static SceneNode PlacementInstance(string id, PlacementRenderer p, int batch, int j, Func<bool> alive)
+    {
+        var obj = p.EditorBatchObject(batch);
+        var mats = p.EditorBatchMatrices(batch);
+        return new SceneNode
         {
             Id = id,
             Name = Nm(obj.Name, "(Library-Objekt)") + " #" + j,
             Type = "Platzierte Instanz",
             Alive = alive,
+            GetActive = () => !p.EditorInstanceHidden(batch, j),
+            SetActive = v => p.EditorSetInstanceHidden(batch, j, !v),
             Inspect = b =>
             {
                 var m = mats[j];
@@ -340,6 +390,7 @@ public static class SceneAdapters
             },
             Gizmo = g => g.Box(obj.BoundsMin, obj.BoundsMax, mats[j]),
         };
+    }
 
     static void InspectLibrary(InspectorBuilder b, LibraryObject obj)
     {
@@ -412,6 +463,8 @@ public static class SceneAdapters
             Id = "g:world/water",
             Name = "Water (Meer)",
             Type = "Wasserfläche",
+            GetActive = () => !s.EditorHideWater,
+            SetActive = v => s.EditorHideWater = !v,
             Inspect = b =>
             {
                 var w = s.EditorWater;
@@ -419,7 +472,7 @@ public static class SceneAdapters
                 b.Info("Position (Spielraum)", w.PositionGame);
                 b.Info("Wasserhöhe", s.WaterLevel);
                 b.Info("Inselwasserhöhe", s.IslandWaterHeight);
-                b.Bool("Anzeigen", s.ShowWater);
+                b.Bool("Beim Laden erzeugt (ShowWater)", s.ShowWater);
                 b.Info("Mesh", w.Mesh == null ? "-" : Tris(w.Mesh));
                 if (w.Material != null) Materials(b, new[] { w.Material });
             },
@@ -457,7 +510,83 @@ public static class SceneAdapters
             },
             Edit = (k, val) => { if (k != "active") return false; v.Active = val == "1"; return true; },
             Gizmo = g => g.BoxRender(model.BodyMin, model.BodyMax, v.World),
+            Pick = (o, d) => PickCar(id, model, o, d, alive),
         };
+    }
+
+    /// <summary>Klick auf ein Auto: Box der Karosserie, dann das getroffene Teil (Knoten mit Mesh) – nächstes zuerst.</summary>
+    static PickHit? PickCar(string rootId, CarModel model, Vector3 o, Vector3 d, Func<bool> alive)
+    {
+        var v = model.Visual;
+        if (!v.Active || !RayObb(o, d, model.BodyMin, model.BodyMax, v.World, out float t0, out float v0)) return null;
+        PickHit? best = null;
+        CarNode? bestNode = null;
+        foreach (var n in v.SelfAndDescendants())
+        {
+            if (n == v || !n.HasMesh || !n.RendererEnabled || !n.ActiveInHierarchy) continue;
+            if (!RayObb(o, d, n.MeshMin, n.MeshMax, n.World, out float t, out float vol)) continue;
+            var h = new PickHit { T = t, Volume = vol };
+            if (PickHit.Better(h, best)) { best = h; bestNode = n; }
+        }
+        if (best == null || bestNode == null)
+            return new PickHit { Node = Car(rootId, "", "", model, alive), T = t0, Volume = v0 };
+        var path = new List<string> { rootId };
+        var chain = new List<string>();
+        for (var p = bestNode.Parent; p != null && p != v; p = p.Parent) chain.Insert(0, EditorIds.Of(p));
+        path.AddRange(chain);
+        best.Node = CarNode(bestNode, alive);
+        best.Path = path.ToArray();
+        return best;
+    }
+
+    /// <summary>Strahl (Render-Raum) gegen eine lokale Box mit Welt-Matrix. t im Render-Raum (Strahl normiert), Volumen in m³.</summary>
+    static bool RayObb(Vector3 o, Vector3 d, Vector3 min, Vector3 max, Matrix4x4 world, out float t, out float volume)
+    {
+        t = 0f; volume = 0f;
+        if (!(min.X <= max.X) || !Matrix4x4.Invert(world, out var inv)) return false;
+        if (!MapStreamer.EditorRayBox(Vector3.Transform(o, inv), Vector3.TransformNormal(d, inv), min, max, out t)) return false;
+        var e = (max - min) * new Vector3(new Vector3(world.M11, world.M12, world.M13).Length(), new Vector3(world.M21, world.M22, world.M23).Length(), new Vector3(world.M31, world.M32, world.M33).Length());
+        volume = MathF.Max(e.X, 0.01f) * MathF.Max(e.Y, 0.01f) * MathF.Max(e.Z, 0.01f);
+        return true;
+    }
+
+    /// <summary>Klick in die Welt (MapStreamer.EditorPick): Objekt, Platzierung oder Szenen-Objekt mit Pfad in der Hierarchie.</summary>
+    static PickHit? PickWorld(MapStreamer s, Vector3 originRender, Vector3 dir)
+    {
+        var hits = s.EditorPick(s.RenderToGame(originRender), dir);
+        if (hits.Count == 0) return null;
+        var h = hits[0];
+        SceneNode node;
+        string[] path;
+        if (h.Scene != null && h.Object != null)
+        {
+            var sc = h.Scene;
+            Func<bool> alive = () => s.Scenes.Contains(sc);
+            node = RenderObject(h.Object, alive);
+            path = new[] { "g:world", "g:world/scenes", EditorIds.Of(sc) };
+        }
+        else if (h.Cell != null)
+        {
+            var c = h.Cell;
+            string cellId = "g:" + c.Kind + "/" + c.Key;
+            string grp = c.Kind == "Area" ? "g:world/areas" : "g:world/sectors";
+            Func<bool> cellAlive = () => s.EditorIsLoaded(c);
+            if (h.Object != null && h.Node != null)
+            {
+                var n = h.Node;
+                node = RenderObject(h.Object, () => !n.Disposed && cellAlive());
+                path = new[] { "g:world", grp, cellId, EditorIds.Of(n) };
+            }
+            else if (c.Placements != null && h.Batch >= 0)
+            {
+                string plc = cellId + "/plc", batch = plc + "/" + h.Batch;
+                node = PlacementInstance(batch + "#" + h.Instance, c.Placements, h.Batch, h.Instance, cellAlive);
+                path = new[] { "g:world", grp, cellId, plc, batch };
+            }
+            else return null;
+        }
+        else return null;
+        return new PickHit { Node = node, Path = path, T = h.T, Volume = h.Volume };
     }
 
     public static SceneNode CarNode(CarNode n, Func<bool> alive)
@@ -518,19 +647,19 @@ public static class SceneAdapters
             case "pos":
             case "rot":
             case "scale":
-            {
-                if (!InspectorBuilder.TryParseV3(v, out var val)) return false;
-                if (n.RawLocal != null)
                 {
-                    // Datei-Matrix (Scherung) in Position/Rotation/Skalierung überführen, dann ändern
-                    if (TransformMath.Decompose(n.RawLocal.Value, out var p0, out var r0, out var s0)) { n.LocalPosition = p0; n.LocalRotation = r0; n.LocalScale = s0; }
-                    n.RawLocal = null;
+                    if (!InspectorBuilder.TryParseV3(v, out var val)) return false;
+                    if (n.RawLocal != null)
+                    {
+                        // Datei-Matrix (Scherung) in Position/Rotation/Skalierung überführen, dann ändern
+                        if (TransformMath.Decompose(n.RawLocal.Value, out var p0, out var r0, out var s0)) { n.LocalPosition = p0; n.LocalRotation = r0; n.LocalScale = s0; }
+                        n.RawLocal = null;
+                    }
+                    if (k == "pos") n.LocalPosition = val;
+                    else if (k == "rot") n.LocalRotation = TransformMath.FromEuler(val);
+                    else n.LocalScale = val;
+                    return true;
                 }
-                if (k == "pos") n.LocalPosition = val;
-                else if (k == "rot") n.LocalRotation = TransformMath.FromEuler(val);
-                else n.LocalScale = val;
-                return true;
-            }
         }
         return false;
     }
@@ -541,7 +670,189 @@ public static class SceneAdapters
         b.Info("Shader (Engine)", m.Desc.Kind.ToString());
         b.Info("Auf der GPU", m.Gpu != null ? "ja" : "nein");
         TextureRows(b, m.Desc);
-        DescSection(b, Nm(m.Name, "Car"), m.Desc);
+        string id = RegisterMaterial(m, m.Desc, () => { if (MaterialFactory.Renderer is { } r) m.Apply(r); });
+        DescSection(b, Nm(m.Name, "Car"), m.Desc, id);
+    }
+
+    // ------------------------------------------------------------------ Avatare (AvatarModel → Knochen)
+    /// <summary>
+    /// Alle Avatare (Fahrer, Beifahrer, Interieur-Figuren, Mitspieler im Raum, Vorschauen). describe = Name/Typ vom Spiel
+    /// (null-Ergebnis = Standard: Fahrer/Beifahrer über CarAvatar.All, sonst "Avatar").
+    /// </summary>
+    public static SceneNode Avatars(Func<AvatarModel, (string Name, string Type)?>? describe = null)
+        => Toggle(Group("g:avatars", "Avatars", () => AvatarModel.EditorAll().Count,
+            () => AvatarModel.EditorAll().Select((a, i) =>
+            {
+                var d = describe?.Invoke(a) ?? DescribeAvatar(a);
+                return Avatar(a, d.Name + "  #" + (i + 1).ToString(Inv), d.Type);
+            }),
+            b =>
+            {
+                var all = AvatarModel.EditorAll();
+                b.Section("Avatare");
+                b.Info("Anzahl", all.Count.ToString(Inv));
+                b.Info("Bereit", all.Count(a => a.Ready).ToString(Inv));
+                b.Info("Gerade gezeichnet", all.Count(a => Drawn(a)).ToString(Inv));
+            }, null, "Avatare (AvatarModel)"),
+            () => AvatarModel.EditorAll().Exists(a => !a.EditorHidden),
+            v => { foreach (var a in AvatarModel.EditorAll()) a.EditorHidden = !v; });
+
+    static (string Name, string Type) DescribeAvatar(AvatarModel a)
+    {
+        foreach (var ca in CarAvatar.All)
+            if (ReferenceEquals(ca.Avatar, a)) return (ca.Passenger ? "Beifahrer" : "Fahrer", "CarAvatar (im Auto)");
+        return ("Avatar", "AvatarModel");
+    }
+
+    static bool Drawn(AvatarModel a) => a.EditorDrawnTick > 0 && System.Environment.TickCount64 - a.EditorDrawnTick < 1000;
+
+    public static SceneNode Avatar(AvatarModel a, string name, string type)
+    {
+        string id = EditorIds.Of(a);
+        Func<bool> alive = () => !a.EditorDisposed;
+        return new SceneNode
+        {
+            Id = id,
+            Name = name,
+            Type = type,
+            Target = a,
+            Alive = alive,
+            GetActive = () => !a.EditorHidden,
+            SetActive = v => a.EditorHidden = !v,
+            CountChildren = () => a.Rig == null ? 0 : ChildBones(a.Rig.Skeleton, -1).Count,
+            Children = () => a.Rig == null ? Enumerable.Empty<SceneNode>() : ChildBones(a.Rig.Skeleton, -1).Select(i => Bone(id, a, i, alive)),
+            Inspect = b => InspectAvatar(b, a),
+            Gizmo = g => { if (AvatarBox(a, out var mn, out var mx)) g.BoxRender(mn, mx, a.EditorLastModel); },
+            Pick = (o, d) =>
+            {
+                if (a.EditorHidden || !Drawn(a) || !AvatarBox(a, out var mn, out var mx)) return null;
+                if (!RayObb(o, d, mn, mx, a.EditorLastModel, out float t, out float vol)) return null;
+                return new PickHit { Node = Avatar(a, name, type), T = t, Volume = vol };
+            },
+        };
+    }
+
+    /// <summary>Box um alle Knochen der aktuellen Pose (Avatar-Raum), etwas vergrößert.</summary>
+    static bool AvatarBox(AvatarModel a, out Vector3 min, out Vector3 max)
+    {
+        min = new Vector3(float.MaxValue); max = new Vector3(float.MinValue);
+        var rig = a.Rig;
+        if (rig == null || !a.Ready) return false;
+        int n = rig.Skeleton.Count;
+        for (int i = 0; i < n; i++)
+        {
+            var p = rig.BonePosition(i);
+            min = Vector3.Min(min, p); max = Vector3.Max(max, p);
+        }
+        if (!(min.X <= max.X)) return false;
+        min -= new Vector3(0.12f); max += new Vector3(0.12f);
+        return true;
+    }
+
+    static List<int> ChildBones(XsbSkeleton sk, int parent)
+    {
+        var l = new List<int>();
+        for (int i = 0; i < sk.Count; i++)
+        {
+            int p = i < sk.Parent.Length ? sk.Parent[i] : -1;
+            bool root = p < 0 || p >= sk.Count || p == i;
+            if (parent < 0 ? root : p == parent && !root) l.Add(i);
+        }
+        return l;
+    }
+
+    // Knochennamen sind in der .xsb nur als Key8 gespeichert: bekannte Namen (aus dem Engine-Code) zurückrechnen, sonst Key zeigen
+    static readonly string[] KnownBones =
+    {
+        "PELVIS", "HEAD", "NECK", "SPINE", "SPINE1", "SPINE2", "SPINE3", "ROOT", "ARM_L", "ARM_R", "FOREARM_L", "FOREARM_R",
+        "HAND_L", "HAND_R", "UPLEG_L", "UPLEG_R", "LEG_L", "LEG_R", "FOOT_L", "FOOT_R", "TOE_L", "TOE_R", "CLAVICLE_L", "CLAVICLE_R",
+        "SHOULDER_L", "SHOULDER_R", "IK_LEFT_FOOT", "IK_RIGHT_FOOT", "IK_LEFT_HAND", "IK_RIGHT_HAND",
+    };
+    static Dictionary<ulong, string>? _boneNames;
+
+    static string BoneName(XsbSkeleton sk, int i)
+    {
+        if (_boneNames == null)
+        {
+            _boneNames = new Dictionary<ulong, string>();
+            foreach (var n in KnownBones) _boneNames.TryAdd(MaterialDef.KeyFromName(n), n);
+        }
+        ulong k = i < sk.Key.Length ? sk.Key[i] : 0;
+        return _boneNames.TryGetValue(k, out var name) ? name : "Bone " + i.ToString(Inv) + " (0x" + k.ToString("x16", Inv) + ")";
+    }
+
+    static SceneNode Bone(string avatarId, AvatarModel a, int i, Func<bool> alive)
+    {
+        var sk = a.Rig!.Skeleton;
+        return new SceneNode
+        {
+            Id = avatarId + "/bone" + i.ToString(Inv),
+            Name = BoneName(sk, i),
+            Type = "Knochen " + i.ToString(Inv),
+            Alive = alive,
+            CountChildren = () => ChildBones(sk, i).Count,
+            Children = () => ChildBones(sk, i).Select(c => Bone(avatarId, a, c, alive)),
+            Inspect = b =>
+            {
+                var rig = a.Rig;
+                b.Section("Knochen");
+                b.Info("Index", i.ToString(Inv));
+                b.Info("Key", "0x" + (i < sk.Key.Length ? sk.Key[i] : 0).ToString("x16", Inv));
+                int p = i < sk.Parent.Length ? sk.Parent[i] : -1;
+                b.Info("Eltern", p >= 0 && p < sk.Count ? BoneName(sk, p) : "-");
+                if (rig == null) return;
+                b.Section("Pose (lokal, nur lesen – Animation setzt sie jedes Bild)");
+                b.Info("Position", rig.LocalPosition(i));
+                b.Info("Rotation", TransformMath.ToEuler(rig.LocalRotation(i)), "0.##");
+                b.Info("Scale", rig.LocalScale(i));
+                b.Info("Welt-Position (Spielraum)", ToGame(Vector3.Transform(rig.BonePosition(i), a.EditorLastModel)));
+                b.Section("Bind-Pose (.xsb)", true);
+                if (i < sk.Pos.Length) b.Info("Position", sk.Pos[i]);
+                if (i < sk.Rot.Length) b.Info("Rotation", TransformMath.ToEuler(sk.Rot[i]), "0.##");
+                if (i < sk.Scale.Length) b.Info("Scale", sk.Scale[i]);
+            },
+            Gizmo = g => { if (a.Rig is { } rig) g.AxesRender(rig.BoneMatrix(i) * a.EditorLastModel, 0.12f); },
+        };
+    }
+
+    static void InspectAvatar(InspectorBuilder b, AvatarModel a)
+    {
+        var c = a.Config;
+        b.Section("Avatar");
+        b.Info("Bereit", a.Ready ? "ja" : "lädt …");
+        b.Info("Geschlecht", c.Sex == 0 ? "Mann" : "Frau");
+        b.Info("Herkunft", c.Ethnic switch { 0 => "okzidental", 1 => "asiatisch", 2 => "afrikanisch", _ => c.Ethnic.ToString(Inv) });
+        b.Info("Kleidung (Ids)", c.Items.Count == 0 ? "-" : string.Join(", ", c.Items.Select(x => x.ToString(Inv))));
+        b.Info("Farben", c.Colors.Count == 0 ? "-" : string.Join(", ", c.Colors.Select(x => x.ToString(Inv))));
+        b.Info("Visible (vom Spiel)", a.Visible ? "ja" : "nein");
+        b.Info("Im Auto / Innenraum", (a.InCar ? "ja" : "nein") + " / " + (a.Indoor ? "ja" : "nein"));
+        b.Info("Zuletzt gezeichnet", a.EditorDrawnTick == 0 ? "nie" : (System.Environment.TickCount64 - a.EditorDrawnTick).ToString(Inv) + " ms her");
+        b.Info("Position (Spielraum)", ToGame(a.EditorLastModel.Translation));
+        b.Info("Knochen", a.Rig?.Skeleton.Count.ToString(Inv) ?? "-");
+
+        var parts = a.EditorParts();
+        b.Section("Teile (Körper, Kleidung)");
+        for (int i = 0; i < parts.Count; i++) b.Info("Teil " + i, parts[i]);
+
+        var pieces = a.EditorPieces();
+        b.Section("Skinned Mesh Renderer");
+        for (int i = 0; i < pieces.Count; i++)
+        {
+            var p = pieces[i];
+            b.Info("Stück " + i, Nm(p.Name, "?") + ", " + p.Vertices.ToString("N0", Inv) + " Vertices, " + p.Triangles.ToString("N0", Inv) + " Dreiecke" + (p.Head ? ", Kopf" : ""));
+        }
+        var seen = new HashSet<IGpuMaterial>(ReferenceEqualityComparer.Instance);
+        foreach (var p in pieces)
+        {
+            if (!seen.Add(p.Material)) continue;
+            string name = Nm(p.Name, p.Material.Kind.ToString());
+            b.Section("Material: " + name);
+            b.Info("Shader (Engine)", p.Material.Kind.ToString());
+            TextureRows(b, p.Desc);
+            var desc = p.Desc; var gm = p.Material;
+            string id = RegisterMaterial(gm, desc, () => MaterialFactory.Renderer?.UpdateMaterial(gm, desc));
+            DescSection(b, name, desc, id);
+        }
     }
 
     // ------------------------------------------------------------------ Hilfen: Bounds, Teile, Materialien
@@ -602,7 +913,9 @@ public static class SceneAdapters
                 b.Info("Straße / Boden / Sprite", (mi.Def.IsRoad ? "ja" : "nein") + " / " + (mi.Def.IsGround ? "ja" : "nein") + " / " + (mi.Sprite ? "ja" : "nein"));
                 if (mi.Def.IsPoolWater) b.Info("Pool-Wasser", "ja");
                 TextureRows(b, mi.Desc);
-                DescSection(b, name, mi.Desc);
+                var desc = mi.Desc; var gm = m;
+                string id = RegisterMaterial(m, desc, () => MaterialFactory.Renderer?.UpdateMaterial(gm, desc));
+                DescSection(b, name, desc, id);
             }
             else b.Info("Details", "keine Material-Infos (Gelände/Engine-Material)");
         }
@@ -620,15 +933,86 @@ public static class SceneAdapters
         }
     }
 
-    static void DescSection(InspectorBuilder b, string name, MaterialDesc d)
+    /// <summary>
+    /// Alle Felder des MaterialDesc. Zahlen, Schalter und Vektoren sind änderbar (Schlüssel "mat:&lt;id&gt;:&lt;Feld&gt;"): das Material
+    /// wird danach neu hochgeladen (IRenderer.UpdateMaterial / CarMaterial.Apply). Texturen und Shader-Art nur lesen.
+    /// </summary>
+    static void DescSection(InspectorBuilder b, string name, MaterialDesc d, string? matId)
     {
         b.Section("Shader-Parameter: " + name, true);
+        if (matId != null) b.Info("Hinweis", "Änderungen gelten für alle Objekte mit diesem Material; Name/Kind/Texturen nur lesen");
         foreach (var f in DescFields)
         {
             object? v;
             try { v = f.GetValue(d); } catch (Exception) { continue; }
-            b.Info(f.Name, Fmt(v));
+            string? key = matId != null && Editable(f.FieldType) ? "mat:" + matId + ":" + f.Name : null;
+            switch (v)
+            {
+                case bool bo: b.Bool(f.Name, bo, key); break;
+                case Vector3 v3: b.Vec3(f.Name, v3, key); break;
+                default:
+                    if (key != null) b.Text(f.Name, EditText(v), key);
+                    else b.Info(f.Name, Fmt(v));
+                    break;
+            }
         }
+    }
+
+    static bool Editable(Type t) => t == typeof(float) || t == typeof(int) || t == typeof(bool) || t == typeof(Vector2) || t == typeof(Vector3) || t == typeof(Vector4);
+
+    static string EditText(object? v) => v switch
+    {
+        float f => f.ToString("0.#####", Inv),
+        int i => i.ToString(Inv),
+        Vector2 v2 => v2.X.ToString("0.####", Inv) + "; " + v2.Y.ToString("0.####", Inv),
+        Vector4 v4 => v4.X.ToString("0.####", Inv) + "; " + v4.Y.ToString("0.####", Inv) + "; " + v4.Z.ToString("0.####", Inv) + "; " + v4.W.ToString("0.####", Inv),
+        _ => Fmt(v),
+    };
+
+    // Materialien des gerade gezeigten Inspectors (Spiel-Thread): Id -> (Desc, Neu-Hochladen)
+    static readonly Dictionary<string, (MaterialDesc Desc, Action Apply)> _materials = new();
+
+    /// <summary>Vor jedem Inspector-Aufbau (SceneEditor): nur Materialien der aktuellen Auswahl bleiben änderbar.</summary>
+    internal static void BeginInspect() => _materials.Clear();
+
+    static string RegisterMaterial(object owner, MaterialDesc desc, Action apply)
+    {
+        string id = EditorIds.Of(owner);
+        _materials[id] = (desc, apply);
+        return id;
+    }
+
+    /// <summary>Änderung eines Material-Parameters aus dem Inspector ("mat:&lt;id&gt;:&lt;Feld&gt;").</summary>
+    internal static bool EditMaterial(string key, string value, out string message)
+    {
+        message = "";
+        int last = key.LastIndexOf(':');
+        if (!key.StartsWith("mat:", StringComparison.Ordinal) || last <= 4) return false;
+        string id = key.Substring(4, last - 4), field = key.Substring(last + 1);
+        if (!_materials.TryGetValue(id, out var m)) { message = "Material nicht mehr ausgewählt"; return false; }
+        var f = Array.Find(DescFields, x => x.Name == field);
+        if (f == null || !Editable(f.FieldType)) { message = field + " ist nicht änderbar"; return false; }
+        object? val = Parse(f.FieldType, value);
+        if (val == null) { message = field + ": ungültiger Wert \"" + value + "\""; return false; }
+        f.SetValue(m.Desc, val);
+        try { m.Apply(); }
+        catch (Exception ex) { message = field + ": " + ex.Message; return false; }
+        message = field + " = " + value;
+        return true;
+    }
+
+    static object? Parse(Type t, string s)
+    {
+        s = (s ?? "").Trim();
+        var p = s.Split(new[] { ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Replace(',', '.')).ToArray();
+        float F(int i) => float.TryParse(p[i], NumberStyles.Float, Inv, out float v) && float.IsFinite(v) ? v : float.NaN;
+        if (t == typeof(bool)) return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
+        if (t == typeof(int)) return int.TryParse(s, NumberStyles.Integer, Inv, out int i) ? i : null;
+        if (t == typeof(float)) { if (p.Length != 1) return null; float v = F(0); return float.IsNaN(v) ? null : v; }
+        if (t == typeof(Vector2)) { if (p.Length != 2) return null; var v = new Vector2(F(0), F(1)); return float.IsNaN(v.X + v.Y) ? null : v; }
+        if (t == typeof(Vector3)) { if (p.Length != 3) return null; var v = new Vector3(F(0), F(1), F(2)); return float.IsNaN(v.X + v.Y + v.Z) ? null : v; }
+        if (t == typeof(Vector4)) { if (p.Length != 4) return null; var v = new Vector4(F(0), F(1), F(2), F(3)); return float.IsNaN(v.X + v.Y + v.Z + v.W) ? null : v; }
+        return null;
     }
 
     static string Fmt(object? v) => v switch

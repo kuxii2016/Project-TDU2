@@ -162,9 +162,9 @@ public static class GameFiles
         try
         {
             using var s = typeof(GameFiles).Assembly.GetManifestResourceStream(NamesResource);
-            if (s == null) 
-            { 
-                Log.Warn("GameFiles: bigfile-names.tsv is missing (no directory names)"); 
+            if (s == null)
+            {
+                Log.Warn("GameFiles: bigfile-names.tsv is missing (no directory names)");
                 return;
             }
             using var r = new StreamReader(s, Encoding.UTF8);
@@ -180,7 +180,7 @@ public static class GameFiles
                 if (Entries.ContainsKey(hash)) Names[hash] = path;
             }
         }
-        catch (Exception ex) 
+        catch (Exception ex)
         {
             Log.Error("GameFiles: Names are unreadable: " + ex.Message);
         }

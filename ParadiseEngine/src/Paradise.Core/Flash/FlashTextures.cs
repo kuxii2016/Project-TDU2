@@ -59,12 +59,12 @@ public static class FlashTextures
                     var e = bank.Find("brands_map.2db");
                     if (e != null) _brandAtlas = PixelImage.FromTextureDef(TextureDef.Parse(bank.Read(e), "brands_map"));
                 }
-                if (_brandAtlas == null) 
+                if (_brandAtlas == null)
                     Log.Warn("Brand logos (logotexturepage.bnk/brands_map) cannot be loaded");
             }
-            catch (Exception ex) 
-            { 
-                Log.Error("Brand logos cannot be loaded:" + ex.Message); 
+            catch (Exception ex)
+            {
+                Log.Error("Brand logos cannot be loaded:" + ex.Message);
             }
         }
         var a = _brandAtlas;

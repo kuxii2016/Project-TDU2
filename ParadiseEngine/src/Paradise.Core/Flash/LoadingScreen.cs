@@ -58,13 +58,13 @@ namespace Paradise.Core.Flash
             s._minUntil = MathF.Max(s._minUntil, now + minSeconds);
             if (save && TDU2Session.LoggedIn && !TDU2Session.Saving)
             {
-                try 
-                { 
-                    TDU2Session.SaveAsync(); 
-                } 
-                catch (Exception ex) 
-                { 
-                    Log.Error("Loading screen: Save:" + ex.Message); 
+                try
+                {
+                    TDU2Session.SaveAsync();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Loading screen: Save:" + ex.Message);
                 }
             }
         }
@@ -107,14 +107,14 @@ namespace Paradise.Core.Flash
                     var rgba = WicImage.Decode(bytes, out int w, out int h);
                     tcs.SetResult(rgba != null ? (rgba, w, h, pick.Name) : null);
                 }
-                catch (Exception ex) 
-                { 
-                    Log.Error("Loading screen: " + ex.Message); 
-                    tcs.TrySetResult(null); 
+                catch (Exception ex)
+                {
+                    Log.Error("Loading screen: " + ex.Message);
+                    tcs.TrySetResult(null);
                 }
             })
-            { 
-                IsBackground = true, 
+            {
+                IsBackground = true,
                 Name = "Loadingscreen"
             };
             th.SetApartmentState(ApartmentState.MTA);
@@ -134,9 +134,9 @@ namespace Paradise.Core.Flash
             {
                 _tex = r.CreateTexture(new TextureUpload { Width = img.w, Height = img.h, Format = GpuTextureFormat.Rgba8, Blocks = img.rgba, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "Loadingscreen " + img.name });
             }
-            catch (Exception ex) 
-            { 
-                Log.Error("Loading screen: Texture:" + ex.Message); 
+            catch (Exception ex)
+            {
+                Log.Error("Loading screen: Texture:" + ex.Message);
             }
         }
 

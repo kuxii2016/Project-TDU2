@@ -49,12 +49,12 @@ public static class FrontendMusic
             if (!GameFiles.Exists(path))
             {
                 var dir = Path.Combine(bnkDir, "sound", "musics");
-                if (GameFiles.DirectoryExists(dir)) 
-                    foreach (var f in GameFiles.GetFiles(dir, "*.wav")) 
-                        if (string.Equals(Path.GetFileNameWithoutExtension(f), e.file, StringComparison.OrdinalIgnoreCase)) 
-                        { 
-                            path = f; 
-                            break; 
+                if (GameFiles.DirectoryExists(dir))
+                    foreach (var f in GameFiles.GetFiles(dir, "*.wav"))
+                        if (string.Equals(Path.GetFileNameWithoutExtension(f), e.file, StringComparison.OrdinalIgnoreCase))
+                        {
+                            path = f;
+                            break;
                         }
             }
             if (!GameFiles.Exists(path))

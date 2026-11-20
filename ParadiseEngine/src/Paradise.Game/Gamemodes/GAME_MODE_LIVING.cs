@@ -690,8 +690,14 @@ public class GAME_MODE_LIVING : InteriorUtils
         // Sucherbild (/mylf/photo_taker/lure)
         _lifeShowGpu ??= _v.Renderer.CreateTexture(new TextureUpload
         {
-            Width = LifeShowSize, Height = LifeShowSize, Format = GpuTextureFormat.Rgba8, Mips = 1,
-            Blocks = new byte[LifeShowSize * LifeShowSize * 4], WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "MyTDULife Sucher",
+            Width = LifeShowSize,
+            Height = LifeShowSize,
+            Format = GpuTextureFormat.Rgba8,
+            Mips = 1,
+            Blocks = new byte[LifeShowSize * LifeShowSize * 4],
+            WrapU = TextureWrap.Clamp,
+            WrapV = TextureWrap.Clamp,
+            Name = "MyTDULife Sucher",
         });
         _lifeShowTex ??= Texture.Wrap(_lifeShowGpu, LifeShowSize, LifeShowSize);
         _ui.SetClipTexture("/mylf/photo_taker/lure", _lifeShowTex);

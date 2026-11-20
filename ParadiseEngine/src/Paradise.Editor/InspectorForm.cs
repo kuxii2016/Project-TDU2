@@ -31,11 +31,12 @@ internal sealed class InspectorForm : Form
         MinimumSize = new Size(360, 300);
         Font = new Font("Segoe UI", 9f);
 
-        var head = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 2, Padding = new Padding(6, 6, 6, 4) };
+        var head = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 2, Padding = new Padding(6, 6, 6, 4) };
         head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _active = new CheckBox { AutoSize = true, Margin = new Padding(0, 4, 6, 0) };
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _active = new CheckBox { Text = "Aktiv", AutoSize = true, Margin = new Padding(0, 4, 10, 0), Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
         _active.CheckedChanged += (_, _) => { if (!_applying && _data != null) SceneEditor.Send("active", _data.Id, _active.Checked ? "1" : "0"); };
         new ToolTip().SetToolTip(_active, "Aktiv (Unity: activeSelf)");
         _name = new Label { AutoSize = true, Font = new Font("Segoe UI", 11f, FontStyle.Bold), Margin = new Padding(0, 2, 0, 0) };
@@ -43,11 +44,15 @@ internal sealed class InspectorForm : Form
         var copy = new Button { Text = "Kopieren", AutoSize = true };
         copy.Click += (_, _) => { if (_data != null) try { Clipboard.SetText(SceneEditor.ToText(_data)); } catch (Exception) { } };
         new ToolTip().SetToolTip(copy, "Alle Werte als Text in die Zwischenablage");
+        var focus = new Button { Text = "Fokus", AutoSize = true };
+        focus.Click += (_, _) => { if (_data != null) SceneEditor.Send("focus", _data.Id); };
+        new ToolTip().SetToolTip(focus, "Kamera auf dieses Objekt fahren (Free-fly)");
         head.Controls.Add(_active, 0, 0);
         head.Controls.Add(_name, 1, 0);
-        head.Controls.Add(copy, 2, 0);
+        head.Controls.Add(focus, 2, 0);
+        head.Controls.Add(copy, 3, 0);
         head.Controls.Add(_type, 1, 1);
-        head.SetColumnSpan(_type, 2);
+        head.SetColumnSpan(_type, 3);
 
         _body = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(4, 0, 4, 8) };
         _body.Resize += (_, _) => FitWidths();
@@ -96,8 +101,11 @@ internal sealed class InspectorForm : Form
             _data = d;
             _name.Text = d.Name;
             _type.Text = d.Type;
-            _active.Visible = d.Active != null;
-            if (d.Active != null && _active.Checked != d.Active.Value) _active.Checked = d.Active.Value;
+            // Wie Unity immer sichtbar; ohne Schalter (Gruppe, LOD, Knochen …) ausgegraut
+            _active.Visible = true;
+            _active.Enabled = d.Active != null;
+            bool on = d.Active ?? true;
+            if (_active.Checked != on) _active.Checked = on;
 
             if (d.Signature == _sig)
             {
@@ -157,8 +165,14 @@ internal sealed class InspectorForm : Form
             ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             _header = new Label
             {
-                AutoSize = false, Height = 22, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold), BackColor = SystemColors.ControlLight, Margin = new Padding(0),
+                AutoSize = false,
+                Height = 22,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Cursor = Cursors.Hand,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                BackColor = SystemColors.ControlLight,
+                Margin = new Padding(0),
                 Padding = new Padding(2, 0, 0, 0),
             };
             _header.Click += (_, _) => Toggle();
@@ -184,8 +198,12 @@ internal sealed class InspectorForm : Form
         {
             _rows = new TableLayoutPanel
             {
-                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, Dock = DockStyle.Fill,
-                Margin = new Padding(0, 2, 0, 2), Padding = new Padding(6, 0, 0, 0),
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 2,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 0, 2),
+                Padding = new Padding(6, 0, 0, 0),
             };
             _rows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170f));
             _rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -232,58 +250,58 @@ internal sealed class InspectorForm : Form
             switch (row.Kind)
             {
                 case RowKind.Bool:
-                {
-                    var cb = new CheckBox { Checked = row.Value == "1", Enabled = editable, AutoSize = true, Margin = new Padding(0, 3, 0, 1) };
-                    cb.CheckedChanged += (_, _) =>
                     {
-                        if (_form.Applying || _row.Key == null) return;
-                        SceneEditor.Send("set", _owner, _row.Key, cb.Checked ? "1" : "0");
-                    };
-                    _check = cb;
-                    ValueControl = cb;
-                    break;
-                }
+                        var cb = new CheckBox { Checked = row.Value == "1", Enabled = editable, AutoSize = true, Margin = new Padding(0, 3, 0, 1) };
+                        cb.CheckedChanged += (_, _) =>
+                        {
+                            if (_form.Applying || _row.Key == null) return;
+                            SceneEditor.Send("set", _owner, _row.Key, cb.Checked ? "1" : "0");
+                        };
+                        _check = cb;
+                        ValueControl = cb;
+                        break;
+                    }
 
                 case RowKind.Vec3:
-                {
-                    var p = new TableLayoutPanel { ColumnCount = 6, RowCount = 1, Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0) };
-                    for (int i = 0; i < 3; i++)
                     {
-                        p.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-                        p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
+                        var p = new TableLayoutPanel { ColumnCount = 6, RowCount = 1, Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0) };
+                        for (int i = 0; i < 3; i++)
+                        {
+                            p.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                            p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
+                        }
+                        _vec = new TextBox[3];
+                        var parts = Split(row.Value);
+                        string[] axes = { "X", "Y", "Z" };
+                        Color[] colors = { Color.FromArgb(200, 60, 60), Color.FromArgb(60, 160, 60), Color.FromArgb(60, 90, 210) };
+                        for (int i = 0; i < 3; i++)
+                        {
+                            p.Controls.Add(new Label { Text = axes[i], AutoSize = true, ForeColor = colors[i], Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Margin = new Padding(i == 0 ? 0 : 4, 4, 1, 0) }, i * 2, 0);
+                            var tb = new TextBox { Text = parts[i], ReadOnly = !editable, Dock = DockStyle.Fill, Margin = new Padding(0, 1, 0, 1) };
+                            if (!editable) { tb.BorderStyle = BorderStyle.None; tb.BackColor = SystemColors.Control; }
+                            else Commit(tb, CommitVec);
+                            _vec[i] = tb;
+                            p.Controls.Add(tb, i * 2 + 1, 0);
+                        }
+                        ValueControl = p;
+                        _sent = row.Value;
+                        break;
                     }
-                    _vec = new TextBox[3];
-                    var parts = Split(row.Value);
-                    string[] axes = { "X", "Y", "Z" };
-                    Color[] colors = { Color.FromArgb(200, 60, 60), Color.FromArgb(60, 160, 60), Color.FromArgb(60, 90, 210) };
-                    for (int i = 0; i < 3; i++)
-                    {
-                        p.Controls.Add(new Label { Text = axes[i], AutoSize = true, ForeColor = colors[i], Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Margin = new Padding(i == 0 ? 0 : 4, 4, 1, 0) }, i * 2, 0);
-                        var tb = new TextBox { Text = parts[i], ReadOnly = !editable, Dock = DockStyle.Fill, Margin = new Padding(0, 1, 0, 1) };
-                        if (!editable) { tb.BorderStyle = BorderStyle.None; tb.BackColor = SystemColors.Control; }
-                        else Commit(tb, CommitVec);
-                        _vec[i] = tb;
-                        p.Controls.Add(tb, i * 2 + 1, 0);
-                    }
-                    ValueControl = p;
-                    _sent = row.Value;
-                    break;
-                }
 
                 case RowKind.Text:
-                {
-                    var tb = new TextBox { Text = row.Value, ReadOnly = !editable, Dock = DockStyle.Fill, Margin = new Padding(0, 1, 0, 1) };
-                    if (editable) Commit(tb, () =>
                     {
-                        if (_row.Key == null || tb.Text == _sent) return;
-                        _sent = tb.Text;
-                        SceneEditor.Send("set", _owner, _row.Key, tb.Text);
-                    });
-                    _sent = row.Value;
-                    _text = tb;
-                    ValueControl = tb;
-                    break;
-                }
+                        var tb = new TextBox { Text = row.Value, ReadOnly = !editable, Dock = DockStyle.Fill, Margin = new Padding(0, 1, 0, 1) };
+                        if (editable) Commit(tb, () =>
+                        {
+                            if (_row.Key == null || tb.Text == _sent) return;
+                            _sent = tb.Text;
+                            SceneEditor.Send("set", _owner, _row.Key, tb.Text);
+                        });
+                        _sent = row.Value;
+                        _text = tb;
+                        ValueControl = tb;
+                        break;
+                    }
 
                 default:
                     _text = new TextBox { Text = row.Value, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = SystemColors.Control, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 1) };

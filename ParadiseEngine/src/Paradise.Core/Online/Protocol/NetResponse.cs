@@ -62,6 +62,10 @@ namespace Paradise.Core.Online
         public List<FriendEntry> friendRequests = new List<FriendEntry>();
         public List<string> friendPending = new List<string>();
         public string friendResult = "";
+        /// <summary>challlist: aktive Challenges (CRC/Community); challget: Karte der Challenge, challData = .ig2 (Base64); challup/challget: Id.</summary>
+        public List<ChallengeEntry> challenges = new List<ChallengeEntry>();
+        public string challData = "";
+        public int challId;
 
         public static NetResponse Error(string e) => new NetResponse { ok = false, error = e };
     }

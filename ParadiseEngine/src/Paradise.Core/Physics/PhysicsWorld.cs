@@ -260,8 +260,10 @@ public sealed class PhysicsWorld : IDisposable
         StaticCount++; TriangleCount += sh.tris;
         var sc = new StaticCollider(handle, sh.shape, sh.tris, name)
         {
-            SharedShape = true, Surface = surface,
-            BoundsCenter = (bmin + bmax) * 0.5f, BoundsHalf = (bmax - bmin) * 0.5f
+            SharedShape = true,
+            Surface = surface,
+            BoundsCenter = (bmin + bmax) * 0.5f,
+            BoundsHalf = (bmax - bmin) * 0.5f
         };
         _statics[handle.Value] = sc;
         return sc;

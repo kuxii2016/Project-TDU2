@@ -1,5 +1,4 @@
 // Portiert aus dem Unity-Projekt (Runtime/Racing/TDU2RaceDebugView.cs).
-using Paradise.Core.Diagnostics;
 using Paradise.Core.Racing;
 using Paradise.Core.Render;
 using Paradise.Game.Gamemodes;

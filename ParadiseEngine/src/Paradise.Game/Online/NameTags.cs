@@ -3,8 +3,8 @@ using Paradise.Core.Online;
 using Paradise.Game.Config;
 using Paradise.Game.Gamemodes;
 using FVec = Paradise.Core.Flash.Vector2;
-using Vector3 = System.Numerics.Vector3;
 using NVec2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 
 namespace Paradise.Game.Online;
 
@@ -96,7 +96,12 @@ public static class NameTags
                 float f = Remap(dist, 300f, 50f, 0.7f, 1f);
                 _cands.Add(new Cand
                 {
-                    Id = r.Id, Nick = nick, Dist = dist, Pos = local.Value, Factor = f, Alpha = f,
+                    Id = r.Id,
+                    Nick = nick,
+                    Dist = dist,
+                    Pos = local.Value,
+                    Factor = f,
+                    Alpha = f,
                     Label = Friends.IsFriend(nick) ? "friend" : "player",
                     Level = p?.Level ?? -1,
                 });

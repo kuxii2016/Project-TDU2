@@ -1,4 +1,3 @@
-using Paradise.Core.Racing;
 using Paradise.Game.Config;
 using Paradise.Game.Gamemodes;
 using Paradise.Game.Racing;

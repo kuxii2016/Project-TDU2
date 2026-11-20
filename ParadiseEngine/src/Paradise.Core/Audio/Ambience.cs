@@ -1,7 +1,6 @@
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
-using System.Text.RegularExpressions;
 
 namespace Paradise.Core.Audio;
 
@@ -55,10 +54,10 @@ public sealed class Ambience : IDisposable
         if (string.IsNullOrEmpty(bnkDir)) return null;
         var dir = Path.Combine(bnkDir, "islands", island, "sound", "ambience");
         var file = Path.Combine(dir, "ambiences.xmb");
-        if (!GameFiles.Exists(file)) 
-        { 
-            Log.Warn($"Ambience: {file} is missing – no ambient sounds."); 
-            return null; 
+        if (!GameFiles.Exists(file))
+        {
+            Log.Warn($"Ambience: {file} is missing – no ambient sounds.");
+            return null;
         }
         try
         {
@@ -99,10 +98,10 @@ public sealed class Ambience : IDisposable
                 }
             return a;
         }
-        catch (Exception ex) 
-        { 
-            Log.Error($"Ambience: {file}: {ex.Message}"); 
-            return null; 
+        catch (Exception ex)
+        {
+            Log.Error($"Ambience: {file}: {ex.Message}");
+            return null;
         }
     }
 
@@ -112,7 +111,7 @@ public sealed class Ambience : IDisposable
         if (_clips.TryGetValue(name, out var c)) return c;
         var path = Path.Combine(_dir, name.ToLowerInvariant() + ".wav");
         c = GameFiles.Exists(path) ? AudioClip.FromWav(name, GameFiles.ReadAllBytes(path)) : null;
-        if (c == null) 
+        if (c == null)
             Log.Warn($"Ambience: {path} is missing or is not a readable WAV file.");
         _clips[name] = c;
         return c;

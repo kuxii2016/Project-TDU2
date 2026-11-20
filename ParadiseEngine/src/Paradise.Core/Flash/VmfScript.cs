@@ -1085,7 +1085,8 @@ namespace Paradise.Core.Flash
                 case "Object": return new AsObject();
                 case "stopDrag": EndDrag(); return Undefined;
                 case "getTextLength": return (double)MeasureVarText(args.Length > 0 ? ToStr(args[0]) : "");   // nativ im Spiel
-                case "setInputFocus": case "SetInputFocus":   // nativ: Texteingabe (VmfHelpers); gmeditor.vmf /vk ruft beide Schreibweisen
+                case "setInputFocus":
+                case "SetInputFocus":   // nativ: Texteingabe (VmfHelpers); gmeditor.vmf /vk ruft beide Schreibweisen
                     SetInputFocus(args.Length > 0 ? ToStr(args[0]) : null); return Undefined;
                 case "setInputMaxLength":   // nativ: setInputMaxLength(Variable, Länge) – gmeditor.vmf /vk (VK_MaxLength), initText
                     if (args.Length > 1 && ToNum(args[1]) > 0) InputMaxLength = (int)ToNum(args[1]);
@@ -1559,9 +1560,9 @@ namespace Paradise.Core.Flash
             var a = new object[args?.Length ?? 0];
             for (int i = 0; i < a.Length; i++) a[i] = args[i] is int iv ? (object)(double)iv : args[i] is float fv ? (object)(double)fv : args[i];
             try { InvokeTop(fn, inst, a); }
-            catch (Exception ex) 
-            { 
-                Log.Error("Flash-Call " + function + ": " + ex.Message); 
+            catch (Exception ex)
+            {
+                Log.Error("Flash-Call " + function + ": " + ex.Message);
             }
             return true;
         }

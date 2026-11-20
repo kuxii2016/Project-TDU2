@@ -1,4 +1,3 @@
-using Paradise.Core.Avatars;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Files;
@@ -10,6 +9,8 @@ using System.Numerics;
 using AudioEngine = Paradise.Core.Audio.AudioEngine;
 using CarDatabase = Paradise.Core.Vehicles.CarDatabase;
 using CarPhysics = Paradise.Core.Vehicles.CarPhysics;
+using ChallengeModes = Paradise.Game.Racing.ChallengeModes;
+using CultureInfo = System.Globalization.CultureInfo;
 using FlashHost = Paradise.Core.Flash.FlashHost;
 using FlashInput = Paradise.Core.Flash.FlashInput;
 using FlashLocalization = Paradise.Core.Flash.FlashLocalization;
@@ -20,15 +21,13 @@ using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
 using FVec = Paradise.Core.Flash.Vector2;
 using Gps = Paradise.Core.Vehicles.Gps;
 using Minimap = Paradise.Core.Vehicles.Minimap;
+using RaceMode = Paradise.Core.Racing.RaceMode;
+using RaceRoadPath = Paradise.Game.Racing.RaceRoadPath;
+using RaceTexts = Paradise.Core.Racing.RaceTexts;
 using Spot = Paradise.Core.Formats.Spot;
 using SpotsFile = Paradise.Core.Formats.SpotsFile;
 using TDU2Bookmarks = Paradise.Core.Vehicles.TDU2Bookmarks;
 using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
-using CultureInfo = System.Globalization.CultureInfo;
-using RaceMode = Paradise.Core.Racing.RaceMode;
-using RaceTexts = Paradise.Core.Racing.RaceTexts;
-using ChallengeModes = Paradise.Game.Racing.ChallengeModes;
-using RaceRoadPath = Paradise.Game.Racing.RaceRoadPath;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -740,13 +739,13 @@ public class GAME_MODE_MAP : GameModeHandler
             Log.Info("Karte: Kleidung " + s.Code + " -> " + clothes.Owned + "/" + clothes.Available + " (Besitz/Angebot)");
         }
 
-        if (!string.IsNullOrEmpty(dbName)) 
+        if (!string.IsNullOrEmpty(dbName))
             name = dbName;
-        else if (label == "carDealer" || label == "bikeDealer") 
-        { 
-            var b = DealerBrands(s.Code); 
-            if (!string.IsNullOrEmpty(b)) 
-                name = b; 
+        else if (label == "carDealer" || label == "bikeDealer")
+        {
+            var b = DealerBrands(s.Code);
+            if (!string.IsNullOrEmpty(b))
+                name = b;
         }
         if (ms.cup >= 0)
         {
@@ -1331,7 +1330,7 @@ public class GAME_MODE_MAP : GameModeHandler
     /// <param name="args"></param>
     void OnCommand(string cmd, string args)
     {
-        if (!_open)  return;
+        if (!_open) return;
         string c = (cmd ?? "").Trim().ToLowerInvariant();
         if (c.StartsWith("sndp:")) return;
         if (c.StartsWith("bmap:fltr:icf"))

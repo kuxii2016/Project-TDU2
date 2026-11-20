@@ -37,6 +37,11 @@ public static class SceneEditor
     public static Func<Vector3, Vector3>? RenderToGame;
     /// <summary>Kamera im Spielraum (LOD-Anzeige).</summary>
     public static Func<Vector3>? CameraGame;
+    /// <summary>Kamera auf die Auswahl fahren (Mitte im Spielraum, Radius in m) – vom Spiel angemeldet (Free-fly). false = nicht möglich.</summary>
+    public static Func<Vector3, float, bool>? FocusCamera;
+
+    /// <summary>Strg + Linksklick im Spielfenster wählt das getroffene Objekt (Schalter in der Hierarchy).</summary>
+    public static bool ClickSelect => _clickSelect && IsOpen;
 
     /// <summary>Wurzel der Hierarchie anmelden/ersetzen (Reihenfolge = Reihenfolge der ersten Anmeldung). null-Ergebnis = gerade nicht vorhanden.</summary>
     public static void SetRoot(string key, Func<SceneNode?> make)
@@ -56,7 +61,7 @@ public static class SceneEditor
     static SceneNode? _sel;
     static readonly List<SceneNode> _selChildren = new();
     static string _filter = "";
-    static bool _live = true, _gizmo = true, _gizmoChildren;
+    static bool _live = true, _gizmo = true, _gizmoChildren, _clickSelect = true;
     static string _status = "";
     static List<TreeItem>? _search;
     static int _searchVisited;
@@ -179,15 +184,15 @@ public static class SceneEditor
         switch (cmd)
         {
             case "select":
-            {
-                var node = Find(S(a, 0));
-                _sel = node; _selChildren.Clear();
-                _status = node == null ? "" : node.Type;
-                // Treffer aus der Suche: Pfad in der Hierarchie aufklappen (Unity: Ping im Hierarchy-Fenster)
-                if (node != null && _searchAncestors.TryGetValue(node.Id, out var anc))
-                    foreach (var id in anc) _expanded.Add(id);
-                break;
-            }
+                {
+                    var node = Find(S(a, 0));
+                    _sel = node; _selChildren.Clear();
+                    _status = node == null ? "" : node.Type;
+                    // Treffer aus der Suche: Pfad in der Hierarchie aufklappen (Unity: Ping im Hierarchy-Fenster)
+                    if (node != null && _searchAncestors.TryGetValue(node.Id, out var anc))
+                        foreach (var id in anc) _expanded.Add(id);
+                    break;
+                }
             case "deselect": _sel = null; _selChildren.Clear(); break;
             case "expand":
                 if (B(a, 1)) _expanded.Add(S(a, 0)); else _expanded.Remove(S(a, 0));
@@ -201,25 +206,104 @@ public static class SceneEditor
             case "live": _live = B(a, 0); break;
             case "gizmo": _gizmo = B(a, 0); break;
             case "gizmo_children": _gizmoChildren = B(a, 0); _selChildren.Clear(); break;
+            case "click_select": _clickSelect = B(a, 0); break;
+            case "focus":
+                {
+                    var node = Find(S(a, 0)) ?? _sel;
+                    if (node == null) { _status = "Nichts ausgewählt"; break; }
+                    Focus(node);
+                    break;
+                }
             case "refresh": _nextSearch = 0; break;
             case "active":
-            {
-                var node = Find(S(a, 0));
-                if (node?.SetActive == null) { _status = "Objekt hat keinen Aktiv-Schalter"; break; }
-                node.SetActive(B(a, 1));
-                _status = node.Name + (B(a, 1) ? " aktiviert" : " deaktiviert");
-                break;
-            }
+                {
+                    var node = Find(S(a, 0));
+                    if (node?.SetActive == null) { _status = "Objekt hat keinen Aktiv-Schalter"; break; }
+                    node.SetActive(B(a, 1));
+                    _status = node.Name + (B(a, 1) ? " aktiviert" : " deaktiviert");
+                    break;
+                }
             case "set":
-            {
-                var node = Find(S(a, 0));
-                if (node == null) { _status = "Objekt nicht mehr vorhanden"; break; }
-                bool ok = node.Edit != null && node.Edit(S(a, 1), S(a, 2));
-                _status = ok ? node.Name + ": " + S(a, 1) + " geändert" : node.Name + ": " + S(a, 1) + " nicht änderbar / ungültiger Wert";
-                break;
-            }
+                {
+                    string key = S(a, 1);
+                    if (key.StartsWith("mat:", StringComparison.Ordinal))
+                    {
+                        bool mok = SceneAdapters.EditMaterial(key, S(a, 2), out string msg);
+                        _status = (mok ? "Material: " : "Material nicht geändert: ") + msg;
+                        break;
+                    }
+                    var node = Find(S(a, 0));
+                    if (node == null) { _status = "Objekt nicht mehr vorhanden"; break; }
+                    bool ok = node.Edit != null && node.Edit(key, S(a, 2));
+                    _status = ok ? node.Name + ": " + key + " geändert" : node.Name + ": " + key + " nicht änderbar / ungültiger Wert";
+                    break;
+                }
             default: _status = "Unbekanntes Kommando: " + cmd; break;
         }
+    }
+
+    // ------------------------------------------------------------------ Kamera auf Auswahl (Unity: F = Frame Selected)
+    static void Focus(SceneNode node)
+    {
+        if (node.Gizmo == null) { _status = node.Name + ": keine Lage bekannt"; return; }
+        var g = new SceneGizmo(RenderToGame ?? (v => v)) { Record = true };
+        try { node.Gizmo(g); } catch (Exception ex) { _status = "Fokus: " + ex.Message; return; }
+        if (!g.HasRecord) { _status = node.Name + ": keine Lage bekannt"; return; }
+        var c = (g.RecMin + g.RecMax) * 0.5f;
+        float r = MathF.Max(0.5f, (g.RecMax - g.RecMin).Length() * 0.5f);
+        if (FocusCamera == null || !FocusCamera(c, r)) { _status = "Kamera kann gerade nicht bewegt werden"; return; }
+        _status = "Kamera auf " + node.Name + " (Free-fly)";
+    }
+
+    // ------------------------------------------------------------------ Klick-Auswahl (Spiel-Thread)
+    /// <summary>
+    /// Strahl aus dem Spiel (Render-Raum, z.B. TerrainModule.ScreenRay unter der Maus): nächstes Objekt aller Wurzeln auswählen,
+    /// Pfad in der Hierarchy aufklappen. Wurzeln ohne eigenen Pick werden über ihre direkten Kinder abgefragt (Gruppen).
+    /// </summary>
+    public static bool PickRay(Vector3 originRender, Vector3 dir)
+    {
+        if (!IsOpen || dir.LengthSquared() < 1e-12f) return false;
+        dir = Vector3.Normalize(dir);
+        PickHit? best = null;
+        foreach (var (key, make) in Roots())
+        {
+            SceneNode? root;
+            try { root = make(); } catch (Exception) { continue; }
+            if (root == null) continue;
+            try
+            {
+                if (root.Pick != null)
+                {
+                    var h = root.Pick(originRender, dir);
+                    if (h != null && PickHit.Better(h, best)) { h.Path = Prefix(root.Id, h.Path); best = h; }
+                }
+                else if (root.Children != null && (root.GetActive?.Invoke() ?? true))
+                {
+                    foreach (var c in root.Children())
+                    {
+                        if (c.Pick == null) continue;
+                        var h = c.Pick(originRender, dir);
+                        if (h != null && PickHit.Better(h, best)) { h.Path = Prefix(root.Id, Prefix(c.Id, h.Path)); best = h; }
+                    }
+                }
+            }
+            catch (Exception ex) { _status = "Auswahl " + key + ": " + ex.Message; }
+        }
+        if (best == null) { _status = "Klick: nichts getroffen"; _force = true; return false; }
+        _sel = best.Node; _selChildren.Clear();
+        foreach (var id in best.Path) _expanded.Add(id);
+        _status = "Im Bild gewählt: " + best.Node.Name + (best.T > 0f ? " (" + best.T.ToString("0.0", Inv) + " m)" : "");
+        _force = true;
+        return true;
+    }
+
+    static string[] Prefix(string id, string[] path)
+    {
+        if (path.Length > 0 && path[0] == id) return path;
+        var r = new string[path.Length + 1];
+        r[0] = id;
+        Array.Copy(path, 0, r, 1, path.Length);
+        return r;
     }
 
     // ------------------------------------------------------------------ 3D-Markierung (DebugLines)
@@ -246,7 +330,7 @@ public static class SceneEditor
     static SceneSnapshot Build(double now)
     {
         _map.Clear();
-        var snap = new SceneSnapshot { Live = _live, Gizmo = _gizmo, GizmoChildren = _gizmoChildren };
+        var snap = new SceneSnapshot { Live = _live, Gizmo = _gizmo, GizmoChildren = _gizmoChildren, ClickSelect = _clickSelect, CanFocus = FocusCamera != null };
         int visible = 0;
         var rootNodes = new List<SceneNode>();
         foreach (var (key, make) in Roots())
@@ -363,6 +447,7 @@ public static class SceneEditor
     static InspectorData BuildInspector(SceneNode n)
     {
         var b = new InspectorBuilder();
+        SceneAdapters.BeginInspect();   // nur Materialien der aktuellen Auswahl sind änderbar
         try { n.Inspect?.Invoke(b); }
         catch (Exception ex) { b.Section("Fehler"); b.Info("Exception", ex.GetType().Name + ": " + ex.Message); }
         var d = new InspectorData { Id = n.Id, Name = n.Name, Type = n.Type, Active = Active(n), CanRename = false, Sections = b.Sections };

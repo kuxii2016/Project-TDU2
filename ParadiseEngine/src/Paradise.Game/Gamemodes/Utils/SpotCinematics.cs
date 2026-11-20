@@ -613,7 +613,7 @@ internal sealed class SpotCinematics : IDisposable
         foreach (var d in _defs.Values)
             foreach (var sc in d.Scenes)
                 if (sc != null) foreach (var o in sc.Objects)
-                        if (!o.IsCamera && o.EntityHashcode != 0 && o.Find(CinIds.TrackPosition) != null) played.Add(o.EntityHashcode);
+                    if (!o.IsCamera && o.EntityHashcode != 0 && o.Find(CinIds.TrackPosition) != null) played.Add(o.EntityHashcode);
         var ents = new List<(ulong hc, Matrix4x4 m)>();
         var ent = _bank.Find("entities.xmb");
         var et = ent != null ? XmbFile.Parse(_bank.Read(ent)).Get("ExportType_Entity") : null;

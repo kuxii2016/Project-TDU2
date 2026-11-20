@@ -1742,11 +1742,11 @@ public sealed partial class MapStreamer : IDisposable
 
         if (HideWorld) { DrawScenes(); DrawnObjects = drawn; return; }
         foreach (var n in _islandPieces.Values) DrawNode(n);
-        foreach (var a in _areas.Values) if (a.Built) foreach (var n in a.Nodes) DrawNode(n);
+        foreach (var a in _areas.Values) if (a.Built && !EditorIsHidden(a)) foreach (var n in a.Nodes) DrawNode(n);   // EditorIsHidden: Szenen-Editor (F1 > Open Editor)
         // Sektoren: Sichtbarkeit/LOD der Objekte und Platzierungen parallel je Sektor (jeder Sektor hat nur eigenen Zustand),
         // danach DrawMesh in fester Reihenfolge im Hauptthread (Renderer-Listen sind nicht threadsicher).
         _renderSectors.Clear();
-        foreach (var s in _sectors.Values) if (s.Built) _renderSectors.Add(s);
+        foreach (var s in _sectors.Values) if (s.Built && !EditorIsHidden(s)) _renderSectors.Add(s);
         int ns = _renderSectors.Count;
         while (_sectorDraws.Count < ns) _sectorDraws.Add(new List<DrawItem>(1024));
         if (_sectorDrawn.Length < ns) _sectorDrawn = new int[ns * 2];
@@ -1762,7 +1762,7 @@ public sealed partial class MapStreamer : IDisposable
             _renderSectors[i].Grass?.Render(_renderer, root);
         }
         var waterMat = _oceanIsland ?? MaterialFactory.Water;
-        if (_waterMesh != null && waterMat != null)
+        if (_waterMesh != null && waterMat != null && !EditorHideWater)
             _renderer.DrawMesh(_waterMesh, waterMat, Matrix4x4.CreateTranslation(_waterPos) * root);
         // Himmelskuppel: erst die Sterne (td_dome mit Sternen ersetzt den Himmel), dann die Wolken
         if (ShowStars && !WorldWeather.Inside && globals.Sky.On && globals.Sky.StarsIntensity > 0f) _stars?.Draw(globals.CameraPosition);

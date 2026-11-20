@@ -23,5 +23,7 @@ namespace Paradise.Core.Online
         public string localEp = ""; // status: lokaler UDP-Endpunkt "ip:port" (Mitspieler im selben LAN)
         public HouseLayout house;   // house: geänderte Einrichtung eines eigenen Hauses (My House, Server erweitert)
         public string spot = "";    // houseget: Haus-Spot (leer = alle Häuser des Spielers "target")
+        public int score;           // challres: Wertung der Fahrt (Zeit ms bzw. km/h x 100); kind = Auto
+        public ChallengeUpload chall;  // challup: Challenge aus dem Race-Editor; challlist: kind "crc"/"community", target = Insel (-1 alle); challget: target = Id
     }
 }

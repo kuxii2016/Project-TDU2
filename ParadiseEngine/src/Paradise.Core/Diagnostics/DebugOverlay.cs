@@ -232,7 +232,7 @@ public sealed class DebugOverlay : IDisposable
             if (_fontFailed)
                 return;
 
-            _font = FontAtlas.Create( _renderer, face: "Segoe UI", pixelHeight: 16, weight: 400);
+            _font = FontAtlas.Create(_renderer, face: "Segoe UI", pixelHeight: 16, weight: 400);
 
             if (_font == null)
             {

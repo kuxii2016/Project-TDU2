@@ -34,5 +34,5 @@ internal sealed class SceneSnapshot
     public InspectorData? Inspector;
     public string? SelectedId;
     public string Status = "";
-    public bool Live, Gizmo, GizmoChildren;
+    public bool Live, Gizmo, GizmoChildren, ClickSelect, CanFocus;
 }

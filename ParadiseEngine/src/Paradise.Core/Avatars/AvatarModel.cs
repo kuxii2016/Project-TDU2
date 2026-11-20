@@ -154,7 +154,7 @@ public static class AvatarMaterials
 /// unwraps on the CPU (avatar space) and renders via IRenderer.DrawDynamic using TDU2/avatar materials.
 /// Avatar space = game space (right-handed, +Z forward); <c>model</c> maps it to the render space.
 /// </summary>
-public sealed class AvatarModel : IDisposable
+public sealed partial class AvatarModel : IDisposable
 {
     public AvatarConfig Config { get; }
     public AvatarRig? Rig { get; private set; }
@@ -186,6 +186,7 @@ public sealed class AvatarModel : IDisposable
     public static AvatarModel Create(IRenderer r, AvatarConfig? cfg)
     {
         var a = new AvatarModel(r, cfg ?? AvatarConfig.Default());
+        EditorRegister(a);   // Szenen-Editor (F1 > Open Editor)
         a.StartLoad();
         return a;
     }
@@ -207,9 +208,9 @@ public sealed class AvatarModel : IDisposable
                 if (ci.Sex == 1 && cfg.Sex == 0 || ci.Sex == 2 && cfg.Sex == 1) continue;   // falsches Geschlecht
                 AvatarPartData? data = null;
                 try { data = AvatarLibrary.LoadClothe(ci, i < cfg.Colors.Count ? cfg.Colors[i] : 0, hat); }
-                catch (Exception ex) 
-                { 
-                    Log.Error("Clothes " + ci.File + ": " + ex.Message); 
+                catch (Exception ex)
+                {
+                    Log.Error("Clothes " + ci.File + ": " + ex.Message);
                 }
                 clothes.Add((ci, data));
             }
@@ -222,24 +223,24 @@ public sealed class AvatarModel : IDisposable
     {
         if (_load == null || !_load.IsCompleted) return;
         var t = _load; _load = null;
-        if (t.IsFaulted) 
-        { 
-            Log.Warn("Avatar loading: " + t.Exception?.GetBaseException().Message); 
-            return; 
+        if (t.IsFaulted)
+        {
+            Log.Warn("Avatar loading: " + t.Exception?.GetBaseException().Message);
+            return;
         }
         try { Build(t.Result.skel, t.Result.body, t.Result.clothes); }
-        catch (Exception ex) 
-        { 
-            Log.Error("Avatar Create: " + ex); 
+        catch (Exception ex)
+        {
+            Log.Error("Avatar Create: " + ex);
         }
     }
 
     void Build(XsbSkeleton? skel, List<AvatarPartData> body, List<(ClotheInfo info, AvatarPartData? data)> clothes)
     {
-        if (skel == null) 
-        { 
-            Log.Warn("Avatar: missing skeleton (avatar/common_bodies.bnk?)"); 
-            return; 
+        if (skel == null)
+        {
+            Log.Warn("Avatar: missing skeleton (avatar/common_bodies.bnk?)");
+            return;
         }
         Rig = new AvatarRig(skel);
         // Sichtbare Körperteile: ein Teil bleibt sichtbar, solange kein getragenes Stück es verdeckt
@@ -350,7 +351,8 @@ public sealed class AvatarModel : IDisposable
     /// <summary>Häuten (aktuelle Pose von <see cref="Rig"/>) und zeichnen. <paramref name="model"/>: Avatar-Raum -> Render-Raum.</summary>
     public void Draw(Matrix4x4 model)
     {
-        if (!Ready || !Visible || Rig == null) return;
+        if (!Ready || !Visible || EditorHidden || Rig == null) return;
+        EditorLastModel = model; EditorDrawnTick = System.Environment.TickCount64;   // Szenen-Editor: Lage/Markierung
         if (_lightVersion != AvatarLight.Version) { _lightVersion = AvatarLight.Version; Refresh(); }
         Rig.UpdateSkin();
         foreach (var p in _pieces)
@@ -365,6 +367,7 @@ public sealed class AvatarModel : IDisposable
 
     public void Dispose()
     {
+        EditorDisposed = true;
         foreach (var p in _pieces) p.Mat.Dispose();
         _pieces.Clear();
         foreach (var p in _parts) p.Textures.Destroy();

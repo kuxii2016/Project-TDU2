@@ -503,8 +503,16 @@ namespace Paradise.Core.Savegame
             if (vars.TryGetValue("U3D_Recent", out string vre))
                 foreach (var f in Split(vre))
                     if (f.Length > 6)
-                        s.recentPlayers.Add(new RecentEntry { nick = f[0], lastSeen = f[1], carId = Int(f[2]), color = Int(f[3]), nbCars = Int(f[4]),
-                                                              money = long.TryParse(f[5], NumberStyles.Integer, ic, out long mo) ? mo : 0, nationality = Int(f[6]) });
+                        s.recentPlayers.Add(new RecentEntry
+                        {
+                            nick = f[0],
+                            lastSeen = f[1],
+                            carId = Int(f[2]),
+                            color = Int(f[3]),
+                            nbCars = Int(f[4]),
+                            money = long.TryParse(f[5], NumberStyles.Integer, ic, out long mo) ? mo : 0,
+                            nationality = Int(f[6])
+                        });
             if (vars.TryGetValue("U3D_FriendNews", out string vfn))
                 foreach (var f in Split(vfn))
                     if (f.Length > 3) s.friendNews.Add(new FriendNewsEntry { kind = Int(f[0]), nick = f[1], date = f[2], read = f[3] == "1" });

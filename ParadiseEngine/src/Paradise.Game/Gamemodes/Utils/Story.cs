@@ -10,7 +10,6 @@ using Paradise.Game.Input;
 using Paradise.Game.Online;
 using Paradise.Game.Screens;
 using System.Numerics;
-using Vector4 = System.Numerics.Vector4;
 
 namespace Paradise.Game.Gamemodes;
 

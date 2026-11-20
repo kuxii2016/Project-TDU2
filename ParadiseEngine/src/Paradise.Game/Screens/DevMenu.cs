@@ -85,6 +85,7 @@ public sealed partial class DevMenu : GameModule
         _time = time.TotalTime;
 #if WINDOWS
         FlashBrowser.Pump();   // Flash-Browser (F1 > Flash Debug > Browse Flash) – auch bei geschlossenem Menü aktiv
+        EditorUpdate();   // Szenen-Editor: Strg + Linksklick im Spiel = Auswahl (DevMenu.Editor.cs)
         Paradise.Editor.SceneEditor.Pump();   // Szenen-Editor (F1 > Tools > Open Editor) – Snapshots + Auswahl im 3D-Bild (DebugLines)
 #endif
         SampleFrame(time.DeltaTime);

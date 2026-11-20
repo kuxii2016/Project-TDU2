@@ -1,4 +1,3 @@
-using Paradise.Core.Diagnostics;
 using Silk.NET.Vulkan;
 
 namespace Paradise.Core.Render.Vulkan;

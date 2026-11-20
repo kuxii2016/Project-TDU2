@@ -3,6 +3,8 @@
 // aufgeklappte Einträge erhalten bleiben. Aufklappen/Zuklappen geht als Kommando an den Spiel-Thread, der nur für
 // aufgeklappte Einträge Kinder liefert.
 
+using System.Runtime.InteropServices;
+
 namespace Paradise.Editor;
 
 internal sealed class HierarchyForm : Form
@@ -16,7 +18,8 @@ internal sealed class HierarchyForm : Form
     readonly ToolStripTextBox _filter;
     readonly ToolStripLabel _count;
     readonly ToolStripStatusLabel _status;
-    CheckBox _live = null!, _gizmo = null!, _gizmoKids = null!;
+    CheckBox _live = null!, _gizmo = null!, _gizmoKids = null!, _click = null!;
+    readonly ToolStripButton _focus;
     bool _applying, _inUpdate, _searchMode;
     SceneSnapshot? _snap;
 
@@ -46,7 +49,10 @@ internal sealed class HierarchyForm : Form
             SceneEditor.Send("collapse_all");
             _applying = true;
             try { _tree.CollapseAll(); } finally { _applying = false; }
-        }) { ToolTipText = "Alle Einträge zuklappen" });
+        })
+        { ToolTipText = "Alle Einträge zuklappen" });
+        _focus = new ToolStripButton("Fokus (F)", null, (_, _) => FocusSelected()) { ToolTipText = "Kamera auf die Auswahl fahren (Free-fly) – auch Doppelklick oder Taste F" };
+        bar.Items.Add(_focus);
         bar.Items.Add(new ToolStripButton("Inspector", null, (_, _) => _ctx.ShowInspector()) { ToolTipText = "Inspector-Fenster zeigen" });
         _count = new ToolStripLabel { Alignment = ToolStripItemAlignment.Right, ForeColor = SystemColors.GrayText };
         bar.Items.Add(_count);
@@ -57,9 +63,24 @@ internal sealed class HierarchyForm : Form
         _gizmoKids = Check("Kinder mit", false, "Auch die direkten Kinder (max. 200) blass markieren", v => SceneEditor.Send("gizmo_children", v ? "1" : "0"));
         opts.Controls.Add(_live);
         opts.Controls.Add(_gizmo);
+        _click = Check("Strg+Klick wählt im Spiel", true, "Im Spielfenster Strg + Linksklick: getroffenes Objekt auswählen (bei gefangener Maus: Bildmitte)", v => SceneEditor.Send("click_select", v ? "1" : "0"));
         opts.Controls.Add(_gizmoKids);
+        opts.Controls.Add(_click);
 
-        _tree = new BufferedTree { Dock = DockStyle.Fill, HideSelection = false, ShowLines = true, ShowNodeToolTips = true, FullRowSelect = false, BorderStyle = BorderStyle.None };
+        // Haken = Aktiv (Unity: Häkchen vor dem Namen im Inspector, hier direkt im Baum). Einträge ohne Schalter bekommen keinen Haken.
+        _tree = new BufferedTree { Dock = DockStyle.Fill, HideSelection = false, ShowLines = true, ShowNodeToolTips = true, FullRowSelect = false, BorderStyle = BorderStyle.None, CheckBoxes = true };
+        _tree.BeforeCheck += (_, e) =>
+        {
+            if (_applying || e.Action == TreeViewAction.Unknown) return;
+            // Kein Schalter: Haken nicht umschalten lassen
+            if (e.Node?.Tag is not TreeItem it || it.Active == null || it.More) e.Cancel = true;
+        };
+        _tree.AfterCheck += (_, e) =>
+        {
+            if (_applying || e.Action == TreeViewAction.Unknown || e.Node?.Tag is not TreeItem it || it.Active == null) return;
+            SceneEditor.Send("active", it.Id, e.Node.Checked ? "1" : "0");
+        };
+        _tree.NodeMouseDoubleClick += (_, e) => { if (e.Node?.Tag is TreeItem it && !it.More) SceneEditor.Send("focus", it.Id); };
         _tree.AfterSelect += (_, e) =>
         {
             if (_applying || e.Node?.Tag is not TreeItem it || it.More) return;
@@ -84,10 +105,12 @@ internal sealed class HierarchyForm : Form
         {
             // Unity: Alt+Shift+A = Aktiv umschalten; hier zusätzlich Leertaste
             if (e.KeyCode == Keys.Space && !e.Control) { ToggleActive(); e.Handled = e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.F && !e.Control) { FocusSelected(); e.Handled = e.SuppressKeyPress = true; }
         };
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Aktiv umschalten (Leertaste)", null, (_, _) => ToggleActive());
+        menu.Items.Add("Kamera hin (F)", null, (_, _) => FocusSelected());
         menu.Items.Add("Inspector zeigen", null, (_, _) => _ctx.ShowInspector());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Name kopieren", null, (_, _) => { if (_tree.SelectedNode?.Tag is TreeItem it) Copy(it.Name); });
@@ -118,6 +141,11 @@ internal sealed class HierarchyForm : Form
         SceneEditor.Send("active", it.Id, it.Active.Value ? "0" : "1");
     }
 
+    void FocusSelected()
+    {
+        if (_tree.SelectedNode?.Tag is TreeItem it && !it.More) SceneEditor.Send("focus", it.Id);
+    }
+
     static void Copy(string s) { try { Clipboard.SetText(s); } catch (Exception) { } }
 
     static string PathOf(TreeNode n)
@@ -138,13 +166,15 @@ internal sealed class HierarchyForm : Form
             if (_live.Checked != s.Live) _live.Checked = s.Live;
             if (_gizmo.Checked != s.Gizmo) _gizmo.Checked = s.Gizmo;
             if (_gizmoKids.Checked != s.GizmoChildren) _gizmoKids.Checked = s.GizmoChildren;
+            if (_click.Checked != s.ClickSelect) _click.Checked = s.ClickSelect;
+            _focus.Enabled = s.CanFocus;
 
             var now = DateTime.UtcNow;
             Expire(_pendingOpen, now);
             Expire(_pendingClose, now);
 
             bool search = s.Search != null;
-            if (search != _searchMode) { Begin(); _tree.Nodes.Clear(); _searchMode = search; }
+            if (search != _searchMode) { Begin(); _tree.Nodes.Clear(); _noCheck.Clear(); _searchMode = search; }
             Sync(_tree.Nodes, search ? s.Search! : s.Roots, search);
 
             // Auswahl aus dem Spiel-Thread übernehmen (z.B. Treffer der Suche nach dem Leeren des Filters)
@@ -195,6 +225,7 @@ internal sealed class HierarchyForm : Form
                 arr[i] = old.Remove(items[i].Id, out var tn) ? tn : new TreeNode { Name = items[i].Id };
             col.Clear();
             col.AddRange(arr);
+            _noCheck.Clear();   // Handles neu angelegt: ausgeblendete Haken beim nächsten Abgleich erneut ausblenden
         }
         for (int i = 0; i < items.Count; i++) UpdateNode(col[i], items[i], search);
     }
@@ -207,6 +238,7 @@ internal sealed class HierarchyForm : Form
         if (tn.ForeColor != fc) tn.ForeColor = fc;
         string tip = it.Type + (it.ChildCount > 0 ? " · " + it.ChildCount.ToString("N0") + " Kinder" : "") + (it.Active == false ? " · inaktiv" : "");
         if (tn.ToolTipText != tip) tn.ToolTipText = tip;
+        SetCheck(tn, it.More ? null : it.Active);
 
         if (search) { if (tn.Nodes.Count > 0) { Begin(); tn.Nodes.Clear(); } return; }
 
@@ -226,6 +258,50 @@ internal sealed class HierarchyForm : Form
             if (!hasDummy) { Begin(); tn.Nodes.Clear(); tn.Nodes.Add(new TreeNode("…") { Name = Dummy }); }
         }
         else if (tn.Nodes.Count > 0) { Begin(); tn.Nodes.Clear(); }
+    }
+
+    // ------------------------------------------------------------------ Haken je Eintrag (ohne Schalter: Haken ausblenden)
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct TVITEM
+    {
+        public int mask;
+        public IntPtr hItem;
+        public int state, stateMask;
+        public IntPtr pszText;
+        public int cchTextMax, iImage, iSelectedImage, cChildren;
+        public IntPtr lParam;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref TVITEM lParam);
+
+    const int TVIF_STATE = 0x8, TVIS_STATEIMAGEMASK = 0xF000, TVM_SETITEMW = 0x1100 + 63;
+    readonly HashSet<TreeNode> _noCheck = new();
+
+    void SetCheck(TreeNode tn, bool? active)
+    {
+        if (active is bool on)
+        {
+            // Hatte der Eintrag keinen Haken, Zustandsbild wieder setzen (1 = leer, 2 = Haken)
+            if (_noCheck.Remove(tn) || tn.Checked != on)
+            {
+                tn.Checked = on;
+                StateImage(tn, on ? 2 : 1);
+            }
+            return;
+        }
+        if (_noCheck.Contains(tn) && tn.Checked == false) return;
+        if (_noCheck.Count > 20000) _noCheck.Clear();
+        if (tn.Checked) tn.Checked = false;
+        StateImage(tn, 0);
+        _noCheck.Add(tn);
+    }
+
+    void StateImage(TreeNode tn, int image)
+    {
+        if (!_tree.IsHandleCreated || tn.TreeView == null || tn.Handle == IntPtr.Zero) return;
+        var item = new TVITEM { mask = TVIF_STATE, hItem = tn.Handle, stateMask = TVIS_STATEIMAGEMASK, state = image << 12 };
+        SendMessage(_tree.Handle, TVM_SETITEMW, IntPtr.Zero, ref item);
     }
 
     public void FocusMe()

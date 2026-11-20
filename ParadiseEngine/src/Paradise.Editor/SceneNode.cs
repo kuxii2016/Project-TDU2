@@ -35,8 +35,30 @@ public sealed class SceneNode
     public Func<string, string, bool>? Edit;
     /// <summary>Markierung des ausgewählten Objekts im 3D-Bild (DebugLines, Spielraum).</summary>
     public Action<SceneGizmo>? Gizmo;
+    /// <summary>Klick-Auswahl (nur Wurzeln/Gruppen): Strahl im Render-Raum → nächster Treffer darunter.</summary>
+    public Func<Vector3, Vector3, PickHit?>? Pick;
 
     public bool IsAlive { get { try { return Alive?.Invoke() ?? true; } catch (Exception) { return false; } } }
+}
+
+/// <summary>Treffer der Klick-Auswahl: Eintrag + Ids der Vorfahren (werden in der Hierarchy aufgeklappt).</summary>
+public sealed class PickHit
+{
+    public SceneNode Node = null!;
+    public string[] Path = Array.Empty<string>();
+    /// <summary>Abstand entlang des Strahls (0 = Kamera steckt in der Box).</summary>
+    public float T;
+    /// <summary>Volumen der getroffenen Box (bei T = 0 gewinnt die kleinste).</summary>
+    public float Volume;
+
+    /// <summary>Besserer Treffer: zuerst Boxen vor der Kamera nach Abstand, dann umschließende nach Größe (wie MapStreamer.Pick).</summary>
+    public static bool Better(PickHit a, PickHit? b)
+    {
+        if (b == null) return true;
+        bool ai = a.T <= 0f, bi = b.T <= 0f;
+        if (ai != bi) return !ai;
+        return ai ? a.Volume < b.Volume : a.T < b.T;
+    }
 }
 
 /// <summary>Zeilenarten des Inspectors.</summary>

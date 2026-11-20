@@ -2,25 +2,25 @@ using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Flash;
 using Paradise.Game.Screens;
-using Vector2 = System.Numerics.Vector2;
-using Vector3 = System.Numerics.Vector3;
-using RaceTexts = Paradise.Core.Racing.RaceTexts;
-using RaceMode = Paradise.Core.Racing.RaceMode;
-using TDU2GameData = Paradise.Game.Online.TDU2GameData;
-using TDU2Controls = Paradise.Game.Input.TDU2Controls;
+using AudioEngine = Paradise.Core.Audio.AudioEngine;
 using CultureInfo = System.Globalization.CultureInfo;
-using FVec = Paradise.Core.Flash.Vector2;
 using FlashScreen = Paradise.Core.Flash.Screen;
-using RaceRoadPath = Paradise.Game.Racing.RaceRoadPath;
-using Minimap = Paradise.Core.Vehicles.Minimap;
+using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
+using FVec = Paradise.Core.Flash.Vector2;
 using GameFiles = Paradise.Core.Files.GameFiles;
 using Ige2File = Paradise.Core.Formats.Ige2File;
 using Ige2Writer = Paradise.Core.Formats.Ige2Writer;
+using Minimap = Paradise.Core.Vehicles.Minimap;
+using RaceMode = Paradise.Core.Racing.RaceMode;
 using RaceRepository = Paradise.Core.Racing.RaceRepository;
+using RaceRoadPath = Paradise.Game.Racing.RaceRoadPath;
+using RaceTexts = Paradise.Core.Racing.RaceTexts;
+using TDU2Controls = Paradise.Game.Input.TDU2Controls;
 using TDU2EditorSaves = Paradise.Core.Savegame.TDU2EditorSaves;
+using TDU2GameData = Paradise.Game.Online.TDU2GameData;
 using TDU2Session = Paradise.Core.Online.TDU2Session;
-using FrontendSounds = Paradise.Core.Audio.FrontendSounds;
-using AudioEngine = Paradise.Core.Audio.AudioEngine;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -93,6 +93,11 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
     bool _backFromTest;
     /// <summary>Testfahrt bis ins Ziel gefahren (Rückruf von BeginTest) – macht die Challenge hochladbar (exe +0x1c7604).</summary>
     bool _testCompleted;
+
+    // Upload-Fenster (ChallengeIDCard: Gebühr +0x178, Basisbelohnung +0x17c, Laufzeit +0x180, Zugänglichkeit +0x174)
+    int _uFee, _uReward, _uDuration = 1, _uPostTo;
+    System.Threading.Tasks.Task<Paradise.Core.Online.NetResponse>? _uploadTask;
+    int _uploadReward;
     /// <summary>Nach dem Speichern: Bearbeitung im nächsten Bild neu öffnen (nicht mitten im FSCommand des Films).</summary>
     bool _reopenEdit;
     static string? Nick => TDU2Session.LoggedIn ? TDU2Session.Nick : null;
@@ -350,8 +355,14 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         // Variable des geänderten Parameters setzen (exe: chpa liest /:VarToFocus, 0x976da0 wählt danach den Parameter).
         string? focusVar = what switch
         {
-            "laps" => "_root.NbLaps", "path" => "_root.IsForcedPathStr", "tmou" => "_root.TimeOut", "rstr" => "_root.RestrictionTypeStr",
-            "spee" => "_root.SpeedToReach", "spmn" => "_root.SpeedTrapMin", "brnd" => "_root.RestrictionBrand", "vhcl" => "_root.RestrictionVehicle",
+            "laps" => "_root.NbLaps",
+            "path" => "_root.IsForcedPathStr",
+            "tmou" => "_root.TimeOut",
+            "rstr" => "_root.RestrictionTypeStr",
+            "spee" => "_root.SpeedToReach",
+            "spmn" => "_root.SpeedTrapMin",
+            "brnd" => "_root.RestrictionBrand",
+            "vhcl" => "_root.RestrictionVehicle",
             _ => null,
         };
         if (focusVar != null) ui.SetVariable("/:VarToFocus", focusVar);
@@ -364,11 +375,13 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
                 _pRestr = (_pRestr + (next ? 1 : 2)) % 3;
                 if (_challenge != null) { if (_pRestr != 0) TakeCurrentCar(_challenge); SetRestrictionVars(ui, _pRestr, _challenge); }
                 return;
-            case "brnd": case "vhcl":
+            case "brnd":
+            case "vhcl":
                 // [OFFEN] Marke/Fahrzeug durchblättern (exe 0x4181f1/0x42c0de) – vorerst das aktuelle Auto
                 if (_challenge != null) { TakeCurrentCar(_challenge); SetRestrictionVars(ui, _pRestr, _challenge); }
                 return;
-            case "spee": case "spmn":
+            case "spee":
+            case "spmn":
                 {
                     // exe 0x977128: 0 .. 111111 mm/s (400 km/h), Schritt 5 km/h (1388 mm/s; 5 mph = 2234 bei Meilen), ohne Umlauf,
                     // danach auf das Raster der Einheit (exe 0x41fee7)
@@ -441,6 +454,7 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
             ui.SetValue("/chall_list:isListLoaded", true);
         if (_reopenEdit) { _reopenEdit = false; ui.SetValue("/:Input", true); ui.GotoLabel("/", "open_edit", true); }
         if (ctx.Pressed(0x7A)) DumpParameters(ui);   // F11: Zustand des Parameter-Bildschirms ins Log (Fehlersuche)
+        if (_uploadTask != null && _uploadTask.IsCompleted) UploadDone(ui);
         _view.LastDt = MathF.Max(1e-4f, time.DeltaTime);
         if (FlashDialog.Active) { FlashDialog.Update(); _view.UpdateCamera(false); return; }
         if (_mapControls) HandleMap(ctx, ui, time.DeltaTime);
@@ -810,13 +824,18 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
             ["nblp"] = c.IsLoop ? c.Laps : 0,
             ["#"] = c.IsLoop ? 1 : 0,
             ["forc"] = c.ForcedPath ? 1 : 0,                       // +0x10e0
-            ["ChTR"] = c.Traffic > 0 ? 1 : 0, ["trat"] = c.Traffic, // +0x428 / +0xbc0 (Karte: TrafficValue = ChTR ? trat : 0)
-            ["offR"] = c.Penalty > 0 ? 1 : 0, ["PeCr"] = c.Penalty, // +0x1b68 / +0x1d48 (Karte: PenaltyValue)
+            ["ChTR"] = c.Traffic > 0 ? 1 : 0,
+            ["trat"] = c.Traffic, // +0x428 / +0xbc0 (Karte: TrafficValue = ChTR ? trat : 0)
+            ["offR"] = c.Penalty > 0 ? 1 : 0,
+            ["PeCr"] = c.Penalty, // +0x1b68 / +0x1d48 (Karte: PenaltyValue)
             ["NbCp"] = c.Checkpoints.Count,                         // +0x3a00
             ["NbIA"] = 0,                                           // solo: keine Gegner
             ["TEST"] = 0,
             ["timG"] = 0,                                           // noch keine Referenzzeit
-            ["dbna"] = 0, ["dbd1"] = 0,                             // eigener Name/Beschreibung statt Textdatenbank
+            ["dbna"] = 0,
+            ["dbd1"] = 0,                             // eigener Name/Beschreibung statt Textdatenbank
+            ["fee1"] = c.Fee,
+            ["rewm"] = c.Reward,                  // +0xf80 / +0x1030: Gebühr und Basisbelohnung (Upload-Fenster, exe 0x97740c)
         };
         // Zeitlimit: exe 0xace5c0 schaltet es (ChCD +0x2ba0) nur bei Tempo/Radar ein; CtDw (+0x2c38) trägt immer den Wert der Karte
         bool timed = c.Mode == RaceMode.Speed || c.Mode == RaceMode.SpeedTrap;
@@ -915,7 +934,13 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         var up = MathF.Cos(roll) * u0 + MathF.Sin(roll) * r0;
         return new Ige2Writer.Gate(pos + new Vector3(0f, 0.10f, 0f), fwd, 7f, 0)
         {
-            OnRoad = true, Road = bRoad, Piece = bPiece, Segment = bSeg, Side = side, Along = side == 1 ? bT : 1f - bT, Up = up,
+            OnRoad = true,
+            Road = bRoad,
+            Piece = bPiece,
+            Segment = bSeg,
+            Side = side,
+            Along = side == 1 ? bT : 1f - bT,
+            Up = up,
         };
     }
 
@@ -1136,6 +1161,186 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         Log.Info("Editor: zurück aus der Testfahrt");
     }
 
+    // ================================================================== Hochladen (gmed:upld:*, exe ChallengeIDCard 0x977200)
+    /// <summary>DBEnvironnement-Wert (FeeMin, FeeMax, RewardMin, RewardMax, GamblingHallWinnerPerc …); exe 0x402509 auf 0x1721880.</summary>
+    float Env(string name, float def)
+    {
+        var env = _ctx?.Vehicles?.Manager?.Database?.Root?.Get("DBEnvironnement");
+        if (env == null) return def;
+        foreach (var r in env.Items) if ((r.S("_variable", "") ?? "") == name) return r.F("_value", def);
+        return def;
+    }
+
+    long PlayerMoney => TDU2Session.LoggedIn ? TDU2Session.Save.money : 0;
+    const int MaxMoney = 1000000;
+
+    /// <summary>Bereich und Schrittweite eines Upload-Werts (exe 0x976da0, nach /:VarToFocus).</summary>
+    (int min, int max, int step) UploadRange(string what)
+    {
+        switch (what)
+        {
+            // Vorgabe: Gebühr und Belohnung 0 .. 1 000 000 $ (exe: FeeMin/FeeMax, RewardMin/RewardMax der Datenbank); Schritt wie die
+            // Belohnung der exe: 500 $ bei Höchstwert über 1000 $, sonst 100 (exe-Gebühr: 10 – bei 1 Mio. unbrauchbar)
+            case "fees": return (0, MaxMoney, 500);
+            case "rwrd":
+                {
+                    // Belohnung wird vom Geld abgezogen: höchstens das Geld des Spielers (exe 0x97701a)
+                    int max = (int)System.Math.Min(MaxMoney, PlayerMoney);
+                    return (0, max, max > 1000 ? 500 : 100);
+                }
+            case "dura": return (1, 7, 1);   // Vorgabe: höchstens 7 Tage (exe: 1..5)
+            case "post": return (0, 3, 1);
+        }
+        return (0, 0, 0);
+    }
+
+    /// <summary>Geldbetrag wie exe 0xc08ad0: Tausender mit Leerzeichen (US: Komma), Text 0x3a4 "§1§ $".</summary>
+    static string Money(long v) => CrcText.Money(v);
+
+    /// <summary>exe 0x975340: Werte des Upload-Fensters anzeigen.</summary>
+    void UploadVars(VmfPlayer ui)
+    {
+        ui.SetVariable("/:FeeValue", Money(_uFee));
+        ui.SetVariable("/:RewardValue", Money(_uReward));
+        ui.SetVariable("/:DurationValue", _uDuration + " " + RaceTexts.Get(0x528, "Tag(e)"));
+        int[] post = { 0x1da2, 0xaa, 0x15f, 0x1da3 };   // Alle, Freunde, Klub, Freunde & Klub (Tabelle exe 0x1669558)
+        string[] fb = { "Alle", "Freunde", "Klub", "Freunde & Klub" };
+        int k = System.Math.Clamp(_uPostTo, 0, 3);
+        ui.SetVariable("/:PostTo", RaceTexts.Get((ulong)post[k], fb[k]));
+    }
+
+    void OnUpload(VmfPlayer ui, string sub)
+    {
+        int k = sub.IndexOf(':');
+        if (k > 0) { UploadStep(ui, sub.Substring(0, k), sub.EndsWith(":scne")); return; }
+        switch (sub)
+        {
+            case "chck":   // exe 0x977269: gesperrter Spielhallen-Spot -> /:UploadForbidden, /:SpotLockedtext
+                ui.SetValue("/:UploadForbidden", false);
+                ui.SetVariable("/:SpotLockedtext", "");
+                return;
+            case "open": UploadOpen(ui); return;
+            case "chpa": return;   // exe: liest /:VarToFocus und wählt den Wert (0x976da0) – hier über den Befehlsnamen
+            case "vali": UploadValidate(ui); return;
+            default: Log.NotImplemented("Editor Hochladen nicht portiert: gmed:upld:" + sub); return;
+        }
+    }
+
+    /// <summary>
+    /// exe 0x977364 ("open"): Laufzeit 1, Zugänglichkeit Alle; Text 0x1397 mit §LOSEPERCENT§ = (1 - GamblingHallWinnerPerc) x 100
+    /// nach /:GMEUploadDescription. Gebühr/Belohnung: Werte der Challenge, sonst die Mindestwerte der Datenbank.
+    /// </summary>
+    void UploadOpen(VmfPlayer ui)
+    {
+        var c = _challenge;
+        _uDuration = 1; _uPostTo = 0;
+        var f = UploadRange("fees"); var r = UploadRange("rwrd");
+        _uFee = System.Math.Clamp(c != null && c.Fee > 0 ? c.Fee : f.min, f.min, System.Math.Max(f.min, f.max));
+        _uReward = System.Math.Clamp(c != null && c.Reward > 0 ? c.Reward : r.min, System.Math.Min(r.min, r.max), System.Math.Max(r.min, r.max));
+        UploadVars(ui);
+        int lose = (int)MathF.Round((1f - Env("GamblingHallWinnerPerc", 0.5f)) * 100f);
+        ui.SetVariable("/:GMEUploadDescription", RaceTexts.Get(0x1397, "").Replace("§LOSEPERCENT§", lose.ToString(CultureInfo.InvariantCulture)));
+    }
+
+    /// <summary>
+    /// fees/rwrd/dura/post + :scne/:scpr (exe 0x9772fd): vor = +Schritt (über dem Höchstwert erst genau der Höchstwert, danach
+    /// zurück zum Mindestwert), zurück = -Schritt (unter dem Mindestwert zum Höchstwert); danach anzeigen (0x975340).
+    /// </summary>
+    void UploadStep(VmfPlayer ui, string what, bool next)
+    {
+        string? var = what switch { "fees" => "_root.FeeValue", "rwrd" => "_root.RewardValue", "dura" => "_root.DurationValue", "post" => "_root.PostTo", _ => null };
+        if (var == null) { Log.NotImplemented("Editor Hochladen nicht portiert: gmed:upld:" + what); return; }
+        ui.SetVariable("/:VarToFocus", var);   // die Auswahlbox zeigt danach eval(_root.VarToFocus)
+        var (min, max, step) = UploadRange(what);
+        int v = what switch { "fees" => _uFee, "rwrd" => _uReward, "dura" => _uDuration, _ => _uPostTo };
+        if (next)
+        {
+            if (v < max && v + step > max) v = max; else v += step;
+            if (v > max) v = min;
+        }
+        else
+        {
+            v -= step;
+            if (v < min) v = max;
+        }
+        switch (what) { case "fees": _uFee = v; break; case "rwrd": _uReward = v; break; case "dura": _uDuration = v; break; default: _uPostTo = v; break; }
+        UploadVars(ui);
+    }
+
+    /// <summary>
+    /// "vali" (exe 0x97740c -> 0x9754c0): Gebühr/Belohnung in die Challenge (fee1/rewm), /:TimeOut und /:TextAbuse auf false, dann
+    /// hochladen. Der Film wartet (uploader, initLoading "_root.IsChallengeUploaded") auf /:IsChallengeUploaded = true bzw. bricht bei
+    /// /:TimeOut = true ab (Dialog text_abuse / max_chall_posted / upload_failure). Server: eigener TDU2Server, op "challup".
+    /// </summary>
+    void UploadValidate(VmfPlayer ui)
+    {
+        var c = _challenge;
+        ui.SetValue("/:TimeOut", false);
+        ui.SetValue("/:TextAbuse", false);
+        ui.SetValue("/:MaxChallPosted", false);
+        ui.SetValue("/:IsChallengeUploaded", false);
+        if (c == null) { ui.SetValue("/:TimeOut", true); return; }
+        c.Fee = _uFee; c.Reward = _uReward;
+        var client = TDU2Session.Client;
+        if (!TDU2Session.LoggedIn || client == null || TDU2Session.Offline)
+        {
+            Log.Warn("Editor: Hochladen nicht möglich – nicht am Server angemeldet");
+            ui.SetValue("/:TimeOut", true);
+            return;
+        }
+        if (_uReward > PlayerMoney) { Log.Warn("Editor: Hochladen – Belohnung höher als das Geld"); ui.SetValue("/:TimeOut", true); return; }
+        byte[]? data = null;
+        try { data = BuildIge2(c); } catch (Exception ex) { Log.Warn("Editor: .ig2 für das Hochladen nicht gebaut: " + ex.Message); }
+        if (data == null) { ui.SetValue("/:TimeOut", true); return; }
+        _uploadReward = _uReward;
+        var req = new Paradise.Core.Online.NetRequest
+        {
+            op = "challup",
+            session = TDU2Session.SessionId,
+            chall = new Paradise.Core.Online.ChallengeUpload
+            {
+                name = c.Name,
+                description = c.Description,
+                fee = _uFee,
+                reward = _uReward,
+                duration = _uDuration,
+                postTo = _uPostTo,
+                data = Convert.ToBase64String(data),
+            },
+        };
+        _uploadTask = client.Send(req);
+        Log.Info("Editor: lade \"" + c.Name + "\" hoch (Gebühr " + _uFee + ", Belohnung " + _uReward + ", " + _uDuration + " Tag(e), Zugang " + _uPostTo + ", " + data.Length + " Byte)");
+    }
+
+    /// <summary>
+    /// Antwort des Servers (exe 0x975650): 0 = /:IsChallengeUploaded = true, Belohnung vom Geld abziehen, Spielstand sichern;
+    /// Fehler 5 (max_posted) = /:MaxChallPosted + /:TimeOut; sonst /:TimeOut.
+    /// </summary>
+    void UploadDone(VmfPlayer ui)
+    {
+        var t = _uploadTask!;
+        _uploadTask = null;
+        Paradise.Core.Online.NetResponse? r = null;
+        try { r = t.Result; } catch (Exception ex) { Log.Warn("Editor: Hochladen fehlgeschlagen: " + (ex.GetBaseException().Message)); }
+        if (r != null && r.ok)
+        {
+            ui.SetValue("/:IsChallengeUploaded", true);
+            if (TDU2Session.LoggedIn && _uploadReward > 0)
+            {
+                TDU2Session.Save.money = System.Math.Max(0, TDU2Session.Save.money - _uploadReward);
+                _ = TDU2Session.SaveAsync();
+            }
+            if (_ctx != null) PlayerCarInfo.Apply(ui, _ctx);
+            Log.Info("Editor: Challenge hochgeladen – Id " + r.challId);
+            return;
+        }
+        string err = r?.error ?? "no_response";
+        if (err == "max_posted") ui.SetValue("/:MaxChallPosted", true);
+        if (err == "text_abuse") ui.SetValue("/:TextAbuse", true);
+        ui.SetValue("/:TimeOut", true);
+        Log.Warn("Editor: Hochladen abgelehnt: " + err);
+    }
+
     /// <summary>
     /// Fehlersuche (F11): Variablen der Parameter-Zeilen und der Baum von /parameters ins Log – eine Taste beim offenen
     /// Einstellungsmenü liefert alles, um Anzeigefehler der Zeilen (falscher Text, überlagerte Regler) ohne Raten zu finden.
@@ -1246,9 +1451,7 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
                 _ui.SetValue("/:UploadForbidden", false);
                 _ui.SetVariable("/:SpotLockedtext", "");
                 return;
-            case var u when u.StartsWith("gmed:upld"):
-                Log.NotImplemented("Editor Hochladen: " + u + " (Server-Anbindung an den eigenen TDU2Server folgt)");
-                return;
+            case var u when u.StartsWith("gmed:upld:"): OnUpload(_ui, u.Substring(10)); return;
             case "emin": BeginEditTrack(_ui); return;        // StartEditTrack (exe 0xace1f0)
             case "emou": EndEditTrack(_ui); return;          // StopEditTrack (exe 0xaccd90)
             case "chkp": CheckSpot(_ui, false); return;      // putPoint: Platz prüfen (exe 0xad6f27)
@@ -1307,6 +1510,8 @@ public sealed class EditorChallenge
     public string RestrictionCategory = "all", RestrictionVehicle = "", RestrictionBrand = "", RestrictionCarFile = "";
     /// <summary>Fahrzeug (DB _id_car, Marke _car_brand), genaue Kategorie (DB _vehiclecategory, ig2 Vli2) bzw. Klasse (ig2 Vlt2).</summary>
     public int RestrictionCarId, RestrictionBrandId, RestrictionCat, RestrictionClass;
+    /// <summary>Gebühr und Basisbelohnung des Community Racing Centers (ig2 fee1 +0xf80, rewm +0x1030; Upload-Fenster).</summary>
+    public int Fee, Reward;
 
     /// <summary>exe 0x4c4540: Klasse einer Kategorie (1 A, 2 B, 3 C, 4 M, 5 R, 6 sonst) für Kategorie 0..28.</summary>
     public static readonly int[] CatClass = { 0, 1, 1, 1, 1, 1, 1, 1, 6, 2, 2, 2, 2, 6, 3, 3, 3, 3, 4, 4, 6, 6, 3, 5, 5, 5, 5, 5, 5 };
@@ -1364,6 +1569,8 @@ public sealed class EditorChallenge
             Penalty = f.Int("offR") != 0 ? f.Int("PeCr") : 0,
             TimeOutMs = f.Int("CtDw") > 0 ? f.Int("CtDw") : 160000,
             SpeedMms = f.Int("tras"),
+            Fee = f.Int("fee1"),
+            Reward = f.Int("rewm"),
             LengthM = f.Length,
             Island = f.Island,
         };

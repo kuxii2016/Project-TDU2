@@ -118,8 +118,11 @@ public sealed partial class PlacementRenderer
             _lastViewer = viewerGame;
             _appliedMul = DistanceMultiplier;
         }
+        if (EditorHidden) return;   // Szenen-Editor (F1 > Open Editor): Platzierungen des Sektors aus
         var rootOff = root.Translation;
         foreach (var b in _batches)
+        {
+            if (EditorSkip(b, out var hidden)) continue;
             for (int l = 0; l < b.PerLod.Length; l++)
             {
                 var idx = b.PerLod[l];
@@ -127,11 +130,13 @@ public sealed partial class PlacementRenderer
                 var parts = b.Obj.Lods[l].Parts;
                 foreach (int i in idx)
                 {
+                    if (hidden != null && hidden.Contains(i)) continue;
                     if (!MapStreamer.SphereInFrustum(frustum, b.LocalPos[i] + rootOff, b.Radius[i])) continue;
                     var m = b.LocalMatrix[i] * root;
                     foreach (var p in parts) sink.Add(new DrawItem(p.Mesh, p.Material, m));
                 }
             }
+        }
     }
 
     public void Render(IRenderer r, Matrix4x4 root, Vector3 viewerGame, Vector4[] frustum)
@@ -143,8 +148,11 @@ public sealed partial class PlacementRenderer
             _lastViewer = viewerGame;
             _appliedMul = DistanceMultiplier;
         }
+        if (EditorHidden) return;   // Szenen-Editor (F1 > Open Editor): Platzierungen des Sektors aus
         var rootOff = root.Translation;
         foreach (var b in _batches)
+        {
+            if (EditorSkip(b, out var hidden)) continue;
             for (int l = 0; l < b.PerLod.Length; l++)
             {
                 var idx = b.PerLod[l];
@@ -152,10 +160,12 @@ public sealed partial class PlacementRenderer
                 var parts = b.Obj.Lods[l].Parts;
                 foreach (int i in idx)
                 {
+                    if (hidden != null && hidden.Contains(i)) continue;
                     if (!MapStreamer.SphereInFrustum(frustum, b.LocalPos[i] + rootOff, b.Radius[i])) continue;
                     var m = b.LocalMatrix[i] * root;
                     foreach (var p in parts) r.DrawMesh(p.Mesh, p.Material, m);
                 }
             }
+        }
     }
 }

@@ -18,6 +18,22 @@ public sealed class SceneGizmo
     internal bool LabelDone;
     /// <summary>Kinder des ausgewählten Objekts: blasse Farbe, keine Beschriftung.</summary>
     internal bool ChildMode;
+    /// <summary>Nur messen (Kamera auf Auswahl): nichts zeichnen, Ausdehnung aller Punkte sammeln.</summary>
+    internal bool Record;
+    internal Vector3 RecMin = new(float.MaxValue), RecMax = new(float.MinValue);
+    internal bool HasRecord => RecMin.X <= RecMax.X;
+
+    void Line(Vector3 a, Vector3 b, Vector4 c)
+    {
+        if (Record) { Add(a); Add(b); return; }
+        DebugLines.Line(a, b, c);
+    }
+
+    void Add(Vector3 p)
+    {
+        if (!float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z)) return;
+        RecMin = Vector3.Min(RecMin, p); RecMax = Vector3.Max(RecMax, p);
+    }
 
     internal SceneGizmo(Func<Vector3, Vector3> renderToGame) => _renderToGame = renderToGame;
 
@@ -45,7 +61,7 @@ public sealed class SceneGizmo
             for (int bit = 1; bit < 8; bit <<= 1)
             {
                 int b = a | bit;
-                if (b != a) DebugLines.Line(c[a], c[b], col);
+                if (b != a) Line(c[a], c[b], col);
             }
         if (!child) Name((c[0] + c[7]) * 0.5f + new Vector3(0f, MathF.Abs(c[7].Y - c[0].Y) * 0.5f, 0f));
     }
@@ -61,9 +77,9 @@ public sealed class SceneGizmo
     public void Axes(Matrix4x4 toGame, float size = 0.5f)
     {
         var o = Vector3.Transform(Vector3.Zero, toGame);
-        DebugLines.Line(o, Vector3.Transform(new Vector3(size, 0, 0), toGame), new Vector4(1f, 0.2f, 0.2f, 1f));
-        DebugLines.Line(o, Vector3.Transform(new Vector3(0, size, 0), toGame), new Vector4(0.3f, 1f, 0.3f, 1f));
-        DebugLines.Line(o, Vector3.Transform(new Vector3(0, 0, size), toGame), new Vector4(0.3f, 0.5f, 1f, 1f));
+        Line(o, Vector3.Transform(new Vector3(size, 0, 0), toGame), new Vector4(1f, 0.2f, 0.2f, 1f));
+        Line(o, Vector3.Transform(new Vector3(0, size, 0), toGame), new Vector4(0.3f, 1f, 0.3f, 1f));
+        Line(o, Vector3.Transform(new Vector3(0, 0, size), toGame), new Vector4(0.3f, 0.5f, 1f, 1f));
         Name(o + new Vector3(0f, size, 0f));
     }
 
@@ -76,7 +92,7 @@ public sealed class SceneGizmo
     /// <summary>Name des Objekts über der Box (einmal je Bild).</summary>
     public void Name(Vector3 at)
     {
-        if (ChildMode || LabelDone || Label.Length == 0) return;
+        if (Record || ChildMode || LabelDone || Label.Length == 0) return;
         LabelDone = true;
         DebugLines.Label(at, Label, Color);
     }

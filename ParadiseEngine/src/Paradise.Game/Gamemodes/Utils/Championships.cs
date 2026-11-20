@@ -8,7 +8,6 @@ using Paradise.Core.Vehicles;
 using Paradise.Game.Config;
 using Paradise.Game.Input;
 using Paradise.Game.Racing;
-using Paradise.Game.Screens;
 using System.Globalization;
 using System.Numerics;
 

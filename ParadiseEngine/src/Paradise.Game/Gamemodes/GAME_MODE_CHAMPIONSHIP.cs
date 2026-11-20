@@ -13,7 +13,6 @@ using Paradise.Game.Racing;
 using Paradise.Game.Screens;
 using System.Globalization;
 using System.Numerics;
-using Vector2 = System.Numerics.Vector2;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -106,6 +105,10 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (!showRoute) { RaceRoute.RoadPath = null; RaceRoute.RoadPathSeg = null; }   // ohne Pflichtweg keine Fahrlinie
     }
 
+    /// <summary>Ergebnis der letzten Testfahrt (Zeit, Strafen) und höchste Radar-Geschwindigkeit – für die Spielhalle.</summary>
+    internal static RaceResult? LastTestResult;
+    internal static float LastTestTopKmh;
+
     /// <summary>Laufende Testfahrt des Editors: Rückruf nach dem Ende (true = Ziel erreicht).</summary>
     Action<bool>? _testEnd;
 
@@ -113,6 +116,9 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
     void EndTest(bool completed)
     {
         var te = _testEnd; _testEnd = null;
+        // Ergebnis für die Spielhalle (Community Racing Center: Wertung der gefahrenen Challenge)
+        LastTestResult = _race.Result;
+        LastTestTopKmh = _race.BestTrapSpeedKmh;
         EndRace();
         Log.Info("Editor-Testfahrt beendet (" + (completed ? "Ziel" : "abgebrochen/Zeit abgelaufen") + ")");
         te?.Invoke(completed);

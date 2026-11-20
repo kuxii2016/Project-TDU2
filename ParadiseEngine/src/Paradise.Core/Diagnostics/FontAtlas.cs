@@ -35,7 +35,7 @@ public sealed class FontAtlas : IDisposable
         public readonly float Height;
         public readonly float Advance;
 
-        public Glyph( float u0, float v0, float u1, float v1, float width, float height, float advance)
+        public Glyph(float u0, float v0, float u1, float v1, float width, float height, float advance)
         {
             U0 = u0;
             V0 = v0;
@@ -61,7 +61,7 @@ public sealed class FontAtlas : IDisposable
         return (Enumerable.Range(32, 95).Select(x => (char)x).Concat(extra).Distinct().ToArray());
     }
 
-    public static FontAtlas? Create( IRenderer renderer, string face = "Segoe UI", int pixelHeight = 16, int weight = 400)
+    public static FontAtlas? Create(IRenderer renderer, string face = "Segoe UI", int pixelHeight = 16, int weight = 400)
     {
         try
         {
@@ -222,7 +222,7 @@ public sealed class FontAtlas : IDisposable
 
                 char actual = HasGlyph(dc, c) ? c : '?';
 
-                GetTextExtentPoint32W( dc, actual.ToString(), 1, out var size);
+                GetTextExtentPoint32W(dc, actual.ToString(), 1, out var size);
 
                 int x = (i % Columns) * CellW;
                 int y = (i / Columns) * CellH;
@@ -391,7 +391,7 @@ public sealed class FontAtlas : IDisposable
     private static extern bool GetTextExtentPoint32W(IntPtr hdc, string s, int n, out SIZE size);
 
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
-    private static extern bool GetTextMetricsW( IntPtr hdc, out TEXTMETRIC metrics);
+    private static extern bool GetTextMetricsW(IntPtr hdc, out TEXTMETRIC metrics);
 
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
     private static extern uint GetGlyphIndicesW(IntPtr hdc, string text, int count, out ushort glyphIndices, uint flags);

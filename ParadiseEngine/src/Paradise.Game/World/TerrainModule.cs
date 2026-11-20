@@ -5,7 +5,6 @@ using Paradise.Core.Platform;
 using Paradise.Core.Render;
 using Paradise.Core.World;
 using Paradise.Game.Config;
-using Paradise.Game.Gameplay;
 using System.Numerics;
 
 namespace Paradise.Game.World;
@@ -77,10 +76,10 @@ public sealed class TerrainModule : GameModule
 
     public override void Load()
     {
-        if (_world.Root == null) 
-        { 
-            Log.Warn("TerrainModule: No game folder found."); 
-            return; 
+        if (_world.Root == null)
+        {
+            Log.Warn("TerrainModule: No game folder found.");
+            return;
         }
         _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
         _light.ApplyAvatars();

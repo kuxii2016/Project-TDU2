@@ -424,8 +424,8 @@ public abstract partial class InteriorUtils : GameModeHandler
             else if (code.Length > 4 && code.StartsWith("eph_"))
             {
                 string rest = code[4..];
-                b.Living = Bank("lph_" + rest); 
-                b.Garage = Bank("gph_" + rest); 
+                b.Living = Bank("lph_" + rest);
+                b.Garage = Bank("gph_" + rest);
                 b.Kind = Kind.Living; b.Name = "Haus";
             }
             else if (code.Length > 4 && code.StartsWith("ech_"))
@@ -438,8 +438,8 @@ public abstract partial class InteriorUtils : GameModeHandler
 
                 // Clubhaus (ECH_*): das Spiel lädt für ECH_IA "Interior/ich_ib.bnk" (TestDrive2Dev.exe)
                 b.Living = (rest == "ia" ? Bank("ich_ib") : null) ?? Bank("ich_" + rest);
-                b.Garage = Bank("gch_" + rest) ?? BankPrefix("gch_" + rest[..1]); 
-                b.Kind = Kind.Living; 
+                b.Garage = Bank("gch_" + rest) ?? BankPrefix("gch_" + rest[..1]);
+                b.Kind = Kind.Living;
                 b.Name = "Club";
                 b.IsClub = true;
                 GameMode.Push(Gamemode.GAME_MODE_CLUB);
@@ -516,11 +516,11 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Spot-Musik (Unity TDU2SpotAudio): Radio stumm, Musik des Spots aus sound/musics
         Paradise.Core.Audio.SpotMusic.Enter(s.Code, s.Index, BnkDir, _t.Streamer?.Index?.ExteriorDir);
         // Wie im Spiel: Haus und Club betritt man im Wohnbereich bzw. im Clubraum; die Garage erreicht man von dort.
-        if (b.Kind == Kind.Living && b.Living != null) 
+        if (b.Kind == Kind.Living && b.Living != null)
             LoadScene(b.Living, Kind.Living, null);
-        else if (b.Kind == Kind.Living && b.Garage != null) 
+        else if (b.Kind == Kind.Living && b.Garage != null)
             LoadScene(b.Garage, Kind.Garage, null);
-        else 
+        else
             LoadScene((b.Living ?? b.Garage)!, b.Kind, null);
     }
 
@@ -711,7 +711,7 @@ public abstract partial class InteriorUtils : GameModeHandler
                     if (id != 0 && db.ById.TryGetValue(id, out var c)) { var av = vm.FindCar(c.FileName); if (av != null && !cars.Contains(av)) cars.Add(av); }
         }
         else if (_kind == Kind.StickerShop || _kind == Kind.Tuner) { if (_lastCar != null) cars.Add(_lastCar); }
-        else if (_kind == Kind.Garage && _spotBanks != null && _spotBanks.IsClub) 
+        else if (_kind == Kind.Garage && _spotBanks != null && _spotBanks.IsClub)
         {
             var house = db.HouseForSpot(_spot!, island);
             Log.Info("Clubcars: " + house.CarSlots);
@@ -1503,6 +1503,9 @@ public abstract partial class InteriorUtils : GameModeHandler
             return;
         }
         Log.Debug("Hotspot " + s.Name + " Typ " + s.Type + " in " + _kind);
+        // Spielhalle EGAMHA: die Punkte tragen Typ 57 (wie TDU Media), die Film-Art steht im SelectableString (gamblin_bar,
+        // private_list, score_board, score_board_orc, periodical) – vor den Typen prüfen, sonst öffnet überall TDU Media
+        if (GAME_MODE_GAMBLING_HALL.IsHallItem(s.Str)) { GAME_MODE_GAMBLING_HALL.OpenFromHotspot(s.Str); return; }
         switch (s.Type)
         {
             // Raumwechsel; der Spielmodus (Oberfläche) folgt über Mode (GAME_MODE_LIVING.Run)
@@ -1531,6 +1534,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         string n = s.Name ?? "";
         if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) return Lang(368, "Exit");
+        if (GAME_MODE_GAMBLING_HALL.IsHallItem(s.Str)) return n;   // Spielhalle: Barman, Score_CRC … (nicht "TDU media")
         return s.Type switch
         {
             1 => Lang(100, "Fahrzeug Liste"),
@@ -1566,6 +1570,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     {
         string n = s.Name ?? "";
         if (n.StartsWith("Exit", StringComparison.OrdinalIgnoreCase)) return "exit";
+        if (GAME_MODE_GAMBLING_HALL.IsHallItem(s.Str)) return "default";
         return s.Type switch { 5 => "garage", 6 => "living", 9 => "diary", 10 => "dressing", 12 or 14 => "billboard", 54 => "club", 57 => "game_plug", _ => "default" };
     }
 

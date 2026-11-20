@@ -1,6 +1,6 @@
 using Paradise.Core.Online;
-using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
 using CarUpgrades = Paradise.Core.Vehicles.CarUpgrades;
+using VmfPlayer = Paradise.Core.Flash.VmfPlayer;
 
 namespace Paradise.Game.Gamemodes;
 

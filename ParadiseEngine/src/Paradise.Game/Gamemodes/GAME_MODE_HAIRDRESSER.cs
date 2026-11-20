@@ -5,7 +5,6 @@ using Paradise.Core.Engine;
 using Paradise.Core.Flash;
 using Paradise.Core.Online;
 using Paradise.Game.Screens;
-using System.Globalization;
 using System.Numerics;
 
 namespace Paradise.Game.Gamemodes;

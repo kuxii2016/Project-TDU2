@@ -2,7 +2,6 @@ using Paradise.Core.Diagnostics;
 using Paradise.Core.Files;
 using Paradise.Core.Formats;
 using Paradise.Core.Vehicles;
-using System.Text;
 
 namespace Paradise.Core.Audio;
 
@@ -51,13 +50,13 @@ public static class SpotMusic
                 lock (_lock)
                 {
                     if (req != _request || !_inside) return;
-                    if (clip == null) 
+                    if (clip == null)
                     {
                         if (name != null)
                             Log.Warn("Spot music " + name + ".wav cannot be decoded");
                         else
-                            Log.Info("Spot music: empty " + code); 
-                        return; 
+                            Log.Info("Spot music: empty " + code);
+                        return;
                     }
                     _current = name;
                     _src.Clip = clip; _src.Volume = 0f; _src.Play();
@@ -72,7 +71,7 @@ public static class SpotMusic
         lock (_lock)
         {
             _inside = false; _request++; _current = null;
-            if (Radio.Instance != null) 
+            if (Radio.Instance != null)
                 Radio.Instance.Muted = false;
             _src.FadeTo(0f, FadeSeconds);
             Task.Delay(TimeSpan.FromSeconds(FadeSeconds + 0.1)).ContinueWith(_ => { lock (_lock) if (!_inside) _src.Stop(); });
@@ -93,7 +92,7 @@ public static class SpotMusic
     static (AudioClip? clip, string? name) Load(string bnkDir, string? extDir, string code, int salt)
     {
         string dir = Path.Combine(bnkDir, "sound", "musics");
-        if (!GameFiles.DirectoryExists(dir)) 
+        if (!GameFiles.DirectoryExists(dir))
             return (null, null);
         var available = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in GameFiles.GetFiles(dir, "*.wav")) available[Path.GetFileNameWithoutExtension(f)] = f;
@@ -107,8 +106,8 @@ public static class SpotMusic
                 if (!up.StartsWith(prefix, StringComparison.Ordinal)) continue;
                 if (available.ContainsKey(music)) { pick = music; break; }
                 var vars = new List<string>();
-                foreach (var k in available.Keys) 
-                    if (k.StartsWith(music, StringComparison.OrdinalIgnoreCase)) 
+                foreach (var k in available.Keys)
+                    if (k.StartsWith(music, StringComparison.OrdinalIgnoreCase))
                         vars.Add(k);
                 vars.Sort(StringComparer.OrdinalIgnoreCase);
                 if (vars.Count > 0) { pick = vars[System.Math.Abs(salt) % vars.Count]; break; }

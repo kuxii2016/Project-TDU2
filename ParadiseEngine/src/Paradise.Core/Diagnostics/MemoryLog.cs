@@ -1,5 +1,3 @@
-using System.Runtime;
-
 namespace Paradise.Core.Diagnostics;
 
 /// <summary>

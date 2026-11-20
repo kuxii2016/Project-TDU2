@@ -1,7 +1,6 @@
 using Paradise.Core.Avatars;
 using Paradise.Core.Formats;
 using Paradise.Core.Online;
-using System.Collections.Generic;
 
 namespace Paradise.Game.Utils;
 

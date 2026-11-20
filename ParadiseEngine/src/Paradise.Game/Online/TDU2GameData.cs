@@ -131,8 +131,10 @@ public static class TDU2GameData
             _nextStatus = _clock + MathF.Max(1f, _serverStatusSeconds > 0f ? _serverStatusSeconds : StatusSeconds);
             _status = TDU2Session.Client.Send(new NetRequest
             {
-                op = "status", session = TDU2Session.SessionId,
-                p2p = Paradise.Game.Config.OnlineConfig.UseP2P && Multiplayer.Mesh != null, localEp = Multiplayer.LocalEndpoint,
+                op = "status",
+                session = TDU2Session.SessionId,
+                p2p = Paradise.Game.Config.OnlineConfig.UseP2P && Multiplayer.Mesh != null,
+                localEp = Multiplayer.LocalEndpoint,
             });
         }
         if (_status == null || !_status.IsCompleted) return;
@@ -369,8 +371,16 @@ public static class TDU2GameData
         if (save == null) return;
         var l = new List<RecentEntry>();
         foreach (var p in Recent)
-            l.Add(new RecentEntry { nick = p.Nick, carId = p.CarId, color = p.Color, money = p.Money, nbCars = p.NbCars, nationality = p.Nationality,
-                                    lastSeen = p.LastSeen.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture) });
+            l.Add(new RecentEntry
+            {
+                nick = p.Nick,
+                carId = p.CarId,
+                color = p.Color,
+                money = p.Money,
+                nbCars = p.NbCars,
+                nationality = p.Nationality,
+                lastSeen = p.LastSeen.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture)
+            });
         save.recentPlayers = l;
     }
 

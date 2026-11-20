@@ -115,8 +115,10 @@ namespace Paradise.Core.Cinematics
                     var cars = et.Get("ArrayOf_Entity__CinCar");
                     if (cars != null) foreach (var it in cars.Items) cinCars[it.S("__Name", "")] = it.I("id_car", -1);
                 }
-                if (names.Count == 0) { 
-                    Log.Warn("Title Cinema: No “Press Start” Theaters"); return false; }
+                if (names.Count == 0)
+                {
+                    Log.Warn("Title Cinema: No “Press Start” Theaters"); return false;
+                }
                 int idx = cinematicIndex >= 0 && cinematicIndex < names.Count ? cinematicIndex : _rnd.Next(names.Count);
                 int forced = ForcedIndex();
                 if (cinematicIndex < 0 && forced >= 0 && forced < names.Count) idx = forced;
@@ -129,14 +131,16 @@ namespace Paradise.Core.Cinematics
                     if (stem.EndsWith("_" + digits, StringComparison.OrdinalIgnoreCase)) { cinEntry = e; break; }
                 }
                 _cin = cinEntry != null ? CinData.Parse(bank.Read(cinEntry), cinEntry.Name) : null;
-                if (_cin == null) { 
-                    Log.Warn("Title Cinema: .cin for " + _cinName + " is missing"); return false; }
+                if (_cin == null)
+                {
+                    Log.Warn("Title Cinema: .cin for " + _cinName + " is missing"); return false;
+                }
                 for (int s = 0; s < _cin.SceneReferences.Count; s++)
                 {
                     string file = _cin.SceneFile(s);
                     var se = file != null ? bank.Find(file + ".sce") : null;
                     _scenes.Add(se != null ? CinScene.Parse(bank.Read(se), se.Name) : null);
-                    if (se == null) 
+                    if (se == null)
                         Log.Warn("Title Cinema: Scene " + file + " is missing");
                 }
                 if (_scenes.Count == 0 || _scenes[0] == null || _scenes[0].Objects.Count == 0) return false;
@@ -206,11 +210,15 @@ namespace Paradise.Core.Cinematics
             _weathers = null;
             string path = Path.Combine(islandDir, "fx", "cinematic_weathers.xmb");
             try { if (GameFiles.Exists(path)) _weathers = WeatherData.Load(path); }
-            catch (Exception ex) { 
-                Log.Error("cinematic_weathers.xmb: " + ex.Message); }
+            catch (Exception ex)
+            {
+                Log.Error("cinematic_weathers.xmb: " + ex.Message);
+            }
             try { _weathers?.LoadModifiers(Path.Combine(islandDir, "fx", "cinematic_modifiers.xmb")); }
-            catch (Exception ex) { 
-                Log.Error("cinematic_modifiers.xmb: " + ex.Message); }
+            catch (Exception ex)
+            {
+                Log.Error("cinematic_modifiers.xmb: " + ex.Message);
+            }
         }
 
         void Unload()
