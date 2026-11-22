@@ -2,6 +2,7 @@
 using Paradise.Core.Audio;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Flash;
+using Paradise.Core.Online;
 using Paradise.Core.Racing;
 using Paradise.Core.Vehicles;
 using Paradise.Game.Gamemodes;
@@ -22,7 +23,7 @@ namespace Paradise.Game.Racing;
 public sealed class RaceResults
 {
     public VehicleManager? Manager;
-    public event Action? Retry, Next, Quit;
+    public event Action? Retry, Next, Quit, BackToCRC;
 
     VmfPlayer? _film;
     bool _open;
@@ -80,6 +81,7 @@ public sealed class RaceResults
         ulong msg = !r.Passed ? RaceTexts.MsgTestFailed : licensed == 2 ? RaceTexts.MsgLicenceWon : RaceTexts.MsgTestPassed;
         f.SetVariable("/:Message", RaceTexts.Get(msg, r.Passed ? "Bestanden" : "Nicht bestanden"));
         _champ = false;
+        _gambling = false;
         f.SetValue("/:IsLicensed", licensed);
         f.SetVariable("/:nb_tests_done", testsDone.ToString(CultureInfo.InvariantCulture));
         f.SetVariable("/:nb_tests_total", testsTotal.ToString(CultureInfo.InvariantCulture));
@@ -109,6 +111,8 @@ public sealed class RaceResults
     public sealed class Row { public int Place; public string Name = "", Car = "", Score = ""; public bool Player; }
 
     bool _champ;
+    bool _gambling;   // CRC-Challenge: gme_ref_time -> Gamblin_vote -> score -> end_menu
+    bool _scorePending; float _scoreWait;   // nach dem Voting: score erst nach Film-Frame 515 anzeigen
     float _stuckSince = -1f; string? _stuckLabel; int _stuckFrame = -1;
     List<Row>? _race, _cup;
 
@@ -124,6 +128,7 @@ public sealed class RaceResults
         if (!Load()) return false;
         var f = _film!;
         _champ = true;
+        _gambling = false;
         f.SetValue("/:WhatPlatform", 1);
         f.SetVariable("/:MenuType", "pc");
         f.SetValue("/:fake", 0);
@@ -168,6 +173,115 @@ public sealed class RaceResults
         f.GotoLabel("/", "results", true);
         Log.Info("Ergebnis Meisterschaft (results.vmf): Platz " + place + ", " + (race?.Count ?? 0) + " Fahrer");
         return true;
+    }
+    ChallengeEntry? challenge;
+    /// <summary>
+    /// Ergebnis einer CRC-Challenge über results.vmf: zuerst "/gme_ref_time" (neuer Rekord / Toptime),
+    /// ENTER öffnet filmseitig "Gamblin_vote" (Herzen), nach "gamb:vtok" folgt "/score" mit den
+    /// vorgegebenen Werten; ENTER auf "score" führt filmseitig weiter zu "end_menu".
+    /// </summary>
+    public bool ShowGambling(string? challengeName, string? whatcha, string? finalScore, string? newRefTime, long reward, ChallengeEntry? chall = null)
+    {
+        if (chall != null)
+        {
+            challenge = chall;
+            switch (chall.mode)
+            {
+                case 0: //Kleinere Zeit -> Besser
+                    break;
+            }
+        }
+        Log.Info("Challengemode: " + (chall?.mode ?? 0) + ", " + (chall?.name ?? "Challenge") + ", " + (finalScore ?? ""));
+
+        Unload();
+        if (!Load()) return false;
+        var f = _film!;
+        _champ = false;
+        _gambling = true;
+        f.SetValue("/:WhatPlatform", 1);
+        f.SetVariable("/:MenuType", "pc");
+        f.SetValue("/:fake", 0);
+        f.SetVariable("/:WhatChaType", "gamblin");
+        f.SetValue("/:Gamblin_Hall", true);
+        f.SetValue("/:IsORC", false);
+        f.SetValue("/:IsRaceOver", 1);
+        f.SetValue("/:IsCup", false);
+        f.SetValue("/:IsCupReward", reward > 0);
+        f.SetValue("/:IsRacingSchool", false);
+        f.SetValue("/:IsTestScore", 0);
+        f.SetValue("/:IsPenalty", false);
+        f.SetValue("/:Player_has_voted", false); //Request Check hat der Player Bereits Voted nur 1x Möglich Pro rennen!
+        f.SetValue("/:IsRankings", 0);
+        f.SetValue("/:LockRankings", 1);
+        f.SetValue("/:IsRetry", 1);      // setBt[1].lock = Not(IsRetry) -> "Weiter" aktiv
+        f.SetValue("/:LockReplay", 0);   // "Results" sichtbar
+        f.SetValue("/:CanReturnToLobby", false);
+        f.SetVariable("/:whatcha", whatcha ?? "timeAttack");
+        f.SetVariable("/:ChallengeName", challengeName ?? "");
+        f.SetVariable("/:final_score", finalScore ?? "");
+        f.SetVariable("/:BaseScore", finalScore ?? "");
+        f.SetText("/:new_ref_time", newRefTime ?? "");   // "New Score is Higher Score" + Toptime
+        f.SetValue("/:GME_RefTime", true);               // gme_ref_time wird beim ENTER geschlossen
+        f.SetVariable("/:Reward", reward > 0 ? reward.ToString("N0", Paradise.Core.Util.GermanFormat.Number) + " $" : "0 $");
+        f.SetValue("/:Input", true);
+        f.SetValue("/:InRootMenu", false);
+        f.SetValue("/:InMiniMenu", false);
+        f.SetVariable("/:BtValid", "");
+        // Die Film-Knöpfe des gamblin-Menüs heißen intern next/retry/replay – hier umbeschriften.
+        f.PinText("/:m_BackToGBH_", "Back to CRC");
+        f.PinText("/:m_Retry_min", "Weiter");
+        f.PinText("/:m_Replay_min", "Results");
+        _lastBtValid = ""; _btValidAt = -1f; _stuckSince = -1f;
+        Open();
+
+        //TODO: Fix Focusing view from Hearts + Input
+        _scorePending = false; _scoreWait = 0f;
+        // Root auf den score-Frame (507): erst dort werden /score und /gme_ref_time angelegt.
+        // Gamblin_vote wird absichtlich nicht gerufen – ENTER auf gme_ref_time macht der Film selbst.
+        f.GotoLabel("/", "score", false);
+        //f.PlayLabel("/gme_ref_time", "stop");
+        ApplyGamblingScore();
+
+        Log.Info("CRC-Ergebnis (results.vmf/gme_ref_time): " + (challengeName ?? "Challenge") + ", " + (finalScore ?? ""));
+        return true;
+    }
+
+    /// <summary>Nach dem Voting: "/score" mit den vorgegebenen Werten anzeigen.</summary>
+    void ApplyGamblingScore()
+    {
+        var f = _film;
+        if (f == null || !_gambling) return;
+        var c = challenge;
+        int score = CrcText.HigherIsBetter(c.mode) ? (int)(GAME_MODE_CHAMPIONSHIP.LastTestTopKmh * 100f) : GAME_MODE_CHAMPIONSHIP.LastTestResult.FinalTimeMs;
+        f.SetValue("/:GME_RefTime", false);   // gme_ref_time nicht wieder öffnen
+        f.ForceVisible("/score/reward", false);
+        f.SetText("/score/best_score/score/this:speedRecord", ScoreText(c.mode, (GAME_MODE_CHAMPIONSHIP.LastTestResult.FinalTimeMs * 100)));
+        f.SetText("/:final_score", ScoreText(c.mode, score));
+        f.PlayLabel("/score/rank/medals", "Gamblin");
+        f.SetText("/:PlayerRanking", "-/-"); //TODO we need first Ranking...
+        f.SetText("/:Exposant", "rank");
+        f.PlayLabel("/score", "stop");
+        Log.Info("CRC-Ergebnis: /score (gamblin) angezeigt");
+        f.SetInputFocus("/Gamblin_vote");
+    }
+
+    /// <summary>Der Film springt nach "gamb:vtok" selbst zu roots "score"; erst dort (Frame 515) Werte setzen.</summary>
+    void UpdatePendingScore(float dt)
+    {
+        var f = _film;
+        if (f == null) { _scorePending = false; return; }
+        _scoreWait += dt;
+        if (f.Label("/") == "score" && f.Frame("/") >= 516 && f.Exists("/score"))
+        {
+            _scorePending = false;
+            ApplyGamblingScore();
+            return;
+        }
+        if (_scoreWait < 3f) return;
+        _scorePending = false;
+        Log.Warn("CRC-Ergebnis: score-Frame nicht erreicht – zeige score direkt");
+        f.GotoLabel("/", "score", false);
+        ApplyGamblingScore();
     }
 
     void FillLines(string array, List<Row>? rows)
@@ -221,6 +335,7 @@ public sealed class RaceResults
     {
         if (!_open) return;
         _open = false;
+        _scorePending = false;
         _openCount = System.Math.Max(0, _openCount - 1);
         if (_film != null) _film.Visible = false;
         HideHud(false);
@@ -251,9 +366,22 @@ public sealed class RaceResults
         Log.Info("Ergebnis: Knopf " + v + " ohne FSCommand – führe selbst aus");
         switch (v)
         {
-            case "retrytest": case "retry": Fire(Retry); break;
-            case "nexttest": case "next": Fire(Next); break;
-            case "rankings": case "replay": if (_champ) Fire(Next); break;
+            case "retrytest":
+            case "retry":
+                if (_gambling) Fire(Quit);   // "Weiter" -> Freie Fahrt, Auto bleibt stehen
+                else Fire(Retry);
+                break;
+            case "nexttest": case "next": Fire(Next); break;   // CRC: "Back to CRC"
+            case "rankings":
+            case "replay":
+                if (_champ) Fire(Next);
+                else if (_gambling)
+                {
+                    Log.NotImplemented("CRC-Ergebnis: 'Results' noch nicht portiert – Menü bleibt offen");
+                    _film!.GotoLabel("/", "end_menu", true);
+                    _film.SetValue("/:Input", true);
+                }
+                break;
             case "quittest": case "quit": Fire(Quit); break;
         }
     }
@@ -265,6 +393,7 @@ public sealed class RaceResults
         if (!_open || _film == null) return;
         WatchValidation();
         if (!_open || _film == null) return;
+        if (_scorePending) UpdatePendingScore(dt);
         if (_champ) WatchChampionship();
         if (FlashNav.Pressed(FlashKey.Up)) Send("Move", "up");
         if (FlashNav.Pressed(FlashKey.Down)) Send("Move", "down");
@@ -294,18 +423,42 @@ public sealed class RaceResults
     static readonly string[] RootMenuPaths = { "/menu_rs", "/menu" };
     static bool Truthy(string? v) => v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
 
+    void LogVote(string reason)
+    {
+        if (!_gambling || _film == null) return;
+        string hearts = (_film.GetVariable("/:voteValue") ?? "").Trim();
+        Log.Info($"CRC Voting ({reason}): {hearts} Herzen abgegeben");
+
+    }
+
     void OnCommand(string cmd, string args)
     {
         string c = (cmd ?? "").Trim().ToLowerInvariant();
         if (c.StartsWith("sndp:")) { FrontendSounds.Command(c); return; }
         Log.Info("Ergebnis FSCommand: " + cmd);
+        if (c.EndsWith(":scne") || c.EndsWith(":scpr")) LogVote("Auswahl geändert");
         switch (c)
         {
-            case "rest": Fire(Retry); break;
-            case "nets": Fire(Next); break;
+            case "rest": if (_gambling) Fire(Quit); else Fire(Retry); break;  // CRC: "Weiter"
+            case "nets": Fire(Next); break;                                   // CRC: "Back to CRC"
+            case "gamb:vtok":
+                if (_gambling)
+                {
+                    // filmseitig: valid=true -> gamblin_vote.close -> sprite 722/35 -> _root.gotoAndPlay("score").
+                    // Erst wenn root Frame 515 erreicht ist (dort öffnet der Film /score), Werte setzen und
+                    // /score auf "stop" legen – ein direktes GotoLabel würde vom Film überschrieben.
+                    LogVote("bestätigt");
+                    _scorePending = true;
+                    _scoreWait = 0f;
+                }
+                break;
             case "quit":
             case "gofr":
                 {
+                    if (_gambling)
+                    {
+
+                    }
                     // Meisterschaft: "Weiter" (BtValid next) = zurück in den Wettbewerb, "Wiederholen", sonst freie Fahrt
                     string bt = (_film?.GetVariable("/:BtValid") ?? "").Trim().ToLowerInvariant();
                     if (_champ && bt == "next") Fire(Next);
@@ -327,4 +480,11 @@ public sealed class RaceResults
 
     /// <summary>Unity OnDestroy.</summary>
     public void Dispose() { Close(); Unload(); }
+
+    static string ScoreText(int mode, int score)
+    {
+        if (CrcText.HigherIsBetter(mode)) return (score / 100f).ToString("0.0", CultureInfo.InvariantCulture) + " km/h";
+        int ms = System.Math.Max(0, score);
+        return (ms / 60000) + "'" + (ms / 1000 % 60).ToString("00") + "''" + (ms % 1000 / 10).ToString("00");
+    }
 }

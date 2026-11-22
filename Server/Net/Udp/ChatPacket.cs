@@ -6,7 +6,8 @@ using TDU2Server.Core;
 namespace TDU2Server.Net.Udp;
 
 /// <summary>
-/// Chat: Client [4][u16 playerId][u32 udpKey][u32 Nachrichtennr.][Text] -> an alle (auch den Absender) [3][u16 playerId][u32 Nr.][Name][0][Text].
+/// Chat: Client [4][u16 playerId][u32 udpKey][u32 Nachrichtennr.][Text] -> an alle Spieler derselben Lobby (auch den Absender)
+/// [3][u16 playerId][u32 Nr.][Name][0][Text]. Andere Lobbys lesen nicht mit (Lobby = eigene Spielrunde, LobbyManager.SameLobby).
 /// Clients senden jede Nachricht doppelt; der Server verwirft die zweite Kopie und sendet selbst ebenfalls zweimal.
 /// </summary>
 public sealed class ChatPacket : UdpPacketHandler
@@ -36,7 +37,7 @@ public sealed class ChatPacket : UdpPacketHandler
         string text = Encoding.UTF8.GetString(d, 11, d.Length - 11).Replace('\n', ' ').Replace('\r', ' ').Trim();
         if (text.Length == 0) return;
         if (text.Length > MaxText) text = text[..MaxText];
-        Log.Info($"[Chat] {s.Nick}: {text}");
+        Log.Info($"[Chat] Lobby {s.Lobby} {s.Nick}: {text}");
         Ctx.Chat.Add(pid, s.Nick, text);
         Ctx.Audit.Add("chat", s.Nick, text);
 
@@ -54,6 +55,7 @@ public sealed class ChatPacket : UdpPacketHandler
             var ep = x == s ? (x.UdpEndPoint ?? from) : x.UdpEndPoint;
             await Task.CompletedTask;
             if (ep == null || (x != s && !x.UdpActive(now, ActiveTimeout))) continue;
+            if (x != s && !TDU2Server.Sessions.LobbyManager.SameLobby(s, x)) continue;   // nur die eigene Lobby
             for (int i = 0; i < 2; i++) Udp.Send(o, ep);   // UDP kann Pakete verlieren; Clients verwerfen Doppelte
         }
     }

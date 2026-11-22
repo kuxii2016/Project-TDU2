@@ -5,7 +5,6 @@
 
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Flash;
-using Paradise.Core.Math;
 using System.Collections.Concurrent;
 using System.Globalization;
 
@@ -155,11 +154,11 @@ public static class FlashBrowser
         switch (cmd)
         {
             case "select_player":
-            {
-                var old = Sel; if (old != null) old.Highlight = null;
-                _st.SelPlayer = I(a, 0); _st.SelPath = "/"; _st.Status = "";
-                Highlight(); break;
-            }
+                {
+                    var old = Sel; if (old != null) old.Highlight = null;
+                    _st.SelPlayer = I(a, 0); _st.SelPath = "/"; _st.Status = "";
+                    Highlight(); break;
+                }
             case "select_path":
                 _st.SelPath = S(a, 0); if (_st.SelPath.Length == 0) _st.SelPath = "/";
                 Highlight(); break;
@@ -178,132 +177,132 @@ public static class FlashBrowser
             case "clear_status": _st.Status = ""; break;
 
             case "set_visible":
-            {
-                var p = Sel; p?.SetVisible(S(a, 0), B(a, 1)); break;
-            }
+                {
+                    var p = Sel; p?.SetVisible(S(a, 0), B(a, 1)); break;
+                }
             case "set_pos":
-            {
-                var d = Sel?.Find(S(a, 0));
-                if (d != null) { d.Matrix.Tx = F(a, 1); d.Matrix.Ty = F(a, 2); d.Position = null; d.ScriptMatrix = true; }
-                break;
-            }
+                {
+                    var d = Sel?.Find(S(a, 0));
+                    if (d != null) { d.Matrix.Tx = F(a, 1); d.Matrix.Ty = F(a, 2); d.Position = null; d.ScriptMatrix = true; }
+                    break;
+                }
             case "set_alpha": Sel?.SetAlpha(S(a, 0), F(a, 1)); break;
             case "set_offset": Sel?.SetOffset(S(a, 0), new Vector2(F(a, 1), F(a, 2))); break;
             case "set_scale": Sel?.SetScale(S(a, 0), new Vector2(F(a, 1), F(a, 2))); break;
             case "set_text":
-            {
-                string t = S(a, 1);
-                Sel?.SetObjectText(S(a, 0), t.Length == 0 ? null : t); break;
-            }
+                {
+                    string t = S(a, 1);
+                    Sel?.SetObjectText(S(a, 0), t.Length == 0 ? null : t); break;
+                }
             case "set_var":
-            {
-                var p = Sel; string key = S(a, 0);
-                p?.DebugSetVariable(key, S(a, 1));
-                _st.Status = key + " = " + S(a, 1);
-                _st.UsageVar = key; _st.Usage = p?.DebugFunctionsUsing(key) ?? new List<string>();
-                if (_st.AutoCall && p != null) foreach (var f in _st.Usage) p.DebugCall(f, "");
-                break;
-            }
+                {
+                    var p = Sel; string key = S(a, 0);
+                    p?.DebugSetVariable(key, S(a, 1));
+                    _st.Status = key + " = " + S(a, 1);
+                    _st.UsageVar = key; _st.Usage = p?.DebugFunctionsUsing(key) ?? new List<string>();
+                    if (_st.AutoCall && p != null) foreach (var f in _st.Usage) p.DebugCall(f, "");
+                    break;
+                }
             case "usage":
-            {
-                var p = Sel; _st.UsageVar = S(a, 0);
-                _st.Usage = p?.DebugFunctionsUsing(_st.UsageVar) ?? new List<string>();
-                break;
-            }
+                {
+                    var p = Sel; _st.UsageVar = S(a, 0);
+                    _st.Usage = p?.DebugFunctionsUsing(_st.UsageVar) ?? new List<string>();
+                    break;
+                }
             case "set_autocall": _st.AutoCall = B(a, 0); break;
             case "call_fn":
-            {
-                var p = Sel; bool ok = p != null && p.DebugCall(S(a, 0), S(a, 1));
-                _st.Status = S(a, 0) + "(" + S(a, 1) + ")" + (ok ? " called" : " not found"); break;
-            }
-            case "goto_label":
-            {
-                bool ok = Sel?.GotoLabel(S(a, 0), S(a, 1), B(a, 2)) == true;
-                _st.Status = S(a, 0) + " -> " + S(a, 1) + (ok ? "" : " (label not found)");
-                break;
-            }
-            case "goto_frame":
-            {
-                var p = Sel; var inst = p == null ? null : Inst(p, S(a, 0));
-                if (p != null && inst != null)
                 {
-                    int f = Math.Clamp(I(a, 1, 1) - 1, 0, Math.Max(0, inst.Timeline.FrameCount - 1));
-                    p.GotoFrame(inst, f, true); inst.Playing = B(a, 2, true);
+                    var p = Sel; bool ok = p != null && p.DebugCall(S(a, 0), S(a, 1));
+                    _st.Status = S(a, 0) + "(" + S(a, 1) + ")" + (ok ? " called" : " not found"); break;
                 }
-                break;
-            }
-            case "set_play":
-            {
-                var p = Sel; var inst = p == null ? null : Inst(p, S(a, 0));
-                if (inst != null) inst.Playing = B(a, 1, true);
-                break;
-            }
-            case "input":
-            {
-                var p = Sel; if (p == null) break;
-                string args = S(a, 1);
-                object[] values = Array.Empty<object>();
-                if (args.Length > 0)
-                    values = args.Split(',').Select(v =>
+            case "goto_label":
+                {
+                    bool ok = Sel?.GotoLabel(S(a, 0), S(a, 1), B(a, 2)) == true;
+                    _st.Status = S(a, 0) + " -> " + S(a, 1) + (ok ? "" : " (label not found)");
+                    break;
+                }
+            case "goto_frame":
+                {
+                    var p = Sel; var inst = p == null ? null : Inst(p, S(a, 0));
+                    if (p != null && inst != null)
                     {
-                        string t = v.Trim();
-                        if (double.TryParse(t, NumberStyles.Float, Inv, out double d)) return (object)d;
-                        if (t == "true" || t == "false") return t == "true";
-                        return t.Trim('"', '\'');
-                    }).ToArray();
-                bool ok = p.Input(S(a, 0), values);
-                _st.Status = S(a, 0) + (ok ? " processed" : ": no function"); break;
-            }
+                        int f = Math.Clamp(I(a, 1, 1) - 1, 0, Math.Max(0, inst.Timeline.FrameCount - 1));
+                        p.GotoFrame(inst, f, true); inst.Playing = B(a, 2, true);
+                    }
+                    break;
+                }
+            case "set_play":
+                {
+                    var p = Sel; var inst = p == null ? null : Inst(p, S(a, 0));
+                    if (inst != null) inst.Playing = B(a, 1, true);
+                    break;
+                }
+            case "input":
+                {
+                    var p = Sel; if (p == null) break;
+                    string args = S(a, 1);
+                    object[] values = Array.Empty<object>();
+                    if (args.Length > 0)
+                        values = args.Split(',').Select(v =>
+                        {
+                            string t = v.Trim();
+                            if (double.TryParse(t, NumberStyles.Float, Inv, out double d)) return (object)d;
+                            if (t == "true" || t == "false") return t == "true";
+                            return t.Trim('"', '\'');
+                        }).ToArray();
+                    bool ok = p.Input(S(a, 0), values);
+                    _st.Status = S(a, 0) + (ok ? " processed" : ": no function"); break;
+                }
             case "highlight": Highlight(); break;
 
             case "load_bank":
-            {
-                string path = S(a, 0);
-                var np = FlashHost.Load(path, -20);
-                if (np == null) { _st.Status = "Could not load " + Path.GetFileName(path); break; }
-                np.MouseEnabled = true;
-                _viewers.Add(np);
-                int idx = -1, i = 0;
-                foreach (var q in FlashHost.Players)
                 {
-                    if (q?.Movie == null) continue;
-                    if (ReferenceEquals(q, np)) { idx = i; break; }
-                    i++;
+                    string path = S(a, 0);
+                    var np = FlashHost.Load(path, -20);
+                    if (np == null) { _st.Status = "Could not load " + Path.GetFileName(path); break; }
+                    np.MouseEnabled = true;
+                    _viewers.Add(np);
+                    int idx = -1, i = 0;
+                    foreach (var q in FlashHost.Players)
+                    {
+                        if (q?.Movie == null) continue;
+                        if (ReferenceEquals(q, np)) { idx = i; break; }
+                        i++;
+                    }
+                    _st.SelPlayer = idx; _st.SelPath = "/"; _st.Status = "Loaded " + Path.GetFileName(path);
+                    break;
                 }
-                _st.SelPlayer = idx; _st.SelPath = "/"; _st.Status = "Loaded " + Path.GetFileName(path);
-                break;
-            }
             case "close_viewers":
-            {
-                foreach (var v in _viewers) FlashHost.Remove(v);
-                _viewers.Clear(); _st.SelPlayer = -1; _st.SelPath = "/"; _st.Status = "Viewers closed"; break;
-            }
+                {
+                    foreach (var v in _viewers) FlashHost.Remove(v);
+                    _viewers.Clear(); _st.SelPlayer = -1; _st.SelPath = "/"; _st.Status = "Viewers closed"; break;
+                }
             case "reset_movie":
-            {
-                var p = Sel;
-                if (p?.BankPath == null) break;
-                string path = p.BankPath; bool vis = p.Visible;
-                p.Highlight = null; p.Load(path); p.Visible = vis;
-                if (!string.IsNullOrEmpty(FlashHost.BnkDir))
-                    FlashLocalization.Apply(p, FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language));
-                _st.SelPath = "/"; _st.Status = "Reloaded " + Path.GetFileName(path); break;
-            }
+                {
+                    var p = Sel;
+                    if (p?.BankPath == null) break;
+                    string path = p.BankPath; bool vis = p.Visible;
+                    p.Highlight = null; p.Load(path); p.Visible = vis;
+                    if (!string.IsNullOrEmpty(FlashHost.BnkDir))
+                        FlashLocalization.Apply(p, FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language));
+                    _st.SelPath = "/"; _st.Status = "Reloaded " + Path.GetFileName(path); break;
+                }
             case "set_player_mouse": { var p = Sel; if (p != null) p.MouseEnabled = B(a, 0); break; }
             case "set_player_visible": { var p = Sel; if (p != null) p.Visible = B(a, 0); break; }
             case "set_player_depth": { var p = Sel; if (p != null) p.GuiDepth = I(a, 0); break; }
 
             case "save_patch": SavePatch(S(a, 0), S(a, 1), S(a, 2), S(a, 3)); break;
             case "remove_patch":
-            {
-                string pa = S(a, 1);
-                RemovePatch(S(a, 0), pa, S(a, 2));
-                // Live-Zustand zurücksetzen (wie im Unity-Debugger)
-                if (S(a, 2) == "alpha") Sel?.SetAlpha(pa, 1f);
-                if (S(a, 2) == "visible") Sel?.SetVisible(pa, true);
-                if (S(a, 2) == "offset") Sel?.SetOffset(pa, new Vector2(0f, 0f));
-                if (S(a, 2) == "scale") Sel?.SetScale(pa, new Vector2(1f, 1f));
-                break;
-            }
+                {
+                    string pa = S(a, 1);
+                    RemovePatch(S(a, 0), pa, S(a, 2));
+                    // Live-Zustand zurücksetzen (wie im Unity-Debugger)
+                    if (S(a, 2) == "alpha") Sel?.SetAlpha(pa, 1f);
+                    if (S(a, 2) == "visible") Sel?.SetVisible(pa, true);
+                    if (S(a, 2) == "offset") Sel?.SetOffset(pa, new Vector2(0f, 0f));
+                    if (S(a, 2) == "scale") Sel?.SetScale(pa, new Vector2(1f, 1f));
+                    break;
+                }
             case "reload_patches": VmfPlayer.ReloadPatches(); _st.Status = "Patches reloaded"; break;
             case "clear_log": while (_logs.TryDequeue(out _)) { } break;
 

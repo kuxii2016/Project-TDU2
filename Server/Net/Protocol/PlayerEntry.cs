@@ -23,4 +23,5 @@ public sealed class PlayerEntry
     public string ep = "";
     public string lep = "";
     public long p2p;
+    public int houseVer;        // My House: Änderungszähler der Einrichtung (Gäste holen per "houseget" nach, wenn anders)
 }

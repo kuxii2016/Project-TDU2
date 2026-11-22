@@ -1093,7 +1093,9 @@ namespace Paradise.Core.Flash
                     return Undefined;
                 case "ASFlashList":
                     {
-                        // ASFlashList(Besitzer-Clip, Listenname, sichtbare Zeilen, Spalten) – im Spiel nativ
+                        // ASFlashList(Besitzer-Clip, Listenname, sichtbare Zeilen, Spalten) – im Spiel nativ.
+                        // main.bnk übergibt (nb_cols, nb_lines, list_name, this); CallFunction poppt die
+                        // Argumente in umgekehrter Reihenfolge, hence args[0]=this, args[1]=name, ...
                         var l = new FlashList
                         {
                             Owner = args.Length > 0 ? args[0] as Instance ?? scope : scope,

@@ -61,6 +61,18 @@ public sealed class RaceRepository
     /// </summary>
     public static RaceDefinition FromIge2(Ige2File ig2, string challengeName, LicenseInfo? license)
     {
+        // Strafen einschalten: Rennschule (license != null) nutzt unverändert PeLv. Bei eigenen Challenges
+        // (Editor/Spielhalle, license == null) ist der Regler "/:PenaltyValue" in offR/PeCr maßgeblich –
+        // die Stufe der Vorlage darf dort nicht greifen, sonst gibt es trotz "Ohne Kollisionen"/Penalty 0
+        // Zeitstrafen. CCol = 0 schaltet Kollisionsstrafen zusätzlich ab.
+        int penaltyLevel = ig2.Int("PeLv");
+        if (license == null)
+        {
+            if (ig2.Setting("CCol")?.HasValue == true && ig2.Int("CCol") == 0) penaltyLevel = 0;
+            if (ig2.Setting("PeCr")?.HasValue == true || ig2.Setting("offR")?.HasValue == true)
+                penaltyLevel = ig2.Int("offR") != 0 ? ig2.Int("PeCr") : 0;
+        }
+
         var def = new RaceDefinition
         {
             Name = challengeName,
@@ -80,7 +92,7 @@ public sealed class RaceRepository
             SpeedTrapMin = ig2.Int("tras") / 1000f,
             SpeedPointsRef = ig2.Int("SPPG") / 1000f,
             CarId = ig2.Int("VMod"),
-            PenaltyLevel = ig2.Int("PeLv"),
+            PenaltyLevel = penaltyLevel,
             OffroadPenalty = ig2.Int("offR") != 0,
             TestType = (SchoolTestType)Mathf.Clamp(ig2.Int("rsl2"), 0, (int)SchoolTestType.Jump),
             Place = ig2.Int("rsl1") == 1 ? SchoolTestPlace.Road : SchoolTestPlace.School,

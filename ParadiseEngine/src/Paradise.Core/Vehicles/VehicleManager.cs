@@ -31,6 +31,12 @@ namespace Paradise.Core.Vehicles
             EngineRunning = true;
             if (_audio != null) { _audio.EngineOn = true; _audio.Play("EngineStart"); }
         }
+        /// <summary>Motor aus: Dauergeräusche (Motor/Abgas/Reifen) stoppen, bis wieder eine Fahreingabe erfolgt.</summary>
+        public void StopEngine()
+        {
+            EngineRunning = false;
+            if (_audio != null) { _audio.EngineOn = false; _audio.StopLoops(); }
+        }
         public float GripScale = 0.62f;
         public DrivingAids Aids = DrivingAids.Sport;
         public bool AutomaticGearbox = true;

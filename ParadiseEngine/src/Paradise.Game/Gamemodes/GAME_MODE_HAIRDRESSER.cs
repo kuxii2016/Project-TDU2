@@ -281,9 +281,23 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     {
         int price = Price();
         var sv = TDU2Session.Save;
-        if (sv != null) sv.money = System.Math.Max(0, sv.money - price);
+        if (sv != null)
+        {
+            sv.money = System.Math.Max(0, sv.money - price);
+            // Gekaufte Frisuren/Bärte sind DBClothe-Teile und gehören in die Besitzliste:
+            // der Avatar speichert nur das aktuell Getragene, sonst zählt die Collection
+            // nach mehreren Friseurbesuchen weiterhin nur eine Frisur.
+            sv.ownedClothes ??= new List<int>();
+            foreach (var part in new[] { ClothePart.Hair, ClothePart.Beard })
+            {
+                var a = _orig.Worn(part);
+                var b = _edit.Worn(part);
+                if (b == null || b.IsNothing || (a != null && a.Hash == b.Hash)) continue;
+                if (!sv.ownedClothes.Contains(b.Hash)) sv.ownedClothes.Add(b.Hash);
+            }
+        }
         _orig = _edit.Clone();
-        AvatarConfigs.SetLocal(_orig);
+        AvatarConfigs.SetLocal(_orig);   // schreibt Avatar und speichert (Kopie enthält Geld + Besitzliste)
         UpdateMoney();
         Log.Info("Friseur: neue Frisur gespeichert, bezahlt $" + price);
     }

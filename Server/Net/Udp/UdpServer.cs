@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using TDU2Server.Core;
+using TDU2Server.Net.Packets;
 using TDU2Server.Sessions;
 
 namespace TDU2Server.Net.Udp;
@@ -29,6 +30,12 @@ public sealed class UdpServer
         Add(new TrafficPacket(ctx, this));
         Add(new PingPacket(ctx, this));
         Add(new RelayPacket(ctx, this));
+        Add(new StorePacket(ctx, this));
+        // Store-Pakete: Instanzen für [PacketHandler]-Konstruktoren, Sende-Helfer, Handler-Klassen
+        Injector.RegisterInstance(ctx);
+        Injector.RegisterInstance(this);
+        PacketSender.Init(ctx, this);
+        PacketRouter.RegisterHandlers<ServerPackets>();
     }
 
     // Datenmenge (Konsole "traffic"): gesendet gesamt und davon Relay (Mitspieler ohne Direktverbindung)
@@ -115,6 +122,37 @@ public sealed class UdpServer
             }
             Send(data, o.UdpEndPoint);
         }
+    }
+
+    /// <summary>
+    /// My House: Einrichtung von <paramref name="owner"/> geändert -> [11][u16 Besitzer][u32 Änderungszähler] an alle Spieler seiner
+    /// Lobby (zweimal, UDP darf verlieren). Gäste in seinem Haus holen die Einrichtung dann per "houseget"; wer das Paket verpasst,
+    /// sieht den neuen Zähler mit dem nächsten "status" (PlayerEntry.houseVer).
+    /// </summary>
+    public void NotifyHouse(Session owner)
+    {
+        var o = new byte[7];
+        o[0] = UdpPacketIds.HouseOut;
+        o[1] = (byte)owner.PlayerId; o[2] = (byte)(owner.PlayerId >> 8);
+        BitConverter.TryWriteBytes(new Span<byte>(o, 3, 4), (uint)owner.HouseVer);
+        var now = DateTime.UtcNow;
+        foreach (var x in _ctx.Sessions.Players)
+        {
+            if (x == owner || x.UdpEndPoint == null || !x.UdpActive(now, 30)) continue;
+            if (!LobbyManager.SameLobby(owner, x) && x.RideWith != owner.PlayerId && x.Passenger != owner.PlayerId) continue;
+            for (int i = 0; i < 2; i++) Send(o, x.UdpEndPoint);
+        }
+    }
+
+    /// <summary>
+    /// Neue Einladung, Antwort (joined/declined/accepted) oder Meldung für <paramref name="target"/>: [12][u16 0] zweimal (UDP kann
+    /// verloren gehen; sonst kommt sie mit dem nächsten regulären "status"). Im Original kommen Einladung und Antwort sofort per P2P.
+    /// </summary>
+    public void NotifyStatus(Session target)
+    {
+        if (target.UdpEndPoint == null || !target.UdpActive(DateTime.UtcNow, 30)) return;
+        var o = new byte[3] { UdpPacketIds.StatusOut, 0, 0 };
+        for (int i = 0; i < 2; i++) Send(o, target.UdpEndPoint);
     }
 
     /// <summary>Kompatibilität (alte Aufrufer): ohne Entfernungsfilter.</summary>

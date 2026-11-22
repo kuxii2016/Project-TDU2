@@ -82,7 +82,10 @@ public sealed class RaceDefinition
     /// <summary>ig2 "SPPG" / 1000: Referenzpunkte der Tempo-Prüfung (gmth 10, exe 0xb60eeb -> /:SpeedRef, HUD/ref_points).</summary>
     public float SpeedPointsRef;
     public int CarId;               // "VMod": Auto der Prüfung (DBCarPhysicsData._id_car)
-    public int PenaltyLevel;        // "PeLv" (0..2) -> DBEnvironnement.PenaltyTimeLevel01..03
+    /// <summary>0 = keine Zeitstrafen. Rennschule: "PeLv" (0..2, DBEnvironnement.PenaltyTimeLevel01..03);
+    /// eigene Challenges: Regler "/:PenaltyValue" aus "offR"/"PeCr" (siehe RaceRepository.FromIge2).
+    /// "CCol" = 0 ("Ohne Kollisionen") schaltet Kollisionsstrafen ebenfalls ab.</summary>
+    public int PenaltyLevel;
     public bool OffroadPenalty;     // "offR"
     public SchoolTestType TestType;
     public SchoolTestPlace Place;

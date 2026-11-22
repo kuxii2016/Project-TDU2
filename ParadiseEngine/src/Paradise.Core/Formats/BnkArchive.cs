@@ -54,6 +54,20 @@ public sealed class BigEntryBnkSource : IBnkSource
         => _entry.Read(offset, buffer, bufferOffset, count);
 }
 
+/// <summary>Bank im Arbeitsspeicher – für verschachtelte Bänke (z.B. Sector-*-sc.bnk in einer Sektorbank).</summary>
+public sealed class MemoryBnkSource : IBnkSource
+{
+    private readonly byte[] _data;
+    public MemoryBnkSource(byte[] data) => _data = data ?? throw new ArgumentNullException(nameof(data));
+    public long Length => _data.Length;
+    public void Read(long offset, byte[] buffer, int bufferOffset, int count)
+    {
+        if (offset < 0 || count < 0 || offset + count > _data.Length)
+            throw new ArgumentOutOfRangeException(nameof(offset), "Bank payload is shorter than the requested range.");
+        Buffer.BlockCopy(_data, (int)offset, buffer, bufferOffset, count);
+    }
+}
+
 /// <summary>
 /// Leser für das Eden-Bankformat ("KNAB" in der Datei). Portiert aus dem
 /// Unity-Projekt — reiner IO-Code, thread-sicher.
@@ -80,6 +94,14 @@ public sealed class BnkArchive
     public static BnkArchive Open(BigEntryRef entry, string logicalPath)
     {
         var a = new BnkArchive { FilePath = logicalPath, _source = new BigEntryBnkSource(entry) };
+        a.ReadHeader();
+        return a;
+    }
+
+    /// <summary>Öffnet den Payload eines Bankeintrags als eigene Bank (verschachtelte _sc-Bank).</summary>
+    public static BnkArchive Open(byte[] data, string logicalPath)
+    {
+        var a = new BnkArchive { FilePath = logicalPath, _source = new MemoryBnkSource(data) };
         a.ReadHeader();
         return a;
     }

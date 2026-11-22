@@ -23,7 +23,19 @@ public static class FrontendSounds
     static readonly Dictionary<string, (string file, float vol)> _map = new(StringComparer.OrdinalIgnoreCase);
     static readonly Dictionary<string, AudioClip?> _clips = new(StringComparer.OrdinalIgnoreCase);
     static readonly Dictionary<string, double> _lastPlay = new(StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> _suppressed = new(StringComparer.OrdinalIgnoreCase);
     static readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+
+    /// <summary>
+    /// Ein Film-Sound darf vom Spiel selbst gesteuert werden (z. B. der Wreck-Detektor:
+    /// der Film meldet wrckwarn in einem festen Loop, aber die Distanz den Takt vorgibt).
+    /// Nur FSCommands werden unterdrueckt; direkte FrontendSounds.Play()-Aufrufe laufen weiter.
+    /// </summary>
+    public static void SetSuppressed(string id, bool suppressed)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        if (suppressed) _suppressed.Add(id); else _suppressed.Remove(id);
+    }
 
     static bool EnsureLoaded()
     {
@@ -132,5 +144,15 @@ public static class FrontendSounds
         film.FSCommand -= OnFilmCommand;
     }
 
-    static void OnFilmCommand(string cmd, string args) => Command(cmd);
+    static void OnFilmCommand(string cmd, string args)
+    {
+        if (cmd != null && cmd.StartsWith("sndp:", StringComparison.OrdinalIgnoreCase))
+        {
+            var id = cmd.Substring(5);
+            int colon = id.IndexOf(':');
+            if (colon >= 0) id = id.Substring(0, colon);
+            if (_suppressed.Contains(id.Trim())) return;
+        }
+        Command(cmd);
+    }
 }

@@ -826,6 +826,7 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
             ["forc"] = c.ForcedPath ? 1 : 0,                       // +0x10e0
             ["ChTR"] = c.Traffic > 0 ? 1 : 0,
             ["trat"] = c.Traffic, // +0x428 / +0xbc0 (Karte: TrafficValue = ChTR ? trat : 0)
+            ["PeLv"] = c.Penalty > 0 ? 1 : 0,   // Strafstufe der Challenge (nicht die der Vorlage!)
             ["offR"] = c.Penalty > 0 ? 1 : 0,
             ["PeCr"] = c.Penalty, // +0x1b68 / +0x1d48 (Karte: PenaltyValue)
             ["NbCp"] = c.Checkpoints.Count,                         // +0x3a00
@@ -1325,10 +1326,13 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         if (r != null && r.ok)
         {
             ui.SetValue("/:IsChallengeUploaded", true);
-            if (TDU2Session.LoggedIn && _uploadReward > 0)
+            if (TDU2Session.LoggedIn)
             {
-                TDU2Session.Save.money = System.Math.Max(0, TDU2Session.Save.money - _uploadReward);
-                _ = TDU2Session.SaveAsync();
+                // Upload im Spielstand merken ("Meine Challenges" im Community Racing Center).
+                bool added = r.challId > 0 && !TDU2Session.Save.uploadedChallenges.Contains(r.challId);
+                if (added) TDU2Session.Save.uploadedChallenges.Add(r.challId);
+                if (_uploadReward > 0) TDU2Session.Save.money = System.Math.Max(0, TDU2Session.Save.money - _uploadReward);
+                if (added || _uploadReward > 0) _ = TDU2Session.SaveAsync();
             }
             if (_ctx != null) PlayerCarInfo.Apply(ui, _ctx);
             Log.Info("Editor: Challenge hochgeladen – Id " + r.challId);

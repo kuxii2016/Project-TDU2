@@ -11,6 +11,8 @@ using Paradise.Game.Gamemodes;
 using Paradise.Game.Input;
 using Paradise.Game.Online;
 using System.Globalization;
+using DiscoverySystem = Paradise.Game.Gameplay.Discovery;
+using WreckSystem = Paradise.Game.Gameplay.Wrecks;
 
 namespace Paradise.Game.Screens;
 
@@ -22,6 +24,8 @@ namespace Paradise.Game.Screens;
 public sealed partial class DevMenu
 {
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+    static int _discoveryRoadIndex;
+    static int _discoveryAddPoints = 100;
 
     // ------------------------------------------------------------------ Inselwechsel (Unity TDU2IslandTravel)
     static readonly (string island, string name, string arrival)[] Islands =
@@ -387,6 +391,207 @@ public sealed partial class DevMenu
         return l;
     }
 
+    // ------------------------------------------------------------------ Wrecks / Detektor (eigener DevMenu-Punkt)
+    List<Item> WrecksMenu()
+    {
+        var w = WreckSystem.Current;
+        var l = new List<Item> { Head("WRECKS / DETEKTOR  (natives HUD + Karte)") };
+        if (w == null) { l.Add(Info("Wrecks system not active")); return l; }
+
+        l.Add(Info("Island", () => string.IsNullOrEmpty(w.Island) ? "-" : IslandTravel.DisplayName(w.Island)));
+        l.Add(Info("Found / total", () => w.FoundCount + " / " + w.Total));
+        l.Add(Info("Detector", () => !w.Enabled ? "disabled"
+            : w.DetectorUnlocked ? "unlocked (" + Num(w.DetectorRange) + " m)"
+            : "LOCKED: level " + WreckSystem.CurrentRacingLevel().ToString(Inv) + " < " + WreckSystem.RequiredRacingLevel.ToString(Inv)));
+        l.Add(Bool("Zeige Minimap on/off (default off)", () => w.ShowMinimapBlips, v => w.ShowMinimapBlips = v, false));
+        l.Add(Menu("Settings", WrecksSettingsMenu));
+        l.Add(Menu("Found wrecks (positions / remove)", WrecksFoundMenu));
+        l.Add(Menu("All wrecks (mark / unmark)", WrecksAllMenu));
+        l.Add(Head("ISLAND SWITCH  (wreck data switches automatically on travel)"));
+        foreach (var (island, name, arrival) in Islands)
+        {
+            string isl = island, arr = arrival;
+            l.Add(new Item
+            {
+                Label = "Travel -> " + name,
+                Value = () => string.Equals(w.Island, isl, StringComparison.OrdinalIgnoreCase) ? "<- here"
+                    : IslandTravel.CanTravelTo(isl, Paradise.Core.Config.GameData.BnkDir) ? "[Enter]" : "no Bnk/islands/" + isl,
+                Activate = () => Travel(isl, arr),
+            });
+        }
+        l.Add(Action_("Reload wreck data on this island", () =>
+        {
+            bool ok = w.ReloadCurrentIsland();
+            Toast(ok ? "Wreck data reloaded: " + w.Island : "Reload failed (no island loaded)");
+        }));
+        l.Add(Info("Note", () => "Travel closes the menu; wrecks reload for the new island automatically"));
+        return l;
+    }
+
+    List<Item> WrecksSettingsMenu()
+    {
+        var w = WreckSystem.Current;
+        var l = new List<Item> { Head("WRECKS / SETTINGS") };
+        if (w == null) { l.Add(Info("Wrecks system not active")); return l; }
+        l.Add(Bool("Wrecks enabled", () => w.Enabled, v => w.Enabled = v, true));
+        l.Add(Bool("Test: ignore level minimum", () => WreckSystem.TestBypassLevelMinimum,
+            v => WreckSystem.TestBypassLevelMinimum = v, true));
+        l.Add(Info("Racing level / required", () => WreckSystem.CurrentRacingLevel().ToString(Inv) + " / " + WreckSystem.RequiredRacingLevel.ToString(Inv)));
+        l.Add(Bool("Detailed log", () => w.DetailedLog, v => w.DetailedLog = v, false));
+        l.Add(Head("DETECTOR (wrecks_config.cpr)"));
+        l.Add(Float("Detector range", () => w.DetectorRange, v => w.DetectorRange = v, 10f, 10f, 1000f, 250f, "0", " m"));
+        l.Add(Float("Activation distance", () => w.ActivationDistance, v => w.ActivationDistance = v, 1f, 0.5f, 50f, 10f, "0.0", " m"));
+        l.Add(Float("Bip far", () => w.BipFar, v => w.BipFar = v, 0.05f, 0.05f, 5f, 1.35f, "0.00", " s"));
+        l.Add(Float("Bip near", () => w.BipNear, v => w.BipNear = v, 0.05f, 0.05f, 5f, 0.20f, "0.00", " s"));
+        l.Add(Action_("Restore config from wrecks_config.cpr", () => { w.RestoreConfig(); Toast("Detector config restored"); }));
+        return l;
+    }
+
+    List<Item> WrecksFoundMenu()
+    {
+        var w = WreckSystem.Current;
+        var l = new List<Item> { Head("FOUND WRECKS  (Enter = teleport · Left/Right or Delete = remove)") };
+        if (w == null) { l.Add(Info("Wrecks system not active")); return l; }
+        int n = 0;
+        foreach (var p in w.Points)
+        {
+            if (!p.Found) continue;
+            n++;
+            l.Add(WreckPointItem(w, p, true));
+        }
+        if (n == 0) l.Add(Info("no wrecks found on this island"));
+        l.Add(Info("Hint", () => "Removed finds stay removed until you leave the wreck radius"));
+        return l;
+    }
+
+    List<Item> WrecksAllMenu()
+    {
+        var w = WreckSystem.Current;
+        var l = new List<Item> { Head("ALL WRECKS  (Enter = toggle found · Left/Right = mark/remove · Delete = remove)") };
+        if (w == null) { l.Add(Info("Wrecks system not active")); return l; }
+        foreach (var p in w.Points) l.Add(WreckPointItem(w, p, false));
+        if (w.Total == 0) l.Add(Info("no wreck data loaded for this island"));
+        return l;
+    }
+
+    Item WreckPointItem(WreckSystem w, WreckSystem.Point p, bool teleportOnEnter)
+    {
+        var pos = p.Position;   // Spielkoordinaten – Teleport und Karte nutzen dieselben.
+        string coords = Num(pos.X) + " / " + Num(pos.Y) + " / " + Num(pos.Z) + "  ·  area " + p.Area.ToString(Inv);
+        return new Item
+        {
+            Label = "#" + p.Index.ToString("000", Inv) + "  " + (string.IsNullOrEmpty(p.Name) ? "(no name)" : p.Name),
+            Value = () => (p.Found ? "FOUND" : "-") + "  " + coords,
+            Activate = () =>
+            {
+                if (teleportOnEnter)
+                {
+                    var m = Mgr;
+                    if (m == null) { Toast("No vehicle manager"); return; }
+                    m.TeleportSafe(pos, System.Numerics.Vector3.UnitZ);
+                    Toast("At wreck #" + p.Index.ToString("000", Inv) + "  " + p.Name);
+                }
+                else
+                {
+                    w.SetFound(p.Index, !p.Found);
+                    Toast("Wreck #" + p.Index.ToString("000", Inv) + " " + (p.Found ? "marked found" : "find removed"));
+                }
+            },
+            Change = d => { if (d != 0) w.SetFound(p.Index, d > 0); },
+            Reset = () => { w.SetFound(p.Index, false); Toast("Find removed: #" + p.Index.ToString("000", Inv)); },
+        };
+    }
+
+    // ------------------------------------------------------------------ Cruising / Road Discovery (F1)
+    List<Item> DiscoveryMenu()
+    {
+        var d = DiscoverySystem.Current;
+        var l = new List<Item> { Head("CRUISING / DISCOVERY  (Straßen + Dealer)") };
+        if (d == null) { l.Add(Info("Discovery system not active")); return l; }
+
+        l.Add(Info("Island", () => string.IsNullOrEmpty(d.Island) ? "-" : IslandTravel.DisplayName(d.Island)));
+        l.Add(Info("Area", () => string.IsNullOrEmpty(d.AreaName) ? "-" : d.AreaName + " (" + d.Area.ToString(Inv) + ")"));
+        l.Add(Info("Roads unlocked / total", () => d.UnlockedRoadCount + " / " + d.RoadCount));
+        l.Add(Info("Dealers unlocked / total", () => d.UnlockedDealerCount + " / " + d.DealerCount));
+        l.Add(Info("Level", () => d.Level.ToString(Inv) + "   next " + d.NextThreshold.ToString(Inv)));
+        l.Add(Info("Points", () => d.RoadPoints.ToString(Inv) + " road / " + d.TotalPoints.ToString(Inv) + " total"));
+        l.Add(Info("Last road", () => d.LastRoadId));
+        l.Add(Menu("Roads (mark / remove)", DiscoveryRoadsMenu));
+        l.Add(Menu("Dealers (unlock / remove)", DiscoveryDealersMenu));
+        l.Add(Int("Add cruising points (Left/Right)", () => _discoveryAddPoints, v =>
+        {
+            _discoveryAddPoints = v;
+            d.AddPoints(v);
+            Toast("Cruising points " + (v > 0 ? "+" : "") + v.ToString(Inv));
+        }, -1000, 1000, 100));
+        l.Add(Action_("Unlock next road", () => { d.UnlockNext(); Toast("Next road unlocked"); }));
+        l.Add(Action_("Unlock all roads (current area)", () => { d.UnlockAll(true); Toast("All roads of current area unlocked"); }));
+        l.Add(Action_("Unlock all roads (all areas)", () => { d.UnlockAll(false); Toast("All roads unlocked"); }));
+        l.Add(Action_("Unlock all dealers", () => { d.UnlockAllDealers(); Toast("All dealers unlocked"); }));
+        l.Add(Action_("Refresh map colors", () => { d.Refresh(); Toast("Map refreshed"); }));
+        l.Add(Action_("Save now", () => { d.SaveNow(); Toast("Discovery saved"); }));
+        l.Add(Action_("Reload from savegame", () => { d.Reload(); Toast("Discovery reloaded"); }));
+        l.Add(Action_("REMOVE ALL PROGRESS (roads, dealers, points)", () => { d.Clear(); Toast("Discovery progress removed"); }));
+        return l;
+    }
+
+    List<Item> DiscoveryRoadsMenu()
+    {
+        var d = DiscoverySystem.Current;
+        var l = new List<Item> { Head("ROADS  (Enter/Left = unlock, Delete = remove)") };
+        if (d == null) { l.Add(Info("Discovery system not active")); return l; }
+        var ids = d.RoadIds;
+        _discoveryRoadIndex = Math.Clamp(_discoveryRoadIndex, 0, Math.Max(0, ids.Length - 1));
+        l.Add(Int("Selected road index", () => _discoveryRoadIndex, v => _discoveryRoadIndex = Math.Clamp(v, 0, Math.Max(0, ids.Length - 1)), 0, Math.Max(0, ids.Length - 1), 0));
+        l.Add(Info("Selected id", () => ids.Length == 0 ? "-" : ids[Math.Clamp(_discoveryRoadIndex, 0, ids.Length - 1)]));
+        l.Add(Action_("Toggle selected road", () =>
+        {
+            if (ids.Length == 0) { Toast("No roads loaded"); return; }
+            string id = ids[Math.Clamp(_discoveryRoadIndex, 0, ids.Length - 1)];
+            bool now = !d.IsRoadUnlocked(id);
+            d.SetRoadUnlocked(id, now);
+            Toast("Road " + (now ? "unlocked" : "removed"));
+        }));
+        l.Add(Head("FIRST " + Math.Min(40, ids.Length).ToString(Inv) + " ROADS"));
+        for (int i = 0; i < ids.Length && i < 40; i++)
+        {
+            string id = ids[i];
+            l.Add(new Item
+            {
+                Label = "#" + i.ToString("000", Inv) + " " + ShortRoadId(id),
+                Value = () => d.IsRoadUnlocked(id) ? "COLORED" : "GRAY",
+                Change = delta => { if (delta != 0) d.SetRoadUnlocked(id, delta > 0); },
+                Reset = () => d.SetRoadUnlocked(id, false),
+                Activate = () => d.SetRoadUnlocked(id, !d.IsRoadUnlocked(id)),
+            });
+        }
+        return l;
+    }
+
+    List<Item> DiscoveryDealersMenu()
+    {
+        var d = DiscoverySystem.Current;
+        var l = new List<Item> { Head("DEALERS  (Enter/Left = unlock, Delete = remove)") };
+        if (d == null) { l.Add(Info("Discovery system not active")); return l; }
+        foreach (string code in d.DealerCodes)
+            l.Add(new Item
+            {
+                Label = "Dealer " + code,
+                Value = () => d.IsDealerUnlocked(code) ? "VISIBLE" : "HIDDEN",
+                Change = delta => { if (delta != 0) d.SetDealerUnlocked(code, delta > 0); },
+                Reset = () => d.SetDealerUnlocked(code, false),
+                Activate = () => d.SetDealerUnlocked(code, !d.IsDealerUnlocked(code)),
+            });
+        l.Add(Action_("Unlock all dealers", () => { d.UnlockAllDealers(); Toast("All dealers unlocked"); }));
+        return l;
+    }
+
+    static string ShortRoadId(string id)
+    {
+        int p = id.LastIndexOf("_ROADS_", StringComparison.OrdinalIgnoreCase);
+        return p >= 0 ? id[(p + 1)..] : id;
+    }
+
     // ------------------------------------------------------------------ Spielstand / Geld (Unity SavegameMenu)
     List<Item> SavegameMenu()
     {
@@ -396,6 +601,7 @@ public sealed partial class DevMenu
         l.Add(Info("Nick", () => TDU2Session.Nick ?? "-"));
         l.Add(Info("Logged in", () => TDU2Session.LoggedIn ? "YES" : "NO"));
         l.Add(Menu("Savegame Debug (Save/Load, View Data, JSON/XMBF)", SavegameDebugMenu));
+        l.Add(Menu("Wrecks / Detector (found, settings, island)", WrecksMenu));
         if (save == null) { l.Add(Info("no savegame loaded (log in first)")); return l; }
         l.Add(Info("Island / position", () => (string.IsNullOrEmpty(save.island) ? "-" : save.island) + (save.hasPosition ? "  (" + Num(save.px) + ", " + Num(save.py) + ", " + Num(save.pz) + ")" : "")));
         l.Add(Info("Interior", () => string.IsNullOrEmpty(save.interior) ? "outside" : save.interior));

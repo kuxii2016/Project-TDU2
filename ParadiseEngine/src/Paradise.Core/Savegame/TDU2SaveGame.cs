@@ -291,8 +291,18 @@ namespace Paradise.Core.Savegame
                 SetVar(env, "U3D_NewsSeen", s.newsSeen.ToString(ic) + "," + s.updatesSeen.ToString(ic));
                 SetVar(env, "U3D_RaceCin", Join(s.raceCinSeen, x => new[] { x }));
                 SetVar(env, "U3D_Racing", Join(s.racing, e => new[] { e.k, e.v }));
+                SetVar(env, "U3D_Wrecks", Join(s.foundWrecks, e => new[] { e.island, string.Join(",", e.indices) }));
+                SetVar(env, "U3D_WreckEvents", Join(s.wreckEvents, e => new[] { e.k, e.v }));
+                // Cruising/Road-Discovery: eigene U3D_Variablen, damit alte DATA-Dateien leer migrieren
+                SetVar(env, "U3D_RoadDiscoveryVersion", s.roadDiscoveryVersion.ToString(ic));
+                SetVar(env, "U3D_ExploredRoads", Join(s.exploredRoads, e => new[] { e.island, string.Join(",", e.ids), Join(e.areas, a => new[] { a.k, a.v }) }));
+                SetVar(env, "U3D_UnlockedDealers", string.Join(",", s.unlockedDealers ?? new List<string>()));
+                SetVar(env, "U3D_CruisingRoadPoints", s.cruisingRoadPoints.ToString(ic));
+                SetVar(env, "U3D_CruisingRoadEvents", Join(s.cruisingRoadEvents, e => new[] { e.k, e.v }));
                 SetVar(env, "U3D_Recent", Join(s.recentPlayers, e => new[] { e.nick, e.lastSeen, e.carId.ToString(ic), e.color.ToString(ic), e.nbCars.ToString(ic), e.money.ToString(ic), e.nationality.ToString(ic) }));
                 SetVar(env, "U3D_FriendNews", Join(s.friendNews, e => new[] { e.kind.ToString(ic), e.nick, e.date, e.read ? "1" : "0" }));
+                // Community Racing Center: vom Editor hochgeladene Challenge-Ids ("Meine Challenges")
+                SetVar(env, "U3D_UploadedChallenges", string.Join(",", s.uploadedChallenges ?? new List<int>()));
                 SetVar(env, "U3D_Saved", DateTime.UtcNow.ToString("o", ic));
             }
 
@@ -500,6 +510,36 @@ namespace Paradise.Core.Savegame
             }
             if (vars.TryGetValue("U3D_RaceCin", out string vrc)) foreach (var f in Split(vrc)) if (f.Length > 0 && f[0].Length > 0) s.raceCinSeen.Add(f[0]);
             if (vars.TryGetValue("U3D_Racing", out string vrr)) foreach (var f in Split(vrr)) if (f.Length > 1) s.racing.Add(new HouseEntry { k = f[0], v = f[1] });
+            // Wracks: 0-basierte XMB-Indizes je Insel (das Original speichert FoundWrecks[island] als uint-Vektor)
+            if (vars.TryGetValue("U3D_Wrecks", out string vwr))
+                foreach (var f in Split(vwr))
+                    if (f.Length > 1)
+                    {
+                        var we = new WreckFoundEntry { island = f[0] };
+                        foreach (var t in f[1].Split(','))
+                            if (int.TryParse(t, NumberStyles.Integer, ic, out int ix)) we.indices.Add(ix);
+                        s.foundWrecks.Add(we);
+                    }
+            if (vars.TryGetValue("U3D_WreckEvents", out string vwe))
+                foreach (var f in Split(vwe)) if (f.Length > 1) s.wreckEvents.Add(new HouseEntry { k = f[0], v = f[1] });
+            // Cruising/Road-Discovery: alte Spielstände ohne diese Variablen bleiben leer (Version 0)
+            if (vars.TryGetValue("U3D_RoadDiscoveryVersion", out string vrd))
+                s.roadDiscoveryVersion = Int(vrd);
+            if (vars.TryGetValue("U3D_ExploredRoads", out string ver))
+                foreach (var f in Split(ver))
+                {
+                    if (f.Length < 2) continue;
+                    var re = new RoadDiscoveryEntry { island = f[0] };
+                    foreach (var id in f[1].Split(',')) if (id.Length > 0) re.ids.Add(id);
+                    if (f.Length > 2)
+                        foreach (var a in Split(f[2])) if (a.Length > 1) re.areas.Add(new HouseEntry { k = a[0], v = a[1] });
+                    s.exploredRoads.Add(re);
+                }
+            if (vars.TryGetValue("U3D_UnlockedDealers", out string vud))
+                foreach (var c in vud.Split(',')) if (c.Length > 0) s.unlockedDealers.Add(c);
+            if (vars.TryGetValue("U3D_CruisingRoadPoints", out string vroadpts)) s.cruisingRoadPoints = Int(vroadpts);
+            if (vars.TryGetValue("U3D_CruisingRoadEvents", out string vce))
+                foreach (var f in Split(vce)) if (f.Length > 1) s.cruisingRoadEvents.Add(new HouseEntry { k = f[0], v = f[1] });
             if (vars.TryGetValue("U3D_Recent", out string vre))
                 foreach (var f in Split(vre))
                     if (f.Length > 6)
@@ -516,6 +556,8 @@ namespace Paradise.Core.Savegame
             if (vars.TryGetValue("U3D_FriendNews", out string vfn))
                 foreach (var f in Split(vfn))
                     if (f.Length > 3) s.friendNews.Add(new FriendNewsEntry { kind = Int(f[0]), nick = f[1], date = f[2], read = f[3] == "1" });
+            if (vars.TryGetValue("U3D_UploadedChallenges", out string vuc))
+                foreach (var f in vuc.Split(',')) if (int.TryParse(f, NumberStyles.Integer, ic, out int cid) && cid > 0) s.uploadedChallenges.Add(cid);
 
             // Avatar
             string av = ReadAvatar(root, out string avInfo);
@@ -553,6 +595,14 @@ namespace Paradise.Core.Savegame
             if (server.ownedMaterials != null && server.ownedMaterials.Count > 0) local.ownedMaterials = server.ownedMaterials;
             if (string.IsNullOrEmpty(local.avatar)) local.avatar = server.avatar ?? "";
             if (local.bookmarks.Count == 0 && server.bookmarks != null) local.bookmarks = server.bookmarks;
+            if (local.foundWrecks.Count == 0 && server.foundWrecks != null) local.foundWrecks = server.foundWrecks;
+            if (local.wreckEvents.Count == 0 && server.wreckEvents != null) local.wreckEvents = server.wreckEvents;
+            // Road-Discovery liegt nur in der lokalen DATA, wenn der Server sie nicht (mehr) speichert
+            if (local.exploredRoads.Count == 0 && server.exploredRoads != null) local.exploredRoads = server.exploredRoads;
+            if (local.unlockedDealers.Count == 0 && server.unlockedDealers != null) local.unlockedDealers = server.unlockedDealers;
+            if (local.cruisingRoadPoints == 0 && server.cruisingRoadPoints != 0) local.cruisingRoadPoints = server.cruisingRoadPoints;
+            if (local.cruisingRoadEvents.Count == 0 && server.cruisingRoadEvents != null) local.cruisingRoadEvents = server.cruisingRoadEvents;
+            if (local.roadDiscoveryVersion <= 0) local.roadDiscoveryVersion = server.roadDiscoveryVersion > 0 ? server.roadDiscoveryVersion : 1;
         }
 
         // ------------------------------------------------------------------ Häuser / Spots

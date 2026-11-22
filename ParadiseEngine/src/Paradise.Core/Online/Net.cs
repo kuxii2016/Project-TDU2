@@ -160,6 +160,8 @@ namespace Paradise.Core.Online
         public static int UdpPort { get; private set; }
         public static bool LoggedIn => Save != null && !string.IsNullOrEmpty(SessionId);
         public static event Action Changed;
+        /// <summary>Fortschrittsmodule nach einer Änderung außerhalb von ApplySave/AddOwned nachziehen (z.B. Avatar/Kleidung).</summary>
+        public static void NotifyChanged() => Changed?.Invoke();
 
         // ---- Radio-Zeitbasis (vom Server): gemeinsame Playlist aller Clients (Hariba/RoadRock)
         public static long RadioEpochMs { get; private set; }
@@ -225,6 +227,16 @@ namespace Paradise.Core.Online
             s.ownedClothes ??= new List<int>();
             s.bookmarks ??= new List<BookmarkEntry>();
             s.favoriteSpots ??= new List<string>();
+            s.exploredRoads ??= new List<RoadDiscoveryEntry>();
+            s.unlockedDealers ??= new List<string>();
+            s.cruisingRoadEvents ??= new List<HouseEntry>();
+            if (s.roadDiscoveryVersion <= 0) s.roadDiscoveryVersion = 1;
+            foreach (var road in s.exploredRoads)
+            {
+                if (road == null) continue;
+                road.ids ??= new List<string>();
+                road.areas ??= new List<HouseEntry>();
+            }
             s.houses ??= new List<HouseLayout>();
             s.ownedFurniture ??= new List<int>();
             s.ownedMaterials ??= new List<int>();
@@ -324,7 +336,6 @@ namespace Paradise.Core.Online
             try { Client.SendBlocking(new NetRequest { op = "logout", session = SessionId }); } catch (Exception) { }
         }
 
-        // ---- lokale Profile (Merk-Token je Konto, wie die Profilliste im Spiel)
         /// <summary>Profil auf diesem PC. online = Konto auf dem Server (Häkchen connected_profileN), sonst Offline-Profil.</summary>
         public sealed class LocalProfile { public string nick = ""; public string token = ""; public bool online = true; }
         sealed class ProfileList { public List<LocalProfile> list = new List<LocalProfile>(); public string last = ""; }

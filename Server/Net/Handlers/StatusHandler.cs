@@ -97,5 +97,6 @@ public sealed class StatusHandler : RequestHandler
         mood = s.Mood ?? "",
         moodTxt = s.MoodTxt ?? "",
         photoVer = s.PhotoVer,
+        houseVer = s.HouseVer,
     };
 }

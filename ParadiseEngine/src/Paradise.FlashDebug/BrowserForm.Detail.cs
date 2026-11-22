@@ -1,6 +1,4 @@
-using System.Drawing;
 using System.Globalization;
-using System.Windows.Forms;
 
 namespace Paradise.FlashDebug;
 
@@ -22,8 +20,11 @@ internal sealed partial class BrowserForm
     {
         var host = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoScroll = true, Padding = new Padding(8),
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            Padding = new Padding(8),
         };
 
         _dPath = new TextBox { ReadOnly = true, Width = 760 };

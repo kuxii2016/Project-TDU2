@@ -24,6 +24,8 @@ public sealed class ServerContext
     public RecentStore Recent { get; }
     /// <summary>Freundeslisten mit Anfragen (data/friends.json, op "friend").</summary>
     public FriendStore Friends { get; }
+    /// <summary>Challenges des Community Racing Centers (data/challenges.json + data/challenges/*.ig2; op "challup"/"challlist"/"challget", Panel /crc).</summary>
+    public ChallengeStore Challenges { get; }
     /// <summary>UDP-Server (Datenmengen-Statistik für Konsole/Panel).</summary>
     public TDU2Server.Net.Udp.UdpServer Udp { get; set; }
     /// <summary>Anmeldung beim MasterServer (Serverliste im Launcher).</summary>
@@ -42,6 +44,7 @@ public sealed class ServerContext
         Lobbies = new LobbyManager(() => Config);
         Recent = new RecentStore(Config.dataDir);
         Friends = new FriendStore(Config.dataDir);
+        Challenges = new ChallengeStore(Config.dataDir);
         Sessions = new SessionManager(Lobbies, Recent);
         Actions = new ServerActions(this);
     }

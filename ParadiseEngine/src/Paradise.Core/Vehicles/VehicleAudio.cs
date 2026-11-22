@@ -151,11 +151,20 @@ namespace Paradise.Core.Vehicles
                     else vol *= y;
                 }
                 if (!hasPitch) pitch = 1f;
+                // Nach StopLoops() (Motor aus) beim Wiederanlassen neu starten.
+                if (EngineOn && !v.Source.IsPlaying && v.Source.Clip != null) v.Source.Play();
                 v.Source.Pitch = Mathf.Clamp(pitch, 0.05f, 3f);
                 float want = EngineOn ? Mathf.Clamp01(vol * MasterVolume * v.Factor * (InteriorView ? InteriorEngineFactor : 1f)) : 0f;
                 v.Volume = Mathf.Lerp(v.Volume, want, dt * (EngineOn ? 20f : 6f));
                 v.Source.Volume = v.Volume;
             }
+        }
+
+        /// <summary>Dauergeräusche sofort beenden (Motor aus), ohne die Samples freizugeben.</summary>
+        public void StopLoops()
+        {
+            foreach (var v in _loops) { v.Volume = 0f; v.Source.Volume = 0f; v.Source.Stop(); }
+            foreach (var v in _triggers.Values) if (v.Source.IsPlaying) v.Source.Stop();
         }
 
         float Get(int id) => id >= 0 && id < _phys.Length ? _phys[id] : 0f;

@@ -77,7 +77,7 @@ namespace Paradise.Core.Flash
         }
 
         sealed class PinVar { public object Value; public bool Typed; }
-        sealed class PinPos { public string Label; public int Frame; public Instance Applied; }
+        sealed class PinPos { public string Label; public int Frame; public Instance Applied; public bool Always; }
         readonly Dictionary<string, PinVar> _pinVars = new Dictionary<string, PinVar>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, PinPos> _pinPos = new Dictionary<string, PinPos>(StringComparer.OrdinalIgnoreCase);
         int _pinScope;
@@ -108,9 +108,18 @@ namespace Paradise.Core.Flash
         /// <param name="path">The instance path.</param>
         /// <param name="label">The frame label to select.</param>
         /// <returns><see langword="true"/> if the label could be applied; otherwise, <see langword="false"/>.</returns>
-        public bool PinLabel(string path, string label)
+        public bool PinLabel(string path, string label) => PinLabel(path, label, false);
+        /// <summary>
+        /// Pinnt ein Frame-Label und wendet es jedes Frame erneut an. Für Listenzeilen, deren Film bei Hover
+        /// oder Auswahl den Frame wechselt und dabei den Zustand der Zelle überschreibt.
+        /// </summary>
+        /// <param name="path">Der Instanzpfad.</param>
+        /// <param name="label">Das Frame-Label.</param>
+        /// <param name="always">Auch innerhalb einer bestehenden Instanz ständig neu anwenden.</param>
+        /// <returns><see langword="true"/>, wenn das Label gesetzt werden konnte.</returns>
+        public bool PinLabel(string path, string label, bool always)
         {
-            var pp = new PinPos { Label = label, Frame = -1 }; _pinPos[path] = pp;
+            var pp = new PinPos { Label = label, Frame = -1, Always = always }; _pinPos[path] = pp;
             _applyingPins = true; bool ok = GotoLabel(path, label, false); _applyingPins = false;
             pp.Applied = InstanceOf(path); return ok;
         }
@@ -156,7 +165,7 @@ namespace Paradise.Core.Flash
                 foreach (var kv in _pinPos)
                 {
                     var inst = InstanceOf(kv.Key);
-                    if (inst == null || ReferenceEquals(inst, kv.Value.Applied)) continue;   // nur neu angelegte Clips (Zeitleiste hat sie ersetzt)
+                    if (inst == null || (!kv.Value.Always && ReferenceEquals(inst, kv.Value.Applied))) continue;   // nur neu angelegte Clips, außer bei Always-Pins
                     if (kv.Value.Label != null) GotoLabel(kv.Key, kv.Value.Label, false); else SetFrame(kv.Key, kv.Value.Frame);
                     kv.Value.Applied = inst;
                 }

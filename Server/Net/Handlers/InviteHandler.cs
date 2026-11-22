@@ -37,6 +37,7 @@ public sealed class InviteHandler : RequestHandler
             t.Invites.Add(new Invite(me.PlayerId, me.Nick, kind, DateTime.UtcNow));
         }
         Log.Info($"{me.Nick} lädt {t.Nick} ein ({kind})");
+        Ctx.Udp?.NotifyStatus(t);   // Einladung sofort anzeigen
         return new NetResponse { ok = true, online = Online };
     }
 }

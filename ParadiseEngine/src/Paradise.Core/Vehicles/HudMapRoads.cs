@@ -32,14 +32,35 @@ namespace Paradise.Core.Vehicles
         public sealed class Strip
         {
             public int Type; public Color32 Color; public float W;
+            /// <summary>Stabile Identität des Straßenstücks (unabhängig von der Listenreihenfolge).</summary>
+            public int RoadId, PieceIndex;
+            /// <summary>Schlüssel für den Discovery-State: road:&lt;roadId&gt;:piece:&lt;index&gt;.</summary>
+            public string Key = "";
             public float[] Cn = System.Array.Empty<float>(), Xz = System.Array.Empty<float>();
             public float MinX, MinZ, MaxX, MaxZ;
         }
         /// <summary>Kreisverkehr: R2 = R1 + Breite · W / 4 (RingWidth = JDET-Breite).</summary>
-        public sealed class Ring { public int Type; public Color32 Color; public float Cx, Cz, R1, R2, RingWidth, W; }
+        public sealed class Ring
+        {
+            public int Type; public Color32 Color; public float Cx, Cz, R1, R2, RingWidth, W;
+            /// <summary>Knoten-ID des Kreisverkehrs; Schlüssel ring:&lt;nodeId&gt;.</summary>
+            public int NodeId;
+            public string Key = "";
+        }
+
+        /// <summary>Schlüssel eines Straßenabschnitts – identisch mit dem von Discovery benutzten Format.</summary>
+        public static string RoadKey(int roadId, int pieceIndex) => "road:" + roadId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ":piece:" + pieceIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        /// <summary>Schlüssel eines Kreisverkehrs (an einen Knoten gebunden).</summary>
+        public static string RingKey(int nodeId) => "ring:" + nodeId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>Farbe gesperrter (noch nicht befahrener) Straßen – fest grau, nicht aus GamePC überschreibbar.</summary>
+        public static readonly Color32 LockedColor = new(100, 100, 100, 255);
 
         public readonly float[] Width = { 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f };
         public readonly Color32[] Unlocked = new Color32[8], Locked = new Color32[8];
+        /// <summary>Ändert sich bei jeder Discovery-Farbaktion; der BigMap-Mesh-Cache muss dann neu gebaut werden.</summary>
+        public int ColorVersion { get; private set; }
         public readonly List<Strip> Strips = new();
         public readonly List<Ring> Rings = new();
         /// <summary>Kreispunkte der exe (0xca1f1a: 24 Punkte, Winkel i · 2π / 23).</summary>
@@ -60,7 +81,8 @@ namespace Paradise.Core.Vehicles
             {
                 // exe-Daten: unlocked 0xff00ff00, locked 0xff0000ff (Bytes R,G,B,A wie die Skriptbefehle sie ablegen, 0x518640)
                 Unlocked[i] = i < 7 ? new Color32(0, 255, 0, 255) : new Color32(255, 0, 0, 255);
-                Locked[i] = new Color32(255, 0, 0, 255);
+                // Ohne GamePC: grau. Mit GamePC überschreiben SET_HUDMAP_ROAD_COLOR_* die Werte (Minimap und BigMap gleich).
+                Locked[i] = LockedColor;
             }
         }
 
@@ -107,7 +129,9 @@ namespace Paradise.Core.Vehicles
                     var s = BuildStrip(pc, pi == 0 ? n0 : null, pi == road.Pieces.Count - 1 ? n1 : null, 2f * h.Width[t]);
                     if (s == null) continue;
                     s.Type = t;
-                    s.Color = h.Unlocked[t];
+                    s.RoadId = road.Id; s.PieceIndex = pi;
+                    s.Key = RoadKey(road.Id, pi);
+                    s.Color = h.Locked[t];   // bis Discovery die aufgedeckten Stücke einfärbt
                     h.Strips.Add(s);
                 }
             }
@@ -117,11 +141,24 @@ namespace Paradise.Core.Vehicles
                 int t = kv.Value;
                 float w = 2f * h.Width[t];
                 float r1 = 0.5f * j.RingWidth + j.RingRadius;
-                h.Rings.Add(new Ring { Type = t, Color = h.Unlocked[t], Cx = j.RingCenter.X, Cz = j.RingCenter.Y, R1 = r1, R2 = r1 + j.RingWidth * w * 0.25f, RingWidth = j.RingWidth, W = w });
+                h.Rings.Add(new Ring { Type = t, Color = h.Locked[t], Cx = j.RingCenter.X, Cz = j.RingCenter.Y, R1 = r1, R2 = r1 + j.RingWidth * w * 0.25f, RingWidth = j.RingWidth, W = w, NodeId = kv.Key, Key = RingKey(kv.Key) });
             }
             // Zeichenreihenfolge der exe: Typ 0..6
             h.Strips.Sort((x, y) => x.Type.CompareTo(y.Type));
             return h;
+        }
+
+        /// <summary>
+        /// Farben aus dem Discovery-State nachziehen: grau = gesperrt/noch nicht befahren,
+        /// farbig = aufgedeckt. Wird bei Load, Unlock und Refresh aufgerufen.
+        /// </summary>
+        public void ApplyDiscovery(System.Func<string, bool> isUnlocked)
+        {
+            foreach (var s in Strips)
+                s.Color = isUnlocked(s.Key) ? Unlocked[s.Type] : Locked[s.Type];
+            foreach (var r in Rings)
+                r.Color = isUnlocked(r.Key) ? Unlocked[r.Type] : Locked[r.Type];
+            ColorVersion++;
         }
 
         static Strip? BuildStrip(IaPiece pc, IaNode? start, IaNode? end, float w)

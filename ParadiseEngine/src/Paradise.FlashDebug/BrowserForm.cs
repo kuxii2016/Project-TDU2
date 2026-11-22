@@ -1,6 +1,4 @@
-using System.Drawing;
 using System.Globalization;
-using System.Windows.Forms;
 
 namespace Paradise.FlashDebug;
 
@@ -264,9 +262,14 @@ internal sealed partial class BrowserForm : Form
     {
         var g = new DataGridView
         {
-            Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
-            AutoGenerateColumns = false, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.CellSelect,
-            BackgroundColor = SystemColors.Window, BorderStyle = BorderStyle.Fixed3D,
+            Dock = DockStyle.Fill,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            AutoGenerateColumns = false,
+            RowHeadersVisible = false,
+            SelectionMode = DataGridViewSelectionMode.CellSelect,
+            BackgroundColor = SystemColors.Window,
+            BorderStyle = BorderStyle.Fixed3D,
         };
         foreach (var c in cols)
         {

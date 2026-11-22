@@ -20,7 +20,7 @@ public static class Log
     private static StreamWriter? _file;
     private static readonly ConcurrentQueue<string> _ring = new();
     private const int RingSize = 200;
-    public static bool isFullLog { get; set; } = false;
+    public static bool isFullLog { get; set; } = true;
 
     public static LogLevel MinLevel { get; set; } = LogLevel.Info;
 

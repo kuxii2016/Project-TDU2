@@ -48,7 +48,7 @@ public sealed class FlyCamera
         if (input.IsKeyDown(InputState.VK_S)) Position -= fwd * step;
         if (input.IsKeyDown(InputState.VK_D)) Position -= right * step;
         if (input.IsKeyDown(InputState.VK_A)) Position += right * step;
-        if (input.IsKeyDown(InputState.VK_SPACE)) Position += Vector3.UnitY * step;
-        if (input.IsKeyDown(InputState.VK_CONTROL)) Position -= Vector3.UnitY * step;
+        //if (input.IsKeyDown(InputState.VK_SPACE)) Position += Vector3.UnitY * step;
+        //if (input.IsKeyDown(InputState.VK_CONTROL)) Position -= Vector3.UnitY * step;
     }
 }

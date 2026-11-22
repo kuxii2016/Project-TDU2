@@ -2,7 +2,6 @@
 // Läuft ausschließlich auf dem Spiel-Thread (Pump()).
 
 using Paradise.Core.Flash;
-using Paradise.Core.Math;
 using System.Globalization;
 
 namespace Paradise.FlashDebug;
@@ -17,8 +16,12 @@ internal static class SnapshotBuilder
     {
         var s = new FlashSnapshot
         {
-            SelectedPath = st.SelPath, Status = st.Status, ShowPaths = st.ShowPaths,
-            UsageVar = st.UsageVar, Usage = new List<string>(st.Usage), AutoCall = st.AutoCall,
+            SelectedPath = st.SelPath,
+            Status = st.Status,
+            ShowPaths = st.ShowPaths,
+            UsageVar = st.UsageVar,
+            Usage = new List<string>(st.Usage),
+            AutoCall = st.AutoCall,
             ExpandAll = st.ExpandAll,
         };
         int count = 0;
@@ -53,8 +56,14 @@ internal static class SnapshotBuilder
             // Immer einen Wurzelknoten anlegen – auch wenn alle Kinder weggefiltert werden.
             s.Nodes.Add(new FlashNodeInfo
             {
-                Path = "/", Name = "/", Kind = "root", Depth = 0,
-                Visible = true, IsClip = true, HasChildren = p2.Root?.List.Count > 0, Expanded = true,
+                Path = "/",
+                Name = "/",
+                Kind = "root",
+                Depth = 0,
+                Visible = true,
+                IsClip = true,
+                HasChildren = p2.Root?.List.Count > 0,
+                Expanded = true,
             });
             int nodesBefore = s.Nodes.Count;
             _truncated = false;
@@ -67,8 +76,11 @@ internal static class SnapshotBuilder
                 // Der Filter hat alles weggeschnitten: einmal ungefiltert zeigen, damit der Baum nicht leer wirkt.
                 var all = new BrowserState
                 {
-                    OnlyVisible = false, OnlyClips = false, Filter = "",
-                    Expanded = st.Expanded, SelPath = st.SelPath,
+                    OnlyVisible = false,
+                    OnlyClips = false,
+                    Filter = "",
+                    Expanded = st.Expanded,
+                    SelPath = st.SelPath,
                 };
                 Walk(p2.Root, "/", 0, all, s.Nodes);
                 s.FilterIgnored = true;
@@ -164,8 +176,12 @@ internal static class SnapshotBuilder
             bool expanded = st.ExpandAll || st.Expanded.Contains(p) || (filtered && kids);
             dest.Add(new FlashNodeInfo
             {
-                Path = p, Name = name, Kind = kind, Depth = depth,
-                Visible = d.Visible, IsClip = d.Sprite != null,
+                Path = p,
+                Name = name,
+                Kind = kind,
+                Depth = depth,
+                Visible = d.Visible,
+                IsClip = d.Sprite != null,
                 HasChildren = hasKids,
                 Expanded = expanded,
                 Alpha = d.Cx.Mul.w < 0.999f ? " α" + d.Cx.Mul.w.ToString("0.00", Inv) : "",
@@ -266,7 +282,9 @@ internal static class SnapshotBuilder
                 if (f.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     det.ClipFns.Add(new FlashFnInfo
                     {
-                        Key = f.Key.Substring(prefix.Length), Params = f.Value, CallKey = f.Key
+                        Key = f.Key.Substring(prefix.Length),
+                        Params = f.Value,
+                        CallKey = f.Key
                     });
         }
 

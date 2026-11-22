@@ -37,6 +37,8 @@ public sealed partial class DevMenu
         Menu("Streaming", StreamingMenu),
         Menu("Weather & Time of Day", WeatherMenu),
         Menu("GPS / Bookmarks", GpsMenu),
+        Menu("Wrecks / Detector", WrecksMenu),
+        Menu("Cruising / Discovery (roads, dealers)", DiscoveryMenu),
         Menu("Audio", AudioMenu),
 
         Head("PLAYER & SAVE"),

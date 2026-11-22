@@ -43,6 +43,8 @@ public sealed partial class MapStreamer : IDisposable
     public bool ShowStars = true;
     /// <summary>Stromleitungen aus den Sektor-.pen (Durchhang/Aufhängepunkte angenähert, siehe PowerWires).</summary>
     public bool ShowPowerWires = true;
+    /// <summary>Rotierende Windrad-Rotoren aus den verschachtelten _sc-Bänken der Sektoren (fu_eolea_act).</summary>
+    public bool LoadRotors = true;
     public float SeaLevel = 0f;
     /// <summary>Höhe der Meeresfläche relativ zu SeaLevel (Unity-Projekt: −1,5 m; Original-Spiel: 0).</summary>
     public float WaterOffset = -0.15f;
@@ -101,6 +103,7 @@ public sealed partial class MapStreamer : IDisposable
         // Loch-Kacheln des HMAP als Zellen [z * cells + x]: dort liefert TryGetGroundHeight keine Rasterhöhe (BLOCK gilt).
         public bool[]? DriveHoles;
         public PowerWires.PenFile? Pen;
+        public WindTurbines.SectorData? Rotors;
         public List<(Spot spot, BankModel model)> Exteriors = new();
     }
 
@@ -130,6 +133,7 @@ public sealed partial class MapStreamer : IDisposable
         public GrassRenderer? Grass;
         public int Instances;
         public PowerWires.SectorWires? Wires;
+        public WindTurbines.SectorRuntime? Rotors;
         public readonly List<StaticCollider> Colliders = new();
         public SectorPayload? Data;
         // Loch-Kacheln des HMAP (Raster [z * cells + x], cells = Heights.Size - 1): Rückfall-Bodenhöhe meidet sie.
@@ -305,6 +309,7 @@ public sealed partial class MapStreamer : IDisposable
 
             Log.Debug("Build Island LOD...");
             BuildIslandLod();
+            LoadAircraft();
 
             if (ShowWater)
             {
@@ -460,6 +465,8 @@ public sealed partial class MapStreamer : IDisposable
         tp = Lap("Streamer: Texturen nachladen", tp);
         PollLibrary();
         tp = Lap("Streamer: Bibliothek", tp);
+        PollAircraft(dt);
+        tp = Lap("Streamer: Flugzeuge", tp);
         PollActors();
         _actorBodies?.Sync();
         tp = Lap("Streamer: Akteure", tp);
@@ -468,6 +475,9 @@ public sealed partial class MapStreamer : IDisposable
         TrafficLights.Tick();
         UpdatePowerWires(dt);
         tp = Lap("Streamer: Ampeln/Stromleitungen", tp);
+        // Rotorwinkel laufen in Spielkoordinaten weiter; RootMatrix/RootOffset werden erst beim Zeichnen angewandt.
+        foreach (var st in _sectors.Values) st.Rotors?.Tick((float)_time);
+        tp = Lap("Streamer: Windräder", tp);
         long tc = System.Diagnostics.Stopwatch.GetTimestamp();
         UpdateColliders();
         PerfLog.Add("Kollider eintragen", System.Diagnostics.Stopwatch.GetElapsedTime(tc).TotalMilliseconds);
@@ -730,6 +740,7 @@ public sealed partial class MapStreamer : IDisposable
         float skirt = SectorSkirt;
         bool cutTunnels = CutTunnelPortals && objs;
         bool wires = ShowPowerWires;
+        bool rotors = LoadRotors;
         var st = new SectorState { Key = k };
         var exteriors = LoadSpotExteriors ? SpotsInSector(k) : new List<(Spot, string)>();
         var tex = _textures;
@@ -761,6 +772,12 @@ public sealed partial class MapStreamer : IDisposable
                 Skirts = skirts,
                 DriveHoles = holes,
             };
+            // Rotoren liegen in einer verschachtelten _sc-Bank des Sektors (C++: RotorBank.loadFromMemory).
+            if (rotors)
+            {
+                try { payload.Rotors = WindTurbines.Load(model, path, tex); }
+                catch (Exception ex) { Log.Warn($"Windräder {k}: {ex.Message}"); }
+            }
             if (wires && model.Bank != null)
             {
                 try
@@ -1003,6 +1020,23 @@ public sealed partial class MapStreamer : IDisposable
             st.Nodes.Add(node);
         }
         tbs = Lap("Sektor bauen: Objekte", tbs);
+
+        // Windrad-Rotoren: eigene, pro Frame bewegte RenderObjects im selben Spielkoordinatensystem.
+        // Der Node wird wie jeder andere Sektor-Node gezeichnet; CollectSector/Render hängen RootMatrix dran.
+        if (LoadRotors && data.Rotors != null)
+        {
+            st.Rotors = WindTurbines.Build(data.Rotors, origin, _textures, st.Res, _opt, _renderer);
+            if (st.Rotors != null)
+            {
+                st.Nodes.Add(st.Rotors.Node);
+                Log.Info($"Sektor {st.Key}: {st.Rotors.Count} Windrad-Rotoren");
+            }
+            else
+            {
+                foreach (var b in data.Rotors.Banks) b.Model.Release();
+            }
+        }
+        tbs = Lap("Sektor bauen: Windräder", tbs);
 
         if (LoadGrass && st.Model.Grass != null && _grassTypes != null && _grassAtlas != null && st.Model.Heights != null)
         {
@@ -1556,6 +1590,7 @@ public sealed partial class MapStreamer : IDisposable
         _sectors.Remove(k);
         st.Nodes.Clear();
         st.Placements = null;
+        st.Rotors?.Release(); st.Rotors = null;
         st.Grass?.Dispose(); st.Grass = null;
         foreach (var c in st.Colliders) Physics?.Remove(c);
         st.Colliders.Clear();
@@ -1761,6 +1796,7 @@ public sealed partial class MapStreamer : IDisposable
             drawn += _sectorDrawn[i];
             _renderSectors[i].Grass?.Render(_renderer, root);
         }
+        DrawAircraft(_renderer, cameraGame, root, planes);
         var waterMat = _oceanIsland ?? MaterialFactory.Water;
         if (_waterMesh != null && waterMat != null && !EditorHideWater)
             _renderer.DrawMesh(_waterMesh, waterMat, Matrix4x4.CreateTranslation(_waterPos) * root);
@@ -2204,6 +2240,7 @@ public sealed partial class MapStreamer : IDisposable
         _wetGround = null;
         DestroyMapTerrain();
         _powerWires.Dispose();
+        DisposeAircraft();
         foreach (var job in _colliderJobs)
         {
             try

@@ -10,7 +10,7 @@ namespace Paradise.Launcher;
 /// </summary>
 public sealed class LauncherConfig
 {
-    public string MasterUrl { get; set; } = "http://localhost:8080";
+    public string MasterUrl { get; set; } = "http://kuxii.de:25564";
     public string PlayerName { get; set; } = Environment.UserName;
     /// <summary>Pfad zur Spiel-exe. Leer = neben dem Launcher suchen.</summary>
     public string GameExe { get; set; } = "";

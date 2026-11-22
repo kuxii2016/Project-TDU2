@@ -348,9 +348,10 @@ public class GAME_MODE_LIVING : InteriorUtils
         _ui.SetVariable("/:NbStickersBought", (sv?.stickerBoards?.Count ?? 0).ToString());
         _ui.SetVariable("/:EdCarSticked", (sv?.liveries?.Count ?? 0).ToString());
         _ui.SetVariable("/:NbHousesTotal", Math.Max(1, sv?.houses?.Count ?? 0).ToString());
-        foreach (var z in new[] { "NbCarUpgraded", "NbEventsWon", "NbWrecksFound", "NbPhotosIDone", "NbPhotosHDone", "NbFriends", "NbFriendsInvited",
+        foreach (var z in new[] { "NbCarUpgraded", "NbEventsWon", "NbPhotosIDone", "NbPhotosHDone", "NbFriends", "NbFriendsInvited",
                                   "NbInstantWon", "NbInstantTotal", "NbMultiWon", "NbMultiTotal", "NbCoopPlayed", "NbChasePlayed", "NbSurgeriesBought" })
             _ui.SetVariable("/:" + z, "0");
+        _ui.SetVariable("/:NbWrecksFound", (Paradise.Game.Gameplay.Wrecks.Current?.FoundCount ?? 0).ToString());
         foreach (var z in new[] { "PlayTime", "GameCompletion", "UnlockedRoadsPercent", "LongestCruise", "BestJump", "BestDrift", "BestDodgeChain", "BestFrogSession" })
             _ui.SetVariable("/:" + z, "--");
         if (l == null) return;

@@ -32,6 +32,12 @@ public sealed class RequestRouter
         Add(new LobbyJoinHandler(ctx));
         Add(new RecentHandler(ctx));
         Add(new FriendHandler(ctx));
+        Add(new HouseHandler(ctx));
+        Add(new HouseGetHandler(ctx));
+        Add(new ChallengeUploadHandler(ctx));
+        Add(new ChallengeListHandler(ctx));
+        Add(new ChallengeGetHandler(ctx));
+        Add(new ChallengeResultHandler(ctx));
     }
 
     void Add(RequestHandler h) => _handlers[h.Op] = h;

@@ -29,6 +29,7 @@ public sealed class Session
     public string Avatar = "";
     public string Mood = "", MoodTxt = "";   // MyTDULife
     public int PhotoVer;
+    public int HouseVer;                     // My House: Änderungszähler der Einrichtung (op "house")
 
     // Lobby (LobbyManager) und Weiterleitung
     public int Lobby;                        // 0 = noch keine

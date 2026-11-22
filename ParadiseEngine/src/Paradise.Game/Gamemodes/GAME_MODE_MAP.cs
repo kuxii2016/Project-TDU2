@@ -11,6 +11,7 @@ using CarDatabase = Paradise.Core.Vehicles.CarDatabase;
 using CarPhysics = Paradise.Core.Vehicles.CarPhysics;
 using ChallengeModes = Paradise.Game.Racing.ChallengeModes;
 using CultureInfo = System.Globalization.CultureInfo;
+using DiscoverySystem = Paradise.Game.Gameplay.Discovery;
 using FlashHost = Paradise.Core.Flash.FlashHost;
 using FlashInput = Paradise.Core.Flash.FlashInput;
 using FlashLocalization = Paradise.Core.Flash.FlashLocalization;
@@ -55,9 +56,18 @@ public class GAME_MODE_MAP : GameModeHandler
     static readonly ScreenDef[] _screens = { ScreenDefs.Map };
     public override IReadOnlyList<ScreenDef> Screens => _screens;
 
+    /// <summary>Aktive Karteninstanz – Discovery aktualisiert die Dealer-Sichtbarkeit live.</summary>
+    static GAME_MODE_MAP? _active;
+    public static void RefreshDiscoverySpots()
+    {
+        var map = _active;
+        if (map != null && map._open) map.BuildSpots();
+    }
+
     /// <summary>Öffnen mit der Taste "map" (M) aus der Freifahrt; keine Welt/kein Film: zurück ins Fahren.</summary>
     public override void Enter(IGameModeContext ctx, Gamemode from)
     {
+        _active = this;
         _ctx = ctx;
         _view.Bind(ctx);
         Attach(ctx.Open(ScreenDefs.Map));
@@ -246,6 +256,7 @@ public class GAME_MODE_MAP : GameModeHandler
 
     public override void Exit(IGameModeContext ctx, Gamemode to)
     {
+        if (ReferenceEquals(_active, this)) _active = null;
         Finish();
         // Teleport zu Händler/Haus/Club …: wie im Spiel gleich hinein (Unity EnterWhenReady)
         var pe = _pendingEnter; _pendingEnter = null;
@@ -476,6 +487,7 @@ public class GAME_MODE_MAP : GameModeHandler
                 {
                     string? label = Minimap.SpotLabel(s.Code);
                     if (label == null) continue;
+                    if (!SpotUnlocked(label, s)) continue;   // Haus/Händler/Laden erst nach aufgedeckter Straße
                     _spots.Add(new MapSpot { spot = s, label = label, cup = cupByCode.TryGetValue(s.Code, out int ci) ? ci : -1 });
                 }
             // Lesezeichen (nur auf der großen Karte, gespeichert je Spieler und Insel)
@@ -483,6 +495,8 @@ public class GAME_MODE_MAP : GameModeHandler
             foreach (var b in TDU2Bookmarks.All)
                 if (string.Equals(b.Island ?? "", isl, StringComparison.OrdinalIgnoreCase))
                     _spots.Add(new MapSpot { spot = new Spot { Code = "#BOOKMARK_" + b.Id, Position = b.Pos, Position2 = b.Pos, Index = -1 }, label = "bookmark", bookmark = b.Id });
+            // Wrecks zeigen auf der grossen Karte bewusst keine Icons (Retail). Die nativen
+            // Zaehler in map.bnk werden weiterhin in UpdateOverlay() versorgt.
         }
         int extra = 0; foreach (var e in _spots) if (e.cup >= 0) extra++;
         Log.Info("Karte: " + _spots.Count + " Spots mit Symbol" + (_contestCup >= 0 ? " (Wettbewerb)" : ", davon " + extra + " Meisterschaften"));
@@ -498,12 +512,21 @@ public class GAME_MODE_MAP : GameModeHandler
         ApplyLod(true);
     }
 
+    /// <summary>Häuser, Händler, Läden und Werkstätten erscheinen erst, wenn ihre Straße aufgedeckt ist.</summary>
+    static bool SpotUnlocked(string label, Spot spot)
+    {
+        if (!DiscoverySystem.IsGatedSpotLabel(label)) return true;
+        var d = DiscoverySystem.Current;
+        return d == null || d.IsDealerVisible(spot.Code ?? "", spot.Position);
+    }
+
     /// <summary>Spot im gewählten Reiter der Filterleiste? 0 Herausforderungen, 2 Orte für den Avatar, 3 Orte für Fahrzeuge,
     /// 5 eigene Orte (Lesezeichen + Favoriten).</summary>
     bool FilterPass(MapSpot ms)
     {
         if (_contestCup >= 0) return true;
         if (ms.bookmark >= 0) return _filter == 5;
+        if (!SpotUnlocked(ms.label, ms.spot)) return false;
         int cat = SpotCategory(ms);
         return _filter switch { 0 => cat == 0, 2 => cat == 2, 3 => cat == 3, 5 => TDU2Bookmarks.IsFavorite(ms.spot.Code), _ => false };   // 1 Multi, 4 Spieler: folgen
     }
@@ -532,6 +555,15 @@ public class GAME_MODE_MAP : GameModeHandler
         var ui = _ui; var s = _ctx.Terrain?.Streamer;
         if (ui == null || s == null || _closing) return;
         var vm = _ctx.Vehicles?.Manager;
+        // Native Wreck-Zähler der Karte (map.bnk): gesamt/gefunden in der aktuellen Cruising-Zone
+        var wr = Paradise.Game.Gameplay.Wrecks.Current;
+        if (wr != null)
+        {
+            var (wt, wf) = wr.CountsInArea(wr.AreaAt(vm?.PositionGame ?? System.Numerics.Vector3.Zero));
+            ui.SetValue("/:AreaWrecksTotal", wt);
+            ui.SetValue("/:AreaWrecksFound", wf);
+            ui.SetValue("/:m_WrecksFound", wr.FoundCount);
+        }
         if (vm?.Current != null)
         {
             var g = ToGui(s.GameToRender(vm.PositionGame));
@@ -1250,7 +1282,10 @@ public class GAME_MODE_MAP : GameModeHandler
         var mm = _ctx.Vehicles?.Manager?.Minimap; var s = _ctx.Terrain?.Streamer;
         if (mm == null || s == null || !_cursorWorld.HasValue) return false;
         var g = s.RenderToGame(_cursorWorld.Value);
-        if (!mm.NearestRoad(g, MathF.Max(25f, _view.CurWidth * 0.025f), out var rp)) return false;
+        float radius = MathF.Max(25f, _view.CurWidth * 0.025f);
+        if (!mm.NearestRoad(g, radius, out var rp)) return false;
+        var discovery = DiscoverySystem.Current;
+        if (discovery != null && !discovery.IsPositionOnUnlockedRoad(new Vector3(rp.X, 0f, rp.Z), radius)) return false;
         game = new Vector3(rp.X, s.TryGetMapGroundHeight(rp.X, rp.Z, out float y) ? y : float.NaN, rp.Z);
         return true;
     }

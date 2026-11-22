@@ -35,6 +35,7 @@ public sealed class InviteReplyHandler : RequestHandler
         if (!r.accept)
         {
             host.Notice($"declined:{me.PlayerId}:{me.Nick}");
+            Ctx.Udp?.NotifyStatus(host);   // Antwort sofort beim Einladenden (open_answer)
             Log.Info($"{me.Nick} lehnt die Einladung von {host.Nick} ab");
             return NetResponse.Ok();
         }
@@ -45,6 +46,7 @@ public sealed class InviteReplyHandler : RequestHandler
     NetResponse AcceptGame(Session me, Session host, string kind)
     {
         host.Notice($"joined:{me.PlayerId}:{me.Nick}");
+        Ctx.Udp?.NotifyStatus(host);
         Log.Info($"{me.Nick} folgt der Einladung von {host.Nick} ({kind})");
         Ctx.Lobbies.JoinHost(me, host);   // Gast in die Lobby des Gastgebers
         var resp = new NetResponse { ok = true, inviteKind = kind };
@@ -73,6 +75,7 @@ public sealed class InviteReplyHandler : RequestHandler
         me.RideWith = host.PlayerId;
         host.Passenger = me.PlayerId;
         host.Notice($"accepted:{me.PlayerId}:{me.Nick}");
+        Ctx.Udp?.NotifyStatus(host);
         Log.Info($"{me.Nick} fährt bei {host.Nick} mit");
         return new NetResponse { ok = true, rideWith = host.PlayerId };
     }

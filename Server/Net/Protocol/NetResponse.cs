@@ -52,6 +52,9 @@ public sealed class NetResponse
     public List<FriendEntry> friendRequests = new(); // friend: Anfragen an mich (warten auf meine Antwort)
     public List<string> friendPending = new();   // friend: meine offenen Anfragen
     public string friendResult = "";             // friend request: sent / already_friends / already_sent / became_friends
+    public List<ChallengeEntry> challenges = new(); // challlist: aktive Challenges (CRC/Community); challget: die Karte der Challenge
+    public string challData = "";                // challget: .ig2 (Base64)
+    public int challId;                          // challup/challget: Id der Challenge
 
     public static NetResponse Ok() => new() { ok = true };
 }

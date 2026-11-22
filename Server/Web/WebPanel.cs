@@ -525,6 +525,62 @@ public sealed class WebPanel
             return Json(new { ok });
         }));
 
+        // ---- Community Racing Center: offizielle Challenges (.ig2) hochladen, alle Challenges verwalten ----
+        app.MapGet("/crc", (HttpContext http) => Require(http, u => Results.Content(Pages.CrcPage(u.Nick, u.Permission), "text/html")));
+        app.MapGet("/crc/list", (HttpContext http) => Require(http, u => Json(_ctx.Challenges.All().Select(c => new
+        {
+            id = c.id,
+            author = c.author,
+            name = c.name,
+            description = c.description,
+            mode = c.mode,
+            island = c.island,
+            islandName = c.island == 0 ? "Ibiza" : c.island == 1 ? "Hawaii" : "Casino",
+            length = c.length,
+            checkpoints = c.checkpoints,
+            fee = c.fee,
+            reward = c.reward,
+            duration = c.duration,
+            postTo = c.postTo,
+            official = c.official,
+            created = c.created,
+            expires = c.expires,
+            active = c.IsActive,
+            removed = c.removed,
+        }))));
+        app.MapPost("/crc/upload", (HttpContext http) => Require(http, u =>
+        {
+            if (Data.Account.Rank(u.Permission) < 2) return Json(new { ok = false, error = "keine_rechte" });
+            var f = http.Request.ReadFormAsync().GetAwaiter().GetResult();
+            var file = f.Files["file"];
+            if (file == null || file.Length == 0) return Json(new { ok = false, error = "keine_datei" });
+            byte[] bytes;
+            using (var ms = new MemoryStream()) { file.CopyTo(ms); bytes = ms.ToArray(); }
+            int fee = int.TryParse(f["fee"], out var fe) ? fe : 0, reward = int.TryParse(f["reward"], out var rw) ? rw : 0;
+            var c = _ctx.Challenges.Add(u.Nick, bytes, f["name"].ToString(), f["description"].ToString(), fee, reward, 1, 0, true, out string err);
+            if (c == null) return Json(new { ok = false, error = err });
+            _ctx.Audit.Add("mod", u.Nick, $"CRC-Challenge #{c.id} hochgeladen: {c.name}");
+            Log.Info($"[Mod] {u.Nick}: CRC-Challenge #{c.id} \"{c.name}\" hochgeladen ({file.FileName}, Spielart {c.mode})");
+            return Json(new { ok = true, id = c.id });
+        }));
+        app.MapPost("/crc/remove", (HttpContext http) => Require(http, u =>
+        {
+            if (Data.Account.Rank(u.Permission) < 2) return Json(new { ok = false, error = "keine_rechte" });
+            var f = http.Request.ReadFormAsync().GetAwaiter().GetResult();
+            int id = int.TryParse(f["id"], out var i) ? i : 0;
+            bool ok = _ctx.Challenges.Remove(id);
+            if (ok) { _ctx.Audit.Add("mod", u.Nick, $"Challenge #{id} entfernt"); Log.Info($"[Mod] {u.Nick}: Challenge #{id} entfernt"); }
+            return Json(new { ok });
+        }));
+        app.MapGet("/crc/file", (HttpContext http) => Require(http, u =>
+        {
+            int id = int.TryParse(http.Request.Query["id"], out var i) ? i : 0;
+            var c = _ctx.Challenges.Get(id);
+            string path = Path.Combine(_ctx.Config.dataDir, "challenges", id + ".ig2");
+            if (c == null || !File.Exists(path)) return Results.NotFound();
+            return Results.File(File.ReadAllBytes(path), "application/octet-stream", "challenge_" + id + ".ig2");
+        }));
+
         // ---- Config-Editor ----
         app.MapGet("/config", (HttpContext http) => Require(http, u => Results.Content(Pages.ConfigPage(u.Nick, u.Permission), "text/html")));
         app.MapGet("/config/data", (HttpContext http) => Require(http, u => Json(ConfigView())));

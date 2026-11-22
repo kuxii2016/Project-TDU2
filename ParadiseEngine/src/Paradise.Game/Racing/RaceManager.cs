@@ -482,9 +482,9 @@ public sealed class RaceManager
     {
         string? why = null;
         if (State != RaceState.Running || Race == null) return;
-        if (Race.PenaltyLevel <= 0)
+        if (!RaceConfig.PenaltiesAlways && Race.PenaltyLevel <= 0)
         {
-            why = "Prüfung ohne Strafstufe (PeLv 0)";
+            why = "Rennen ohne Strafen (PeLv/offR 0)";
         }
         else if (impact < RaceConfig.PenaltyMinImpact) why = "zu leicht (< " + RaceConfig.PenaltyMinImpact.ToString("0.0") + " m/s)";
         else if (_clock - _lastPenaltyT < 1.5f) why = "gleicher Treffer (< 1,5 s)";

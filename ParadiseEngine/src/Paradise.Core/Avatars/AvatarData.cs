@@ -531,6 +531,9 @@ public static class AvatarConfigs
         if (cfg == null) return;
         if (TDU2Session.Save == null) { _offline = cfg.Encode(); LocalChanged?.Invoke(); return; }
         TDU2Session.Save.avatar = cfg.Encode();
+        // Friseur/Kleidungsladen ändern auch ownedClothes und Punkte – die Fortschrittsmodule
+        // müssen ihren Cache sofort neu bauen, nicht erst beim nächsten Autosave/Login.
+        TDU2Session.NotifyChanged();
         if (TDU2Session.LoggedIn) TDU2Session.SaveAsync();
         LocalChanged?.Invoke();
     }

@@ -677,7 +677,34 @@ public class GAME_MODE_LOGIN : GameModeHandler
             bool server = sv.starterChosen || sv.ownedCars.Count > 0 || sv.hasPosition || sv.story > 0;
             bool exists = TDU2SaveGame.Exists(r.nick);
             Log.Info($"Savegame {r.nick}: Server hat Fortschritt={server} (Autos {sv.ownedCars.Count}, Story {sv.story}), lokale DATA={exists} ({TDU2SaveGame.PathFor(r.nick)})");
-            if (server) { TDU2SaveGame.WriteAsync(r.nick, sv, db, exists ? "lokale DATA mit dem Server-Spielstand aktualisiert" : "lokale DATA fehlte – aus dem Server-Spielstand gebaut"); return; }
+            if (server)
+            {
+                // Der Server speichert keine Wreck-Funde. Ohne Merge überschreibt der Login die
+                // lokale DATA mit einem Spielstand ohne foundWrecks – jeder bereits gefundene
+                // Wrack wäre beim naechsten Start wieder "neu" und zeigte den 1/28-Funddialog.
+                if (exists && TDU2SaveGame.TryRead(r.nick, db, out var localWrecks, out _))
+                {
+                    if ((sv.foundWrecks == null || sv.foundWrecks.Count == 0) && localWrecks.foundWrecks != null && localWrecks.foundWrecks.Count > 0)
+                    {
+                        sv.foundWrecks = localWrecks.foundWrecks;
+                        Log.Info("Savegame: Wreck-Funde aus lokaler DATA uebernommen (" + string.Join("; ", sv.foundWrecks.ConvertAll(e => e.island + "[" + string.Join(",", e.indices) + "]")) + ")");
+                    }
+                    if ((sv.wreckEvents == null || sv.wreckEvents.Count == 0) && localWrecks.wreckEvents != null && localWrecks.wreckEvents.Count > 0)
+                        sv.wreckEvents = localWrecks.wreckEvents;
+                    // Der Server speichert die Straßen-Freischaltung nicht zuverlässig: lokale DATA gewinnt,
+                    // sonst wären alle Straßen beim nächsten Start wieder grau und die Dealer verschwunden.
+                    if ((sv.exploredRoads == null || sv.exploredRoads.Count == 0) && localWrecks.exploredRoads != null && localWrecks.exploredRoads.Count > 0)
+                        sv.exploredRoads = localWrecks.exploredRoads;
+                    if ((sv.unlockedDealers == null || sv.unlockedDealers.Count == 0) && localWrecks.unlockedDealers != null && localWrecks.unlockedDealers.Count > 0)
+                        sv.unlockedDealers = localWrecks.unlockedDealers;
+                    if (sv.cruisingRoadPoints == 0 && localWrecks.cruisingRoadPoints > 0)
+                        sv.cruisingRoadPoints = localWrecks.cruisingRoadPoints;
+                    if ((sv.cruisingRoadEvents == null || sv.cruisingRoadEvents.Count == 0) && localWrecks.cruisingRoadEvents != null && localWrecks.cruisingRoadEvents.Count > 0)
+                        sv.cruisingRoadEvents = localWrecks.cruisingRoadEvents;
+                    if (sv.roadDiscoveryVersion <= 0) sv.roadDiscoveryVersion = localWrecks.roadDiscoveryVersion > 0 ? localWrecks.roadDiscoveryVersion : 1;
+                }
+                TDU2SaveGame.WriteAsync(r.nick, sv, db, exists ? "lokale DATA mit dem Server-Spielstand aktualisiert" : "lokale DATA fehlte – aus dem Server-Spielstand gebaut"); return;
+            }
             if (!exists) { TDU2SaveGame.WriteAsync(r.nick, sv, db, "neues Profil – lokale DATA angelegt"); return; }
             if (!TDU2SaveGame.TryRead(r.nick, db, out var local, out string why)) { Log.Warn("Savegame: lokale DATA nicht lesbar (" + why + ") – Server-Spielstand bleibt"); return; }
             bool localProgress = local.starterChosen || local.ownedCars.Count > 0 || local.hasPosition || local.story > 0;

@@ -207,6 +207,7 @@ const RANK = {player:0,helper:1,mod:2,admin:3,dev:3};
       {{Nav("/accounts", "Konten", "☰", active)}}
       {{Nav("/news", "News", "✉", active)}}
       {{Nav("/surveys", "Umfragen", "☑", active)}}
+      {{Nav("/crc", "Racing Center", "⚑", active)}}
       {{Nav("/config", "Konfiguration", "⚙", active)}}
     </nav>
     <div class="side-foot">
@@ -602,6 +603,63 @@ async function load(){{
       <div style=""margin-top:8px"">${{s.open?`<button class=""btn ghost sm"" onclick=""act(${{s.id}},'close')"">Schließen</button>`:`<button class=""btn ghost sm"" onclick=""act(${{s.id}},'open')"">Wieder öffnen</button>`}}
         <button class=""btn ghost sm"" onclick=""act(${{s.id}},'reset')"">Stimmen zurücksetzen</button>
         <button class=""btn ghost sm"" onclick=""act(${{s.id}},'delete')"">Löschen</button></div>
+    </div>`;}}).join('');
+}}
+load(); setInterval(load,15000);
+</script>");
+
+    public static string CrcPage(string nick, string permission) => Shell(nick, permission, "/crc", "Racing Center",
+        "Community Racing Center: offizielle Challenges (CRC) und Challenges der Spieler", $@"
+<div class=""card"" style=""max-width:820px;width:100%;margin:0 auto"">
+  <div class=""head""><h2>CRC-Challenge hochladen</h2></div>
+  <div class=""body"">
+    <div class=""field""><label>Challenge-Datei (.ig2 aus dem Race-Editor oder Bnk/ig2)</label><input id=""file"" type=""file"" accept="".ig2""></div>
+    <div class=""field-row"" style=""margin-top:14px"">
+      <div class=""field""><label>Name (leer = aus der Datei, max. 63 Zeichen)</label><input id=""name"" maxlength=""63""></div>
+      <div class=""field""><label>Beschreibung (leer = aus der Datei)</label><input id=""description"" maxlength=""63""></div>
+    </div>
+    <div class=""field-row"" style=""margin-top:14px"">
+      <div class=""field""><label>Gebühr ($)</label><input id=""fee"" type=""number"" min=""0"" value=""0""></div>
+      <div class=""field""><label>Basisbelohnung ($)</label><input id=""reward"" type=""number"" min=""0"" value=""0""></div>
+    </div>
+    <div class=""hint"" style=""margin-top:12px"">CRC-Challenges laufen nicht ab und erscheinen im Spiel in der Spielhalle (Community Racing Center). Spieler-Challenges kommen aus dem Race-Editor (Hochladen).</div>
+    <div style=""margin-top:20px""><button class=""btn"" onclick=""upload()"">Hochladen</button></div>
+  </div>
+</div>
+<div class=""card"" style=""margin-top:18px"">
+  <div class=""head""><h2>Challenges</h2><div class=""grow""></div><span class=""chip"" id=""cCount"">0</span></div>
+  <div class=""body"" id=""chall""><div class=""empty"">Lädt…</div></div>
+</div>
+<script>
+{PermScript(permission)}
+const MODES={{0:'Zeitfahren',1:'Radar',3:'Rennen',7:'Event',10:'Tempo',11:'Abstand',12:'Folgen'}};
+const POST=['Alle','Freunde','Klub','Freunde & Klub'];
+async function upload(){{
+  const f=document.getElementById('file').files[0];
+  if(!f){{toast('Bitte eine .ig2-Datei wählen',true);return;}}
+  const res=await api('/crc/upload',{{file:f,name:document.getElementById('name').value,description:document.getElementById('description').value,
+    fee:document.getElementById('fee').value,reward:document.getElementById('reward').value}},'POST');
+  if(res&&res.ok){{toast('Challenge #'+res.id+' hochgeladen.'); document.getElementById('file').value=''; load();}} else toast('Fehler: '+((res&&res.error)||''),true);
+}}
+async function removeC(id){{
+  if(!confirm('Challenge #'+id+' entfernen?')) return;
+  const res=await api('/crc/remove',{{id}},'POST');
+  if(res&&res.ok){{toast('Challenge #'+id+' entfernt.'); load();}} else toast('Aktion fehlgeschlagen',true);
+}}
+async function load(){{
+  const L=await api('/crc/list')||[];
+  document.getElementById('cCount').textContent=L.length;
+  const box=document.getElementById('chall');
+  if(!L.length){{box.innerHTML='<div class=""empty"">Noch keine Challenges.</div>';return;}}
+  box.innerHTML=L.map(c=>{{
+    const state=c.removed?'<span class=""badge off"">entfernt</span>':c.active?'<span class=""badge on"">aktiv</span>':'<span class=""badge off"">abgelaufen</span>';
+    const kind=c.official?'<span class=""badge on"">CRC</span>':'<span class=""badge"">Spieler</span>';
+    return `<div style=""padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)"">
+      <div style=""display:flex;gap:10px;align-items:center;flex-wrap:wrap""><span class=""muted id"">#${{c.id}}</span><b class=""name"">${{esc(c.name)}}</b>${{kind}}${{state}}
+        <span class=""muted"">${{esc(MODES[c.mode]||('Spielart '+c.mode))}} · ${{esc(c.islandName)}} · ${{(c.length/1000).toFixed(1)}} km · ${{c.checkpoints}} Tore · Gebühr ${{c.fee}} $ · Belohnung ${{c.reward}} $ · ${{esc(POST[c.postTo]||'')}} · ${{esc(c.author)}} · ${{esc(new Date(c.created).toLocaleString())}}${{c.expires?' · bis '+esc(new Date(c.expires).toLocaleString()):''}}</span></div>
+      ${{c.description?`<div class=""muted"" style=""margin-top:4px"">${{esc(c.description)}}</div>`:''}}
+      <div style=""margin-top:8px""><a class=""btn ghost sm"" href=""/crc/file?id=${{c.id}}"">.ig2 laden</a>
+        ${{c.removed?'':`<button class=""btn ghost sm"" onclick=""removeC(${{c.id}})"">Entfernen</button>`}}</div>
     </div>`;}}).join('');
 }}
 load(); setInterval(load,15000);

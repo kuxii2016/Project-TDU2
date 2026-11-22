@@ -1,6 +1,3 @@
-using System.Drawing;
-using System.Windows.Forms;
-
 namespace Paradise.FlashDebug;
 
 internal sealed partial class BrowserForm
@@ -248,14 +245,19 @@ internal sealed partial class BrowserForm
         // einziger scrollbarer TopDown-Container für alle Blöcke.
         var host = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoScroll = true, Padding = new Padding(8),
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            Padding = new Padding(8),
         };
         page.Controls.Add(host);
 
         var top = new FlowLayoutPanel
         {
-            AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false,
+            AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
             Padding = new Padding(0, 0, 0, 10),
         };
         _focus = new Label { AutoSize = true, Width = 1000 };
@@ -266,7 +268,9 @@ internal sealed partial class BrowserForm
 
         var pad = new TableLayoutPanel
         {
-            AutoSize = true, ColumnCount = 3, RowCount = 2,
+            AutoSize = true,
+            ColumnCount = 3,
+            RowCount = 2,
             Padding = new Padding(0, 0, 0, 10),
         };
         pad.Controls.Add(InputButton("▲", "Move", "up"), 1, 0);
@@ -277,8 +281,10 @@ internal sealed partial class BrowserForm
 
         var buttons = new FlowLayoutPanel
         {
-            AutoSize = true, FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false, Padding = new Padding(0, 0, 0, 10),
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 0, 0, 10),
         };
         foreach (var b in new[] { "A", "B", "X", "Y", "LB", "RB" })
         {
@@ -291,7 +297,9 @@ internal sealed partial class BrowserForm
 
         var custom = new FlowLayoutPanel
         {
-            AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
         };
         custom.Controls.Add(new Label { Text = "Eigene Eingabe", AutoSize = true, Padding = new Padding(0, 5, 8, 0) });
         var fn = new TextBox { Width = 200 };

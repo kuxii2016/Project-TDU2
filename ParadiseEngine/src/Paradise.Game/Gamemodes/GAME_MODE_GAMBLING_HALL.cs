@@ -4,9 +4,10 @@ using Paradise.Core.Flash;
 using Paradise.Core.Formats;
 using Paradise.Core.Online;
 using Paradise.Core.Racing;
-using Paradise.Core.Vehicles;
+using Paradise.Game.Racing;
 using Paradise.Game.Screens;
 using System.Globalization;
+using System.Linq;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -19,13 +20,15 @@ namespace Paradise.Game.Gamemodes;
 /// Ablauf "gamblin_bar" (Film):
 ///   gamblin_hall -> OpenGamblin -> bar_open (SetMenu: "gamb:chal:open", Knöpfe Challenges / Meine Challenges / Hall of Fame)
 ///   -> bar_games -> bar_list "loading" (ASFlashList "bar_list", 9 Spalten; wartet auf _root.Clip.isListLoaded)
+///   -> created_challenges (ASFlashList "created_challenges", 9 Spalten): "Meine Challenges" – vom Editor hochgeladene Ids aus dem Spielstand
 ///   -> Zeile bestätigt -> details_load (wartet auf _root.IsCardLoaded) -> details_open (details.initCard liest die Karte)
 ///   -> A: IsChallengesValid -> Bild 182: ohne _root.NotEnoughMoney "gamb:chva" (Challenge annehmen) -> Rennen.
 ///   "wmon"/"gofr" = zurück ins Laufen.
 /// Daten: eigener TDU2Server ("challlist", "challget", "challres"); die Challenge läuft über den Challenge-Ablauf der Testfahrt
 /// (GAME_MODE_CHAMPIONSHIP.BeginTest). Gebühr wird beim Annehmen vom Geld (Spielstand) abgezogen.
-/// [OFFEN] Tafeln (score_board, score_board_orc), private Liste, periodische Wettbewerbe (ORC), Bewertungen (Votes), Auszahlung
-/// des Topfes bei Ablauf, Ergebnisbildschirm temp_result in der Halle.
+/// Nach dem Rennen bleibt das Auto stehen; results.bnk/Gamblin_vote zeigt das Ergebnis, das Menü entscheidet zwischen
+/// Freie Fahrt ("Weiter") und Rückkehr in die Halle ("Back to CRC"); "Results" ist noch nicht portiert.
+/// [OFFEN] Tafeln (score_board, score_board_orc), private Liste, periodische Wettbewerbe (ORC), Auszahlung des Topfes.
 /// </summary>
 public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
 {
@@ -43,8 +46,9 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
     bool _hooked;
     string? _pending;
 
-    // Liste (bar_list) und Karte
+    // Liste (bar_list = alle, created_challenges = "Meine Challenges") und Karte
     VmfPlayer.FlashList? _list;
+    string? _listName;
     readonly List<ChallengeEntry> _items = new();
     Task<NetResponse>? _listTask, _cardTask, _resultTask;
     bool _listLoaded;
@@ -52,12 +56,29 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
     byte[]? _selData;
 
     // Rennen
-    enum Phase { None, WaitCar, Racing }
+    enum Phase { None, WaitCar, Racing, Results }
     Phase _phase;
     Spot? _spot;
     RaceDefinition? _def;
     ChallengeEntry? _racing;
     float _waitT;
+
+    // Nach dem Ziel: weich ausbremsen, dann hart fixieren (inkl. Motor-Sound)
+    bool _braking;
+    float _brakeT;
+    const float BrakeRamp = 0.9f;       // Bremspedal von 0 auf 1
+    const float BrakeStopKmh = 1.5f;    // unter dieser Geschwindigkeit steht das Auto
+    const float BrakeTimeout = 8f;      // Sicherheitsnetz bei steilem Gelände
+
+    readonly RaceResults _results = new();
+
+    //TODO: Fix Focusing: Other elements pop out Chat, Back Delete not Imput from Settings because close cmd UI Refresh Missing on Settings etc..
+    public GAME_MODE_GAMBLING_HALL()
+    {
+        _results.Next += OnResultsFreeroam;   // "Back to CRC" (FSCommand nets)
+        _results.Quit += OnResultsBackToCrc;    // "Weiter" (FSCommand rest/quit/gofr)
+        _results.BackToCRC += OnResultsBackToCrc; // "Back to CRC" (FSCommand back)
+    }
 
     /// <summary>SelectableString eines Punkts der Spielhalle (igamha: Barman, Tafeln, Privat-Liste, periodische Wettbewerbe).</summary>
     internal static bool IsHallItem(string? item) => !string.IsNullOrEmpty(item) && HallItems.Contains(item);
@@ -88,6 +109,13 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
             _hooked = true;
         }
         if (from == Gamemode.GAME_MODE_PAUSE) return;
+        if (_phase == Phase.Results)
+        {
+            // results.bnk (RaceResults) liegt über dem HUD – die Hallen-Filmoberfläche bleibt dabei verborgen.
+            _ui.Visible = false;
+            _ui.MouseEnabled = false;
+            return;
+        }
         if (_phase != Phase.None) { _ui.Visible = false; return; }
         _ui.Visible = true;
         _ui.MouseEnabled = true;
@@ -125,14 +153,15 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         if (_listTask != null && _listTask.IsCompleted) ListDone();
         if (_cardTask != null && _cardTask.IsCompleted) CardDone();
         if (_resultTask != null && _resultTask.IsCompleted) ResultDone();
+        if (_phase == Phase.Results) { BrakeToStop(dt); _results.Update(ctx, dt); return; }
         if (_phase == Phase.WaitCar) { WaitForCar(dt); return; }
         if (_phase == Phase.Racing) return;
         if (!InteriorUtils.Inside) { GameMode.Set(Gamemode.GAME_MODE_FREERIDE); return; }
         if (ctx.Terrain != null) ctx.Terrain.Input.CursorLocked = false;
         if (_ui != null) _ui.MouseEnabled = !FlashDialog.Active;
         if (FlashDialog.Active) FlashDialog.Update();
-        // bar_list "loading": der Film wartet auf isListLoaded (uploader.initLoading setzt es zurück) – setzen, sobald die Liste da ist
-        if (_listLoaded && _ui != null) _ui.SetValue("/bar_list:isListLoaded", true);
+        // Liste "loading": der Film wartet auf isListLoaded (uploader.initLoading setzt es zurück) – setzen, sobald die Liste da ist
+        if (_listLoaded && _ui != null && _listName != null) _ui.SetValue("/" + _listName + ":isListLoaded", true);
     }
 
     void SetCommonVars(VmfPlayer ui)
@@ -148,7 +177,7 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
     void BackToRoom()
     {
         if (_ui != null) _ui.Visible = false;
-        _list = null; _listLoaded = false;
+        _list = null; _listName = null; _listLoaded = false;
         GameMode.Set(InteriorUtils.Inside ? InteriorUtils.RoomMode : Gamemode.GAME_MODE_FREERIDE);
     }
 
@@ -168,13 +197,16 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         Log.NotImplemented("Spielhalle Befehl nicht portiert: " + cmd + (string.IsNullOrEmpty(args) ? "" : " " + args));
     }
 
-    // ================================================================== Liste der Challenges (bar_list)
+    // ================================================================== Liste der Challenges (bar_list / created_challenges)
     void OnListCreated(VmfPlayer.FlashList l)
     {
-        if (GameMode.Current != Gamemode.GAME_MODE_GAMBLING_HALL || _ui == null || l.Name != "bar_list") return;
+        if (GameMode.Current != Gamemode.GAME_MODE_GAMBLING_HALL || _ui == null) return;
+        bool mine = l.Name == "created_challenges";
+        if (!mine && l.Name != "bar_list") return;
         _list = l;
+        _listName = l.Name;
         _listLoaded = false;
-        // Spalten der Zeile (Textvariablen von /bar_list/lineN): Name, Gebühr, Belohnung, Restlaufzeit, Insel, Stimmen
+        // Spalten der Zeile (Textvariablen von /<liste>/lineN): Name, Gebühr, Belohnung, Restlaufzeit, Insel, Stimmen
         l.ColumnVars = new[] { "game_tag", "fee", "reward", "duration", "island", "votes" };
         l.Rows.Clear(); _items.Clear();
         var client = TDU2Session.Client;
@@ -193,8 +225,14 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         NetResponse? r = null;
         try { r = t.Result; } catch (Exception ex) { Log.Warn("Spielhalle: Liste nicht geladen: " + ex.GetBaseException().Message); }
         var l = _list;
+        bool mine = _listName == "created_challenges";
         _items.Clear();
-        if (r != null && r.ok && r.challenges != null) _items.AddRange(r.challenges);
+        if (r != null && r.ok && r.challenges != null)
+        {
+            // "Meine Challenges": nur die vom Editor hochgeladenen Ids aus dem Spielstand.
+            if (mine) _items.AddRange(r.challenges.Where(c => TDU2Session.Save.uploadedChallenges.Contains(c.id)));
+            else _items.AddRange(r.challenges);
+        }
         else if (r != null) Log.Warn("Spielhalle: Liste abgelehnt: " + r.error);
         if (l != null && _ui != null)
         {
@@ -205,19 +243,19 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
             _ui.ListLoaded(l);
         }
         _listLoaded = true;
-        if(_items.Count == 0)
-                BackToRoom();
-        else
-            _ui.PlayLabel("/bar_list", "open");
-        Log.Info("Spielhalle: " + _items.Count + " Challenges vom Server");
+        if (_items.Count == 0 && !mine)
+            BackToRoom();
+        else if (_items.Count > 0 && _ui != null && _listName != null)
+            _ui.PlayLabel("/" + _listName, "open");
+        Log.Info("Spielhalle: " + _items.Count + (mine ? " eigene" : "") + " Challenges vom Server");
     }
 
     /// <summary>Zeile gezeichnet: Symbol der Spielart (content/gm/ic: time/speed/trap) und Klasse (content/category: all).</summary>
     void OnListLineDrawn(VmfPlayer.FlashList l, int line, int index)
     {
-        if (_ui == null || l != _list || index < 0 || index >= _items.Count) return;
+        if (_ui == null || l != _list || _listName == null || index < 0 || index >= _items.Count) return;
         var c = _items[index];
-        string lp = "/bar_list/line" + line + "/content";
+        string lp = "/" + _listName + "/line" + line + "/content";
         _ui.GotoLabel(lp + "/gm/ic", "modes", false);
         _ui.GotoLabel(lp + "/gm/ic/modes", ModeIcon(c.mode), false);
         _ui.GotoLabel(lp + "/category", "all", false);
@@ -316,8 +354,16 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         if (c == null || _selData == null) { Log.Warn("Spielhalle: keine Challenge geladen"); return; }
         RaceDefinition def;
         try { def = RaceRepository.FromIge2(Ige2File.Parse(_selData), "CRC_" + c.id, null); }
-        catch (Exception ex) { Log.Warn("Spielhalle: Challenge unlesbar: " + ex.Message); return; }
-        if (def.Checkpoints.Count == 0) { Log.Warn("Spielhalle: Challenge ohne Tore"); return; }
+        catch (Exception ex)
+        {
+            Log.Warn("Spielhalle: Challenge unlesbar: " + ex.Message);
+            return;
+        }
+        if (def.Checkpoints.Count == 0)
+        {
+            Log.Warn("Spielhalle: Challenge ohne Tore");
+            return;
+        }
         // Werte der Original-Vorlage, die nicht zur Challenge gehören (wie die Testfahrt des Editors)
         def.RefSplitsMs.Clear(); def.SilverTimeMs = 0; def.BronzeTimeMs = 0; def.BotCount = 0; def.Opponents.Clear(); def.CarId = 0; def.RewardMoney = 0;
         def.TargetTimeMs = !string.IsNullOrEmpty(c.bestNick) && !CrcText.HigherIsBetter(c.mode) ? c.bestScore : 0;
@@ -328,7 +374,7 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         }
         _def = def; _racing = c; _spot = InteriorUtils.CurrentSpot;
         if (_ui != null) _ui.Visible = false;
-        _list = null; _listLoaded = false;
+        _list = null; _listName = null; _listLoaded = false;
         Log.Info($"Spielhalle: Challenge #{c.id} \"{c.name}\" angenommen (Gebühr {c.fee} $)");
         InteriorUtils.ExitInterior();
         _phase = Phase.WaitCar; _waitT = 0f;
@@ -347,23 +393,160 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         GAME_MODE_CHAMPIONSHIP.BeginTest(_ctx, _def, forced, OnRaceEnd);
     }
 
-    /// <summary>Ende der Fahrt: Wertung an den Server (nur im Ziel), danach zurück in die Spielhalle.</summary>
+    /// <summary>
+    /// Ende der Fahrt: Wertung an den Server (nur im Ziel). Das Auto bleibt an der Stoppposition stehen;
+    /// results.bnk (Gamblin_vote) zeigt das Ergebnis, danach entscheidet das Menü über Freifahrt oder Halle.
+    /// </summary>
     void OnRaceEnd(bool completed)
     {
-        _phase = Phase.None;
         var c = _racing;
         var res = GAME_MODE_CHAMPIONSHIP.LastTestResult;
         if (completed && c != null && res != null && TDU2Session.LoggedIn && TDU2Session.Client != null)
         {
+            //
+            //TODO: changme Dont Trust Client Methode, Nothing Calculate the Client -> Server only
             int score = CrcText.HigherIsBetter(c.mode) ? (int)(GAME_MODE_CHAMPIONSHIP.LastTestTopKmh * 100f) : res.FinalTimeMs;
             string car = _ctx?.Vehicles?.Manager?.Current?.Car?.FileName ?? "";
             _resultTask = TDU2Session.Client.Send(new NetRequest { op = "challres", session = TDU2Session.SessionId, target = c.id, score = score, kind = car });
-            Log.Info($"Spielhalle: Challenge #{c.id} gefahren – Wertung {ScoreText(c.mode, score)}");
-            //Update to Server Zeit, Current Car, Current Tuning, Level
+            Log.Info($"Spielhalle: Challenge #{c.id} gefahren – Wertung {ScoreText(c.mode, score)} (Antwort läuft)");
         }
         else Log.Info("Spielhalle: Challenge nicht beendet – keine Wertung");
-        // zurück in die Halle (Laufen); ohne Spot in die Freifahrt
-        if (_spot != null && InteriorUtils.EnterSpot(_spot)) return;
+
+        BeginBraking();
+        _phase = Phase.Results;
+        if (_ui != null) { _ui.Visible = false; _ui.MouseEnabled = false; }
+
+        string scoreText = res == null ? "--" : CrcText.HigherIsBetter(c?.mode ?? 0)
+            ? ScoreText(c?.mode ?? 0, (int)(GAME_MODE_CHAMPIONSHIP.LastTestTopKmh * 100f))
+            : ScoreText(c?.mode ?? 0, res.FinalTimeMs);
+        _results.Manager = _ctx?.Vehicles?.Manager;
+        if (!_results.ShowGambling(c?.name, c == null ? null : ModeName(c.mode), scoreText, scoreText, 0, c)) //reward erst ma end vom race!! c?.reward ?? 0, c))
+        {
+            Log.Warn("Spielhalle: results.bnk fehlt – zurück in die Freifahrt");
+            _phase = Phase.None;
+            FinishBraking();
+            RestoreCar();
+            GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
+            return;
+        }
+        // Modus übernehmen, damit Run() den Ergebnis-Film weiter füttert (sonst schaltet Meisterschaft auf Freifahrt).
+        GameMode.Set(Gamemode.GAME_MODE_GAMBLING_HALL);
+
+        // Ablauf liegt jetzt in RaceResults.ShowGambling:
+        //   gme_ref_time (Neuer Rekord/Toptime) -> ENTER -> Gamblin_vote (Herzen)
+        //   -> gamb:vtok -> score mit den vorgegebenen Werten -> ENTER -> end_menu.
+    }
+
+    #region Vehicle Breaking after Race
+    /// <summary>Nach dem Ziel weich bremsen: Physik läuft weiter, Spielereingaben bleiben gesperrt.</summary>
+    void BeginBraking()
+    {
+        _braking = false;
+        _brakeT = 0f;
+        var vehicles = _ctx?.Vehicles;
+        if (vehicles == null) return;
+        vehicles.Suspended = false;   // Physical update muss laufen, damit das Auto ausrollt
+        var vm = vehicles.Manager;
+        if (vm == null) return;
+        vm.ExternalControl = true;    // DriveInput überschreibt unsere Pedale nicht
+        var car = vm.Current;
+        if (car == null) return;
+        car.AccelPedal = 0f;
+        car.BrakePedal = 0f;
+        car.Steer = 0f;
+        car.HandBrake = 0f;
+        vm.Audio?.SetHorn(false);
+        _braking = true;
+        Log.Info("Spielhalle: Auto bremst nach dem Ziel aus (" + car.SpeedKmh.ToString("0", CultureInfo.InvariantCulture) + " km/h)");
+    }
+
+    /// <summary>Wird je Frame aus Run() aufgerufen, bis das Auto steht.</summary>
+    void BrakeToStop(float dt)
+    {
+        if (!_braking) return;
+        _brakeT += dt;
+        var vehicles = _ctx?.Vehicles;
+        var vm = vehicles?.Manager;
+        var car = vm?.Current;
+        if (vehicles == null || vm == null || car == null) { _braking = false; return; }
+        // Sanft anbremsen statt harter Vollbremsung; Lenkung gerade halten.
+        float pressure = System.Math.Clamp(_brakeT / BrakeRamp, 0f, 1f);
+        car.AccelPedal = 0f;
+        car.Steer = 0f;
+        car.HandBrake = 0f;
+        car.BrakePedal = pressure;
+        if (car.SpeedKmh > BrakeStopKmh && _brakeT < BrakeTimeout) return;
+        FinishBraking();
+    }
+
+    /// <summary>Stillstand: Geschwindigkeit null, Fixierung und Motor-Sound aus.</summary>
+    void FinishBraking()
+    {
+        if (!_braking) return;
+        _braking = false;
+        var vehicles = _ctx?.Vehicles;
+        var vm = vehicles?.Manager;
+        if (vehicles != null) vehicles.Suspended = true;   // ab jetzt exakt fix stehen bleiben
+        if (vm == null) return;
+        vm.ExternalControl = true;
+        vm.Audio?.SetHorn(false);
+        var car = vm.Current;
+        if (car != null)
+        {
+            car.SetVelocity(System.Numerics.Vector3.Zero);
+            car.AccelPedal = 0f;
+            car.BrakePedal = 0f;
+            car.HandBrake = 1f;
+        }
+        vm.StopEngine();
+        Log.Info("Spielhalle: Auto steht – Motor/Sound aus");
+    }
+
+    void RestoreCar()
+    {
+        _braking = false;
+        var vehicles = _ctx?.Vehicles;
+        if (vehicles == null) return;
+        vehicles.Suspended = false;
+        var vm = vehicles.Manager;
+        if (vm == null) return;
+        vm.ExternalControl = false;
+        var car = vm.Current;
+        if (car == null) return;
+        car.AccelPedal = 0f; car.BrakePedal = 0f; car.HandBrake = 0f;
+        // EngineRunning bleibt aus; die erste Fahreingabe startet den Motor wieder (DriveInput/StartEngine).
+    }
+    #endregion
+
+    /// <summary>Menü "Back to CRC": Ergebnis schließen, Auto freigeben und das Interieur der Spielhalle betreten.</summary>
+    void OnResultsBackToCrc()
+    {
+        if (_phase != Phase.Results) return;
+        _phase = Phase.None;
+        RestoreCar();
+        Log.Info($"Spielhalle: Back to CRC – Spot {_spot?.Code ?? "-"}, Inside={InteriorUtils.Inside}");
+        if (_spot != null)
+        {
+            bool entered = InteriorUtils.EnterSpot(_spot, false);
+            Log.Info($"Spielhalle: EnterSpot({_spot.Code}) = {entered}, Inside={InteriorUtils.Inside}");
+            if (entered)
+            {
+                // EnterInterior setzt _spot, aber der Interieur-Modus muss explizit aktiviert werden,
+                // sonst greift die Normalkamera/Freifahrt wieder.
+                GameMode.Set(InteriorUtils.RoomMode);
+                return;
+            }
+        }
+        Log.Warn("Spielhalle: kein Spot für die Rückkehr – Freifahrt");
+        GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
+    }
+
+    /// <summary>Menü "Weiter": Freie Fahrt, das Auto bleibt dort stehen, wo die Fahrt endete.</summary>
+    void OnResultsFreeroam()
+    {
+        if (_phase != Phase.Results) return;
+        _phase = Phase.None;
+        RestoreCar();
         GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
     }
 

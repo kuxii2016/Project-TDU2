@@ -52,6 +52,16 @@ loop.Add(terrain);
 // Fahrzeuge (Laden/Aufbau/Zeichnen in Paradise.Core.Vehicles)
 var vehicles = new Paradise.Game.World.VehicleModule(renderer, terrain, window, loop.Overlay);
 loop.Add(vehicles);
+// Wrecks/Metalldetektor: Daten aus wrecks.bnk, Anzeige ausschließlich im nativen HUD (hud.bnk/map.bnk)
+loop.Add(new Paradise.Game.Gameplay.Wrecks(terrain, vehicles));
+// Cruising/Road-Discovery: befahrene Straßen aufdecken (grau -> farbig), Dealer freischalten, Pause/F1 anbinden
+var discovery = new Paradise.Game.Gameplay.Discovery(terrain, vehicles);
+loop.Add(discovery);
+// Wettbewerbs-Fortschritt (Rennschule/Meisterschaften/Pokale) für Pausemenü und UserProgress
+loop.Add(new Paradise.Game.Gameplay.Racing());
+// Collection- und Social-Fortschritt (DBRewardXP + Savegame-Zähler) für Pausemenü und UserProgress
+loop.Add(new Paradise.Game.Gameplay.Collectable());
+loop.Add(new Paradise.Game.Gameplay.Social());
 // Original-Oberflächen je Spielmodus (Flash/Sounds aus Paradise.Core)
 // Login wie im Original nach dem Bootmenü: Online-Profile (Server aus --server) oder Offline-Profile (nur lokale DATA).
 // Direkt Freifahrt ohne Profil: --freeride

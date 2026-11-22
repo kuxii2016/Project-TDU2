@@ -29,6 +29,20 @@ namespace Paradise.Core.Online
         public List<BookmarkEntry> bookmarks = new List<BookmarkEntry>();
         /// <summary>Als Favorit markierte Spots der großen Karte (Spot-Code).</summary>
         public List<string> favoriteSpots = new List<string>();
+        /// <summary>Gefundene Wracks je Insel – 0-basierte Indizes aus wrecks.bnk/entities.xmb (wie im Original).</summary>
+        public List<WreckFoundEntry> foundWrecks = new List<WreckFoundEntry>();
+        /// <summary>Ausgezahlte Wreck-Events (CRUISING_WRECK_PART_&lt;ISLAND&gt;_AREA&lt;n&gt;) mit Anzahl.</summary>
+        public List<HouseEntry> wreckEvents = new List<HouseEntry>();
+        /// <summary>Cruising/Discovery: Version des Road-Holders (0 = alter Spielstand ohne Daten).</summary>
+        public int roadDiscoveryVersion = 1;
+        /// <summary>Aufgedeckte Straßenstücke je Insel (stabile IDs: CRUISING_&lt;ISLAND&gt;_ROADS_AREA&lt;n&gt;_&lt;id&gt;).</summary>
+        public List<RoadDiscoveryEntry> exploredRoads = new List<RoadDiscoveryEntry>();
+        /// <summary>Durch aufgedeckte Straßen freigeschaltete Dealer (Spot-Codes ECD/ECDC/EBD).</summary>
+        public List<string> unlockedDealers = new List<string>();
+        /// <summary>Punkte aus neu befahrenen Straßen (Cruising-Fortschritt, zusätzlich zu den Wreck-Punkten).</summary>
+        public int cruisingRoadPoints;
+        /// <summary>Ausgezahlte Straßen-Meilensteine (CRUISING_&lt;ISLAND&gt;_ROADS_AREA&lt;n&gt;_&lt;10|25|50|75|100&gt;).</summary>
+        public List<HouseEntry> cruisingRoadEvents = new List<HouseEntry>();
         /// <summary>My House: Einrichtung je Haus (Spot-Code) – Möbel-Bank je Entity, Material je Fläche.</summary>
         public List<HouseLayout> houses = new List<HouseLayout>();
         /// <summary>Welches Auto auf welchem Stellplatz welcher Garage steht (Garage -> Fahrzeugliste, Platz wechseln). Leer bzw. unvollständig:
@@ -72,6 +86,29 @@ namespace Paradise.Core.Online
         public List<RecentEntry> recentPlayers = new List<RecentEntry>();
         /// <summary>Meldungen der Freunde (TDU Media).</summary>
         public List<FriendNewsEntry> friendNews = new List<FriendNewsEntry>();
+        /// <summary>Community Racing Center: vom Race-Editor hochgeladene Challenges (Server-Ids, "Meine Challenges").</summary>
+        public List<int> uploadedChallenges = new List<int>();
         public string savedAt = "";
+    }
+
+    /// <summary>Gefundene Wracks einer Insel – Indizes sind die 0-basierten Array-Indizes aus wrecks.bnk.</summary>
+    [Serializable]
+    public sealed class WreckFoundEntry
+    {
+        public string island = "";
+        public List<int> indices = new List<int>();
+    }
+
+    /// <summary>
+    /// Aufgedeckte Straßen einer Insel. Die IDs sind stabil gegenüber Listenänderungen (keine reinen Array-Indizes):
+    /// CRUISING_IBIZA_ROADS_AREA{area}_{segment}, CRUISING_HAWAI_ROADS_AREA{area}_{segment}.
+    /// areas enthält optional die Zähler je Gebiet (k = Area-Index, v = Anzahl aufgedeckter Segmente).
+    /// </summary>
+    [Serializable]
+    public sealed class RoadDiscoveryEntry
+    {
+        public string island = "";
+        public List<string> ids = new List<string>();
+        public List<HouseEntry> areas = new List<HouseEntry>();
     }
 }

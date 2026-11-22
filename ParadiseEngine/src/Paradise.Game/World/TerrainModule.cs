@@ -22,6 +22,7 @@ public sealed class TerrainModule : GameModule
     private LightingConfig _light = new();
     private FrameGlobals _globals = FrameGlobals.Default;
     private MapStreamer? _streamer;
+    private Birds? _birds;
     private PhysicsWorld? _physics;
     private string _groundInfo = "";
 
@@ -119,6 +120,21 @@ public sealed class TerrainModule : GameModule
             _weather.Init(s.Index);
         }
         _streamer = s;
+        if (s.Index != null)
+        {
+            var birds = new Birds();
+            try
+            {
+                string birdBank = Path.Combine(s.Index.FxDir, "details", "birds.bnk");
+                if (birds.Load(birdBank, s.Textures, _renderer)) _birds = birds;
+                else birds.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Vögel konnten nicht geladen werden: " + ex.Message);
+                birds.Dispose();
+            }
+        }
         return true;
     }
 
@@ -131,8 +147,9 @@ public sealed class TerrainModule : GameModule
     {
         if (_world.Root == null || _physics == null || string.IsNullOrEmpty(island)) return false;
         string? previous = _streamer?.Island;
-        var oldStreamer = _streamer; var oldWeather = _weather;
-        _streamer = null; _weather = null;
+        var oldStreamer = _streamer; var oldWeather = _weather; var oldBirds = _birds;
+        _streamer = null; _weather = null; _birds = null;
+        oldBirds?.Dispose();
         oldWeather?.Dispose();
         oldStreamer?.Dispose();   // entlädt alle Kacheln und trägt ihre Kollider aus der Physikwelt aus
         _pick = new List<string>();
@@ -174,6 +191,15 @@ public sealed class TerrainModule : GameModule
             _globals = g;
         }
 
+        // Vögel: Schwärme in Spielkoordinaten, Bodenabfrage über die grobe Inselhöhe.
+        // Regen (> 0.55 = starker Regen laut Spec) lässt sie verschwinden; sun = 1 - NightK.
+        if (_birds != null)
+        {
+            var strm = _streamer;
+            _birds.Tick(time.DeltaTime, _globals.RainSpecs.X, 1f - _globals.NightK,
+                (float x, float z, float y, out float h) => strm.TryGetMapGroundHeight(x, z, out h));
+        }
+
         // Physik-Test: Boden unter der Kamera per Raycast (wie die Radkontakte der Fahrzeuge)
         var camGame = _streamer.ViewerGame;
         tp = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -204,12 +230,17 @@ public sealed class TerrainModule : GameModule
             if (MapTerrainShown) { _streamer.RenderMapTerrain(_cam.Position, g); return; }   // nur die Kartenkacheln
         }
         _streamer.Render(_cam.Position, view * proj, g);
+        // Vögel werden im selben (transparenten) Szenenpass wie Regen gezeichnet; Position + RootOffset
+        // erfolgt in Birds.Draw, die Kameraposition muss deshalb in Spielkoordinaten übergeben werden.
+        if (!MapView) _birds?.Draw(_renderer, _streamer.RenderToGame(_cam.Position), _streamer.RootOffset, view, 1f - g.NightK);
         if (!MapView) _weather?.DrawRain(_renderer, new Vector3(view.M11, view.M21, view.M31));
         if (!MapView) _weather?.DrawLightning(_renderer, _streamer.RootOffset, _cam.Override?.forward ?? _cam.Forward);
     }
 
     public override void Unload()
     {
+        _birds?.Dispose();
+        _birds = null;
         _weather?.Dispose();
         _streamer?.Dispose();
         _streamer = null;

@@ -144,7 +144,6 @@ public abstract partial class InteriorUtils : GameModeHandler
         return Lang(0xE86, "Ort (§SPOTNAME§)").Replace("§SPOTNAME§", TitleFor(_kind));
     }
 
-    // ------------------------------------------------------------------ Mitspieler im Interieur (Game/Online/RoomAvatars, Unity TDU2Interiors)
     /// <summary>
     /// Kennung des aktuellen Raums (Spot + geladene Bank, z.B. Casino-Halle/Pokerraum getrennt); Mitspieler mit gleicher Kennung sieht
     /// man als Spielfigur. 0 = nicht im Interieur. Häuser (EPH) sind privat: dort nur Mitspieler aus der eigenen Gruppe (IsPrivateRoom).
@@ -233,7 +232,6 @@ public abstract partial class InteriorUtils : GameModeHandler
     internal static string InteriorDir => Path.Combine(BnkDir ?? "", "interior");
     internal static VehicleManager? Vm => _v.Manager;
 
-    // ------------------------------------------------------------------ Draußen: Einfahrt erkennen (Unity UpdateOutside)
     /// <summary>Freifahrt: nahe Einfahrt anzeigen (HUD /HUD/enter), mit Bestätigen betreten. true = betreten.</summary>
     internal static bool UpdateOutside(float dt)
     {
@@ -291,7 +289,6 @@ public abstract partial class InteriorUtils : GameModeHandler
         return false;
     }
 
-    // ------------------------------------------------------------------ Start im zuletzt besuchten Interieur (Original Driver.LastSpotWorld)
     internal static string? _restore; internal static float _restoreUntil = -1f;
 
     /// <summary>Login: Spielstand-Interieur ("Code||Spotname") merken; nach dem Spawnen in der Freifahrt geht es hinein.</summary>
@@ -322,7 +319,6 @@ public abstract partial class InteriorUtils : GameModeHandler
         return spot != null;
     }
 
-    // ------------------------------------------------------------------ Von der Karte hinein (Unity TDU2BigMap.EnterWhenReady/EnterSpot)
     internal static Spot? _waitSpot; internal static float _waitUntil; internal static bool _waitDone;
 
     /// <summary>Auto steht schon an der Einfahrt (Teleport der Karte): Ladebildschirm, warten bis die Welt dort steht (400 m), dann hinein.</summary>
@@ -345,7 +341,6 @@ public abstract partial class InteriorUtils : GameModeHandler
     }
 
     /// <summary>Unity TDU2Interiors.EnterSpot: Spot direkt betreten (ohne Einfahrt/Bestätigen).</summary>
-    // ------------------------------------------------------------------ Startauto beim Händler (Unity TDU2Interiors.EnterStarterDealer)
     /// <summary>Gebrauchtwagenhändler mit den Startautos (Story-Schritt 7 / neues Konto): Wahl eines Autos = geschenkt, losfahren.</summary>
     internal static List<CarPhysics>? StarterCars;
     internal static Action<CarPhysics>? StarterChosen;
@@ -380,7 +375,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         ExitInterior(car);
     }
 
-    internal static bool EnterSpot(Spot s)
+    internal static bool EnterSpot(Spot s, bool Ladingscreen = true)
     {
         if (Vm == null || BnkDir == null) return false;
         var b = Resolve(s);
@@ -390,7 +385,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (b.Kind == Kind.Tuner && Vm?.Current != null && !GAME_MODE_TUNER.Accepts(s, Vm.Current.Car)) { Log.Info($"Karte: Tuner {s.Code} – falsche Marke"); return false; }
         if (Inside) ExitInterior();
         Vm?.Minimap?.ShowEnter(null);
-        EnterInterior(s, b);
+        EnterInterior(s, b, Ladingscreen);
         Log.Info("Karte: ins Interieur " + s.Code);
         return true;
     }
@@ -499,7 +494,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     }
 
     // ------------------------------------------------------------------ Betreten / Verlassen
-    internal static void EnterInterior(Spot s, SpotBanks b)
+    internal static void EnterInterior(Spot s, SpotBanks b, bool Ladingscreen = true)
     {
         var vm = Vm!;
         // während der Testfahrt ein Interieur betreten: Testfahrt endet, beim Verlassen kommt das eigene Auto (Unity AbortTestDriveOnEnter)
@@ -517,19 +512,20 @@ public abstract partial class InteriorUtils : GameModeHandler
         Paradise.Core.Audio.SpotMusic.Enter(s.Code, s.Index, BnkDir, _t.Streamer?.Index?.ExteriorDir);
         // Wie im Spiel: Haus und Club betritt man im Wohnbereich bzw. im Clubraum; die Garage erreicht man von dort.
         if (b.Kind == Kind.Living && b.Living != null)
-            LoadScene(b.Living, Kind.Living, null);
+            LoadScene(b.Living, Kind.Living, null, Ladingscreen);
         else if (b.Kind == Kind.Living && b.Garage != null)
-            LoadScene(b.Garage, Kind.Garage, null);
+            LoadScene(b.Garage, Kind.Garage, null, Ladingscreen);
         else
-            LoadScene((b.Living ?? b.Garage)!, b.Kind, null);
+            LoadScene((b.Living ?? b.Garage)!, b.Kind, null, Ladingscreen);
     }
 
-    internal static void LoadScene(string bank, Kind kind, string? startCam)
+    internal static void LoadScene(string bank, Kind kind, string? startCam, bool Ladingscreen = true)
     {
         var st = _t.Streamer!;
         // Ladebildschirm (Tipp-Bild) bis die Szene steht
         // Ladebildschirm (Tipp-Bild, Speichern) bis Szene und Möbel stehen – der Aufbau soll nicht zu sehen sein
-        LoadingScreen.Show("Interieur " + Path.GetFileNameWithoutExtension(bank), () => !Inside || InteriorLoaded, 1.0f, true);
+        if (Ladingscreen)
+            LoadingScreen.Show("Interieur " + Path.GetFileNameWithoutExtension(bank), () => !Inside || InteriorLoaded, 1.0f, true);
         ClearScene();
         _pendingBank = bank; _pendingKind = kind; _pendingStartCam = startCam;
         _sceneTask = Task.Run(() =>

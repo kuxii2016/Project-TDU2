@@ -287,6 +287,15 @@ namespace Paradise.Core.Vehicles
             });
         }
 
+        /// <summary>Wird nach jedem (auch asynchronen) Aufbau des Straßennetzes aufgerufen – Discovery hängt sich hier ein.</summary>
+        public static System.Action<HudMapRoads>? RoadsRebuilt;
+
+        /// <summary>Straßennetz der Minimap/großen Karte (Farben = Discovery-State).</summary>
+        public HudMapRoads? Roads => _hudRoads;
+
+        /// <summary>Farben der Straßensticks aus dem übergebenen State nachziehen (grau = gesperrt, farbig = aufgedeckt).</summary>
+        public void ApplyRoadDiscovery(System.Func<string, bool> isUnlocked) => _hudRoads?.ApplyDiscovery(isUnlocked);
+
         void LoadHud(string? bnkDir)
         {
             if (bnkDir == null || _hud != null) return;
@@ -682,6 +691,7 @@ namespace Paradise.Core.Vehicles
                 {
                     var res = _task.Result;
                     _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads;
+                    RoadsRebuilt?.Invoke(_hudRoads);
                     Log.Info($"Minimap: {res.segs} Straßensegmente, {_lines.Length} Linien, {_areas.Length} Kreuzungsflächen; " +
                              $"HudMap: {_hudRoads.Strips.Count} Streifen, {_hudRoads.Rings.Count} Kreisverkehre");
                 }
@@ -1001,6 +1011,7 @@ namespace Paradise.Core.Vehicles
         readonly Dictionary<int, Paradise.Core.Render.IGpuMesh> _mapRoads = new();
         Paradise.Core.Render.IGpuMaterial? _roadMat;
         Line[]? _mapRoadsFor;
+        int _mapRoadsColorVersion = -1;
 
         /// <summary>
         /// Unity TDU2BigMap.DrawRoads: Straßennetz über dem Kartengelände (Vertexfarbe, ZTest Always). Breitenstufe nach
@@ -1009,7 +1020,11 @@ namespace Paradise.Core.Vehicles
         public void DrawMapRoads(Paradise.Core.Render.IRenderer r, System.Numerics.Matrix4x4 root, float metersPerPixel, Func<float, float, float> height)
         {
             if (!HasRoads) return;
-            if (!ReferenceEquals(_mapRoadsFor, _lines)) { ClearMapRoads(); _mapRoadsFor = _lines; }
+            int colorVersion = _hudRoads?.ColorVersion ?? -1;
+            // Discovery ändert die Vertexfarben im bestehenden HudMapRoads-Objekt – ohne diesen Vergleich
+            // bleibt die große Karte auf dem ersten (grauen) Mesh stehen.
+            if (!ReferenceEquals(_mapRoadsFor, _lines) || _mapRoadsColorVersion != colorVersion)
+            { ClearMapRoads(); _mapRoadsFor = _lines; _mapRoadsColorVersion = colorVersion; }
             float mul = MathF.Max(1f, RoadMinPixels * metersPerPixel / 7f);
             int lvl = System.Math.Clamp((int)MathF.Ceiling(MathF.Log2(mul) - 1e-3f), 0, 8);
             if (!_mapRoads.TryGetValue(lvl, out var mesh))
