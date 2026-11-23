@@ -37,6 +37,18 @@ The goal is to regain full control over rendering, performance, resource managem
   <img src="./Screenshots/CRC.PNG" width="49%" alt="Comunity Racing Center"/>
   <img src="./Screenshots/raceeditor.PNG" width="49%" alt="Race Editor"/>
 </p>
+
+
+<p align="center">
+  <img src="./Screenshots/pause_1.PNG" width="49%" alt=""/>
+  <img src="./Screenshots/pause_2.PNG" width="49%" alt=""/>
+</p>
+
+
+<p align="center">
+  <img src="./Screenshots/pause_3.PNG" width="49%" alt=""/>
+  <img src="./Screenshots/clinic.PNG" width="49%" alt=""/>
+</p>
 ---
 
 ## Why a Custom Engine?
