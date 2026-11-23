@@ -25,6 +25,10 @@ public static class PostFx
     /// <summary>Leuchten der selbstleuchtenden Materialien (Bloom-Maske im Alpha des Weltbilds: Autolampen, Flares, Glow-Sprites,
     /// Neon/Fenster, Spot-Hologramme) unabhängig von der Schwelle. 0 = nur Schwelle.</summary>
     public static float BloomEmissive = 1.5f;
+    /// <summary>Selbstleuchtende Materialien leuchten erst ab dieser Helligkeit (0–1, größter Farbkanal im Bild). Die Maske der
+    /// additiven Teile (Lichtkegel/-scheine der Laternen, Glow-Sprites) deckt deren ganze Fläche ab – auch die schwachen Ränder und
+    /// den Hintergrund dahinter. Ohne diese Schwelle leuchtete die ganze Fläche mit. 0 = wie vorher (alles mit Maske leuchtet).</summary>
+    public static float BloomEmissiveThreshold = 0.55f;
 
     public static bool AoEnabled;
     /// <summary>Stärke der Verdunkelung (0 = aus, 1 = volle Verdeckung).</summary>

@@ -68,27 +68,51 @@ public sealed class VehicleModule : GameModule
         _overlay?.AddSection("Vehicle (Keys: F2 to get in/out, F3/F4 for car, F8 for color, F9 to reset)", () => _vm.DebugLines());
     }
 
+    // Profiler (F1 > Performance > Open Profiler)
+    static readonly ProfilerMarker s_mTrafficFixed = new("Traffic.FixedUpdate", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mRemoteFixed = new("RemoteCars.FixedUpdate", ProfilerCategory.Network);
+    static readonly ProfilerMarker s_mOpponentsFixed = new("RaceOpponents.FixedUpdate", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mVmFixed = new("VehicleManager.FixedUpdate", ProfilerCategory.Physics);
+    static readonly ProfilerMarker s_mVmUpdate = new("VehicleManager.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mTraffic = new("Traffic.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mVmRender = new("VehicleManager.Render", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mTrafficRender = new("Traffic.Render", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mRemoteRender = new("RemoteCars / Opponents Render", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mDebugLines = new("DebugLines.Flush", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mControls = new("TDU2Controls.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mDriveInput = new("VehicleManager.DriveInput", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mLateUpdate = new("VehicleManager.LateUpdate (wheels/camera/HUD)", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mLamps = new("CollectLamps (car/traffic/remote)", ProfilerCategory.Rendering);
+
     public override void FixedUpdate(in GameTime time)
     {
         if (Frozen) return;
-        _traffic?.FixedUpdate(time.FixedDeltaTime);   // KI + kinematische Körper vor dem Physikschritt
-        Paradise.Game.Online.RemoteCars.FixedUpdate(time.FixedDeltaTime);   // Mitspieler-Autos (kinematisch, Unity TDU2Multiplayer)
-        Paradise.Game.Racing.RaceOpponents.FixedUpdateActive(time.FixedDeltaTime);   // Gegner im Rennen (kinematisch)
-        _vm?.FixedUpdate(time.FixedDeltaTime);
+        using (s_mTrafficFixed.Auto())
+            _traffic?.FixedUpdate(time.FixedDeltaTime);   // KI + kinematische Körper vor dem Physikschritt
+        using (s_mRemoteFixed.Auto())
+            Paradise.Game.Online.RemoteCars.FixedUpdate(time.FixedDeltaTime);   // Mitspieler-Autos (kinematisch, Unity TDU2Multiplayer)
+        using (s_mOpponentsFixed.Auto())
+            Paradise.Game.Racing.RaceOpponents.FixedUpdateActive(time.FixedDeltaTime);   // Gegner im Rennen (kinematisch)
+        using (s_mVmFixed.Auto())
+            _vm?.FixedUpdate(time.FixedDeltaTime);
     }
 
     public override void Update(in GameTime time)
     {
         DebugLines.Clear();   // Debug-Linien/Beschriftungen dieses Bildes (Verkehr, Entwicklermenü) neu sammeln
         if (_vm == null) return;
-        _vm.Update();
+        using (s_mVmUpdate.Auto())
+            _vm.Update();
         // Verkehr: neue Autos nur in der Freifahrt, wenn gefahren wird (nicht im Interieur, auf der Karte, in Kinos)
         bool trafficSpawn = !Suspended && !Frozen && Paradise.Game.Screens.GameMode.Current == Paradise.Game.Screens.Gamemode.GAME_MODE_FREERIDE
                             && !Paradise.Game.Gamemodes.InteriorUtils.Inside && !_terrain.MapView;
-        if (!Frozen) _traffic?.Update(time.DeltaTime, trafficSpawn);
+        if (!Frozen)
+            using (s_mTraffic.Auto())
+                _traffic?.Update(time.DeltaTime, trafficSpawn);
         if (_traffic != null) _traffic.Alpha = time.FixedAlpha;   // Darstellung zwischen den Physikschritten
         if (!_terrain.MapView) _traffic?.DrawDebug();   // TrafficConfig.ShowDebug (F1 > Traffic)
-        TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs, Unity TDU2Controls)
+        using (s_mControls.Auto())
+            TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs, Unity TDU2Controls)
         if (Suspended || Frozen)
         {
             _terrain.FlyCameraEnabled = false;
@@ -140,7 +164,8 @@ public sealed class VehicleModule : GameModule
             if (accel < 0.01f && t > 0f) accel = t;
             if (brake < 0.01f && b > 0f) brake = b;
         }
-        _vm.DriveInput(accel, brake, steer, TDU2Controls.Held("handbrake"), time.DeltaTime, analog, analog && TDU2InputDevices.IsWheel);
+        using (s_mDriveInput.Auto())
+            _vm.DriveInput(accel, brake, steer, TDU2Controls.Held("handbrake"), time.DeltaTime, analog, analog && TDU2InputDevices.IsWheel);
 
         // HandleKeys (Unity TDU2VehicleManager.HandleKeys)
         if (TDU2Controls.Pressed("camera")) _vm.Camera.NextMode();
@@ -162,7 +187,8 @@ public sealed class VehicleModule : GameModule
         }
 
         // LateUpdate: Räder/Lenkrad + Fahrzeugkamera -> Engine-Kamera (Render-Raum)
-        _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+        using (s_mLateUpdate.Auto())
+            _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
         if (cam != null && s != null)
         {
             var (pos, fwd, up) = _vm.CameraRender(s.RootMatrix);   // ohne Umweg über große Spielkoordinaten (Genauigkeit)
@@ -170,9 +196,12 @@ public sealed class VehicleModule : GameModule
             cam.Override = (fwd, up);
             _terrain.FieldOfView = _vm.Camera.fieldOfView;
             _terrain.NearClip = _vm.Camera.nearClipPlane;
-            _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);   // Scheinwerferkegel, Brems-/Rückfahrlicht
-            _traffic?.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
-            Paradise.Game.Online.RemoteCars.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
+            using (s_mLamps.Auto())
+            {
+                _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);   // Scheinwerferkegel, Brems-/Rückfahrlicht
+                _traffic?.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
+                Paradise.Game.Online.RemoteCars.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
+            }
         }
     }
 
@@ -181,15 +210,22 @@ public sealed class VehicleModule : GameModule
         var s = _terrain.Streamer;
         if (_vm == null || s == null) return;
         if (_terrain.MapTerrainShown) return;   // Unity: Kartenkamera zeichnet dann nur die Kartenebene
-        _vm.Render(s.RootMatrix);
+        using (s_mVmRender.Auto())
+            _vm.Render(s.RootMatrix);
         if (_terrain.Camera != null) Paradise.Game.Online.Party.RenderOwnPassenger(_terrain.Camera.Position);   // Beifahrer im eigenen Auto
-        if (!s.HideWorld) _traffic?.Render(_vm, s.RootMatrix);
-        if (!s.HideWorld && _terrain.Camera != null) Paradise.Game.Online.RemoteCars.Render(_vm, s.RootMatrix, _terrain.Camera.Position, _renderer);   // Mitspieler
-        if (!s.HideWorld) Paradise.Game.Racing.RaceOpponents.RenderActive(s.RootMatrix);   // Gegner im Rennen
+        if (!s.HideWorld)
+            using (s_mTrafficRender.Auto())
+                _traffic?.Render(_vm, s.RootMatrix);
+        using (s_mRemoteRender.Auto())
+        {
+            if (!s.HideWorld && _terrain.Camera != null) Paradise.Game.Online.RemoteCars.Render(_vm, s.RootMatrix, _terrain.Camera.Position, _renderer);   // Mitspieler
+            if (!s.HideWorld) Paradise.Game.Racing.RaceOpponents.RenderActive(s.RootMatrix);   // Gegner im Rennen
+        }
         // Debug-Linien (Core/Render/DebugLines, Unity TDU2DebugLines): Verkehr, Radstrahlen des Autos (F1)
         var cam = _terrain.Camera;
         if (cam != null && _renderer.Height > 0)
-            DebugLines.Flush(_renderer, s.RootMatrix, cam.Position, 2f * MathF.Tan(_terrain.FieldOfView * (MathF.PI / 360f)) / _renderer.Height);
+            using (s_mDebugLines.Auto())
+                DebugLines.Flush(_renderer, s.RootMatrix, cam.Position, 2f * MathF.Tan(_terrain.FieldOfView * (MathF.PI / 360f)) / _renderer.Height);
     }
 
     public override void Unload()

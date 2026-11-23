@@ -108,21 +108,14 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private Matrix4x4 _rFirst, _rVP;
     private int _rBase, _rCount;
     // Opake Objekte: nach Pipeline/Material/Mesh sortiert (wie Unitys Opaque-Sortierung nach Material), damit Läufe entstehen
-    private struct OpaqueKey : IComparable<OpaqueKey>
-    {
-        public int Pipe, Index;
-        public ulong Set, Vb;
-        public int CompareTo(OpaqueKey o)
-        {
-            int c = Pipe.CompareTo(o.Pipe);
-            if (c != 0) return c;
-            c = Set.CompareTo(o.Set);
-            if (c != 0) return c;
-            c = Vb.CompareTo(o.Vb);
-            return c != 0 ? c : Index.CompareTo(o.Index);
-        }
-    }
-    private OpaqueKey[] _opaqueKeys = Array.Empty<OpaqueKey>();
+    // Sortierschlüssel als eine 128-Bit-Zahl: Pipeline | Material | Mesh | Index. Array.Sort auf UInt128 läuft im (optimierten)
+    // Laufzeitcode statt über eine eigene CompareTo-Methode je Vergleich – im Debug-Build ein Vielfaches schneller.
+    // Gruppierung wie vorher (gleiche Pipeline+Material+Mesh hintereinander), Reihenfolge innerhalb stabil über den Index.
+    private static int s_sortIds;
+    private static uint NextSortId() => (uint)Interlocked.Increment(ref s_sortIds);
+    private static UInt128 SortKey(PipeId pipe, uint mat, uint mesh, int index) =>
+        new UInt128(((ulong)(uint)(int)pipe << 32) | mat, ((ulong)mesh << 32) | (uint)index);
+    private UInt128[] _opaqueKeys = Array.Empty<UInt128>();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _opaqueTmp = new();
 
     /// <summary>Kleine Schlüssel sortieren statt der großen Einträge (Matrix je Eintrag), dann einmal umkopieren.</summary>
@@ -130,16 +123,16 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         int n = _opaque.Count;
         if (n < 2) return;
-        if (_opaqueKeys.Length < n) _opaqueKeys = new OpaqueKey[System.Math.Max(n, _opaqueKeys.Length * 2)];
+        if (_opaqueKeys.Length < n) _opaqueKeys = new UInt128[System.Math.Max(n, _opaqueKeys.Length * 2)];
         var src = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_opaque);
         for (int i = 0; i < n; i++)
         {
             ref var e = ref src[i];
-            _opaqueKeys[i] = new OpaqueKey { Pipe = (int)PipeFor(e.mat), Set = e.mat.Set.Handle, Vb = e.mesh.VertexBuffer.Handle, Index = i };
+            _opaqueKeys[i] = SortKey(PipeFor(e.mat), e.mat.SortId, e.mesh.SortId, i);
         }
         Array.Sort(_opaqueKeys, 0, n);
         _opaqueTmp.Clear();
-        for (int i = 0; i < n; i++) _opaqueTmp.Add(src[_opaqueKeys[i].Index]);
+        for (int i = 0; i < n; i++) _opaqueTmp.Add(src[(int)(uint)_opaqueKeys[i]]);
         _opaque.Clear();
         _opaque.AddRange(_opaqueTmp);
     }
@@ -149,18 +142,42 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         int n = _additive.Count;
         if (n < 2) return;
-        if (_additiveKeys.Length < n) _additiveKeys = new OpaqueKey[System.Math.Max(n, _additiveKeys.Length * 2)];
+        if (_additiveKeys.Length < n) _additiveKeys = new UInt128[System.Math.Max(n, _additiveKeys.Length * 2)];
         var src = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_additive);
         for (int i = 0; i < n; i++)
         {
             ref var e = ref src[i];
-            _additiveKeys[i] = new OpaqueKey { Pipe = (int)PipeFor(e.mat), Set = e.mat.Set.Handle, Vb = e.mesh.VertexBuffer.Handle, Index = i };
+            _additiveKeys[i] = SortKey(PipeFor(e.mat), e.mat.SortId, e.mesh.SortId, i);
         }
         Array.Sort(_additiveKeys, 0, n);
         _additiveTmp.Clear();
-        for (int i = 0; i < n; i++) _additiveTmp.Add(src[_additiveKeys[i].Index]);
+        for (int i = 0; i < n; i++) _additiveTmp.Add(src[(int)(uint)_additiveKeys[i]]);
         _additive.Clear();
         _additive.AddRange(_additiveTmp);
+    }
+
+    // Transparente Objekte hinten -> vorne: Schlüssel = -Abstand (NaN wie vorher ans Ende), primitive float-Sortierung
+    private float[] _transpKeys = Array.Empty<float>();
+    private int[] _transpIdx = Array.Empty<int>();
+    private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, float dist)> _transparentTmp = new();
+
+    private void SortTransparent()
+    {
+        int n = _transparent.Count;
+        if (n < 2) return;
+        if (_transpKeys.Length < n) { _transpKeys = new float[System.Math.Max(n, _transpKeys.Length * 2)]; _transpIdx = new int[_transpKeys.Length]; }
+        var src = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_transparent);
+        for (int i = 0; i < n; i++)
+        {
+            float k = -src[i].dist;
+            _transpKeys[i] = float.IsNaN(k) ? float.PositiveInfinity : k;
+            _transpIdx[i] = i;
+        }
+        Array.Sort(_transpKeys, _transpIdx, 0, n);
+        _transparentTmp.Clear();
+        for (int i = 0; i < n; i++) _transparentTmp.Add(src[_transpIdx[i]]);
+        _transparent.Clear();
+        _transparent.AddRange(_transparentTmp);
     }
 
     private static readonly Comparison<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, PipeId pipe, Vector4 sphere)> ShadowOrder = (a, b) =>
@@ -253,7 +270,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     // Additive Checkpoint-Overlays sind reihenfolgeunabhängig (SrcAlpha/One, kein Tiefenschreiben):
     // diese können wie opake Objekte nach Material/Mesh sortiert und instanziert werden.
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _additive = new();
-    private OpaqueKey[] _additiveKeys = Array.Empty<OpaqueKey>();
+    private UInt128[] _additiveKeys = Array.Empty<UInt128>();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _additiveTmp = new();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _background = new();
 
@@ -274,6 +291,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     // Verzögertes Freigeben statt DeviceWaitIdle pro Objekt (Entladen eines Sektors ruckelte sonst)
     private readonly List<(long frame, Action destroy)> _pendingDestroy = new();
     private readonly HashSet<IDisposable> _live = new();
+    private int _liveTextures, _liveMaterials, _liveMeshes;   // Anzahl je Typ in _live (Statistik ohne Durchzählen)
 
     private nint _hwnd, _hinstance;
     private int _width, _height;
@@ -333,6 +351,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         _skipFrame = false;
         long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        using (s_mFence.Auto())
         fixed (Fence* pFence = &_inFlight[_currentFrame])
             _vk.WaitForFences(_device, 1, pFence, true, ulong.MaxValue);
         PollSceneCapture();   // Bildaufnahme dieses Bildes im Flug fertig (VulkanRendererCapture)
@@ -341,7 +360,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         RunPendingDestroys(_frameCounter);
 
         long acqStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        Result acquire = _khrSwapchain.AcquireNextImage(_device, _swapchain, ulong.MaxValue, _imageAvailable[_currentFrame], default, ref _imageIndex);
+        Result acquire;
+        using (s_mAcquire.Auto())
+            acquire = _khrSwapchain.AcquireNextImage(_device, _swapchain, ulong.MaxValue, _imageAvailable[_currentFrame], default, ref _imageIndex);
         if (acquire == Result.ErrorOutOfDateKhr) { RecreateSwapchain(); _skipFrame = true; return; }
         if (acquire != Result.Success && acquire != Result.SuboptimalKhr)
             throw new Exception($"AcquireNextImage failed: {acquire}");
@@ -484,6 +505,54 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var mesh = UploadMesh(MemoryMarshal.AsBytes(vertices), indices, true);
         _dynamicMeshes.Add(mesh);
         DrawMesh(mesh, material, model);
+    }
+
+    /// <summary>
+    /// Dauerhaftes dynamisches Mesh: je Bild im Flug ein eigenes Puffer-Paar (Host-sichtbar), das jedes Bild nur beschrieben wird.
+    /// Vorher legte DrawDynamic für jeden gehäuteten Avatar-Teil jedes Bild zwei neue Vulkan-Puffer an und gab sie wieder frei.
+    /// </summary>
+    private sealed class VulkanDynamicMesh : IGpuMesh
+    {
+        public readonly VulkanMesh[] Frames;
+        public readonly uint[] Indices;
+        public readonly int VertexCount;
+        public long LastFrame = -1;
+        public int IndexCount => Indices.Length;
+
+        public VulkanDynamicMesh(VulkanMesh[] frames, uint[] indices, int vertexCount) { Frames = frames; Indices = indices; VertexCount = vertexCount; }
+
+        public void Dispose()
+        {
+            foreach (var m in Frames) m.Dispose();   // verzögert freigegeben (DeferDestroy), die GPU darf noch lesen
+        }
+    }
+
+    public IGpuMesh? CreateDynamicMesh(int vertexCount, ReadOnlySpan<uint> indices)
+    {
+        if (vertexCount <= 0 || indices.Length == 0) return null;
+        var zero = new ObjectVertex[vertexCount];
+        var frames = new VulkanMesh[MaxFramesInFlight];
+        for (int i = 0; i < frames.Length; i++)
+            frames[i] = UploadMesh(MemoryMarshal.AsBytes(new ReadOnlySpan<ObjectVertex>(zero)), indices, true);
+        return new VulkanDynamicMesh(frames, indices.ToArray(), vertexCount);
+    }
+
+    public void DrawDynamicMesh(IGpuMesh mesh, ReadOnlySpan<ObjectVertex> vertices, IGpuMaterial material, Matrix4x4 model, Vector3 boundsCenter, float boundsRadius)
+    {
+        if (_skipFrame || !_inFrame || vertices.Length == 0 || material is not VulkanMaterial || mesh is not VulkanDynamicMesh dm) return;
+        // Zweimal im selben Bild oder zu viele Vertices: Puffer dieses Bildes ist schon belegt -> alter Weg (eigene Kopie)
+        if (dm.LastFrame == _frameCounter || vertices.Length > dm.VertexCount)
+        {
+            DrawDynamic(vertices, dm.Indices, material, model);
+            return;
+        }
+        dm.LastFrame = _frameCounter;
+        var vm = dm.Frames[_currentFrame];   // Puffer des Bildes im Flug: die GPU ist damit fertig (Fence in BeginFrame)
+        var bytes = MemoryMarshal.AsBytes(vertices);
+        bytes.CopyTo(new Span<byte>(vm.VMem.Mapped, bytes.Length));
+        vm.BCenter = boundsCenter;
+        vm.BRadius = boundsRadius;
+        DrawMesh(vm, material, model);
     }
 
     public void DrawOverlay(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices, IGpuMaterial material)
@@ -805,7 +874,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             {
                 _shadowGo.Wait();
                 if (_shadowQuit) { _shadowDone.Release(); return; }
-                try { RecordShadows(_srec); }
+                try { using (s_mShadowRec.Auto()) RecordShadows(_srec); }
                 catch (Exception ex) { _srec.Error = ex; }
                 _shadowDone.Release();
             }
@@ -828,6 +897,12 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void StartShadows(CommandBuffer cmd)
     {
         _shadowEnabled = _globals.ShadowStrength > 0f && _globals.ShadowDistance > 0f;
+        if (Profiler.Enabled)
+        {
+            // Profiler-Graph "Rendering": ob Schatten (z. B. nachts) überhaupt sichtbar sein können
+            ProfilerCounters.ShadowStrength.Set(_globals.ShadowStrength);
+            ProfilerCounters.SunLight.Set(MathF.Max(_globals.SunColor.X, MathF.Max(_globals.SunColor.Y, _globals.SunColor.Z)));
+        }
         if (_shadowEnabled) ComputeCascades();
         var r = _srec;
         r.Cmd = cmd; r.Bound = null; r.LastSet = 0; r.LastVb = 0; r.RMesh = null; r.RMat = null; r.RCount = 0;
@@ -842,7 +917,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         if (!_shadowRunning) return;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        _shadowDone.Wait();
+        using (s_mShadowJoin.Auto())
+            _shadowDone.Wait();
         _shadowRunning = false;
         if (_srec.Error != null) throw new Exception("Shadow recording failed: " + _srec.Error.Message, _srec.Error);
         _cShadow = _srec.Draws;
@@ -1130,17 +1206,22 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.ResetCommandBuffer(cmdS, 0);
         var beginS = new CommandBufferBeginInfo { SType = StructureType.CommandBufferBeginInfo, Flags = CommandBufferUsageFlags.OneTimeSubmitBit };
         if (_vk.BeginCommandBuffer(cmdS, in beginS) != Result.Success) throw new Exception("BeginCommandBuffer (Schatten) fehlgeschlagen.");
-        FlushTextureInits(cmdS);
-        FlushTextureUpdates(cmdS);
+        using (s_mEfUploads.Auto())
+        {
+            FlushTextureInits(cmdS);
+            FlushTextureUpdates(cmdS);
+        }
         TsBegin(cmdS);
         long tcs = System.Diagnostics.Stopwatch.GetTimestamp();
-        SortOpaque();   // gleiche Mesh+Material-Paare hintereinander -> Instanz-Aufrufe (Schatten, Spiegel, Bild)
+        using (s_mEfSort.Auto())
+            SortOpaque();   // gleiche Mesh+Material-Paare hintereinander -> Instanz-Aufrufe (Schatten, Spiegel, Bild)
         _cInst = 0;
         StartShadows(cmdS);   // ab hier zeichnet der Arbeits-Thread die Kaskaden auf (liest _opaque nur)
         WriteFrameUbo();
         _activeFrameSet = _frameSets[_currentFrame];
         tcs = System.Diagnostics.Stopwatch.GetTimestamp();
-        RenderEnvironment(cmd0);   // Bodenspiegelung / Reflexionssonde (Unity InteriorMirror, ReflectionProbe)
+        using (s_mEfEnv.Auto())
+            RenderEnvironment(cmd0);   // Bodenspiegelung / Reflexionssonde (Unity InteriorMirror, ReflectionProbe)
         Ts(cmd0, 2);
         WriteFrameUbo();           // Kennungen Planar/Probe für den Bild-Durchgang
         var clears = stackalloc ClearValue[3];
@@ -1162,16 +1243,45 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vk.CmdSetViewport(cmd0, 0, 1, &viewport);
         var scissor = new Rect2D { Offset = new Offset2D(0, 0), Extent = _extent };
         _vk.CmdSetScissor(cmd0, 0, 1, &scissor);
+        // GPU-Diagnose (F1 > Performance): Szene in ein Viertel der Pixel (Viewport halbiert), danach wieder volle Größe
+        bool quarterPixels = RenderFx.DiagQuarterPixels;
+        if (quarterPixels)
+        {
+            var qv = viewport;
+            qv.Width *= 0.5f; qv.Height *= 0.5f;
+            _vk.CmdSetViewport(cmd0, 0, 1, &qv);
+        }
 
         _boundPipeline = null;
+        s_mEfOpaque.Begin();
+        SegBegin(cmd0);   // GPU-Zeit je Objektart (nur bei laufender Profiler-Aufnahme)
         if (!_globals.NoSky) DrawSky(cmd0);
         if (!_globals.NoSky) foreach (var (mesh, mat, model) in _background) DrawNow(mesh, mat, model);
+        int bgCount = _globals.NoSky ? 0 : _background.Count + 1;
         _background.Clear();
-        foreach (var (mesh, mat, model) in _opaque) Batch(mesh, mat, model, PipeFor(mat), false, _viewProj);
+        SegMark(cmd0, s_gSky, bgCount);
+        PipeId? segPipe = null;
+        int segObj = 0;
+        foreach (var (mesh, mat, model) in _opaque)
+        {
+            var pid = PipeFor(mat);
+            if (_segActive && segPipe != pid)
+            {
+                // Liste ist nach Pipeline sortiert: an jedem Wechsel den laufenden Stapel zeichnen und einen Zeitstempel setzen
+                if (segPipe.HasValue) { FlushBatch(); SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj); }
+                segPipe = pid;
+                segObj = 0;
+            }
+            segObj++;
+            Batch(mesh, mat, model, pid, false, _viewProj);
+        }
         FlushBatch();
+        if (segPipe.HasValue) SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj);
+        s_mEfOpaque.End();
         JoinShadows();   // Schatten-Thread fertig, bevor _opaque geleert wird
         _opaque.Clear();
 
+        s_mEfTransp.Begin();
         // Additive Checkpoint-Overlays: wie opake Objekte sortieren/instanzieren statt einzeln DrawNow.
         // Reihenfolge ist bei SrcAlpha/One ohne ZWrite irrelevant; das spart beim Rennen mehrere ms CPU pro Bild.
         if (_additive.Count > 0)
@@ -1182,16 +1292,20 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _cTransp += _additive.Count;
             _cAdditive = _additive.Count;
             _additive.Clear();
+            SegMark(cmd0, s_gAdditive, _cAdditive);
         }
 
         // Transparente Objekte hinten→vorne (Unity: Queue "Transparent")
         if (_transparent.Count > 0)
         {
-            _transparent.Sort((a, b) => b.dist.CompareTo(a.dist));
+            SortTransparent();
             foreach (var (mesh, mat, model, _) in _transparent) DrawNow(mesh, mat, model);
             _cTransp = _transparent.Count;
             _transparent.Clear();
+            SegMark(cmd0, s_gTransparent, _cTransp);
         }
+        s_mEfTransp.End();
+        if (quarterPixels) _vk.CmdSetViewport(cmd0, 0, 1, &viewport);   // Overlay/UI wieder in voller Größe
         Ts(cmd0, 3);
         // Overlay (Debug-UI): Pixel -> NDC, ohne Tiefentest
         void DrawOverlay()
@@ -1205,6 +1319,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _viewProj = keep;
         }
         bool uiPassUsed = _uiPass.Handle != 0 && _imageIndex < _uiFramebuffers.Length;
+        s_mEfUi.Begin();
         if (uiPassUsed)
         {
             // Flash wie Unity-IMGUI (Color Space Linear): eigener Durchgang auf der UNORM-Sicht, Mischen ohne sRGB-Umrechnung.
@@ -1239,6 +1354,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             DrawOverlay();
             DrawOverlayTopList(PipeId.Overlay);
         }
+        s_mEfUi.End();
         foreach (var m in _dynamicMeshes) m.Dispose();   // wie Overlay: Freigabe verzögert bis die GPU fertig ist
         _dynamicMeshes.Clear();
         _inFrame = false;
@@ -1246,9 +1362,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _stats.TransparentDraws = _cTransp; _stats.OverlayDraws = _cOverlay; _stats.ShadowDraws = _cShadow;
         _stats.GpuMemoryAllocated = _alloc.AllocatedBytes;
         _stats.Width = (int)_extent.Width; _stats.Height = (int)_extent.Height;
-        int nt = 0, nm = 0, nme = 0;
-        foreach (var o in _live) { if (o is VulkanTexture) nt++; else if (o is VulkanMaterial) nm++; else if (o is VulkanMesh) nme++; }
-        _stats.Textures = nt; _stats.Materials = nm; _stats.Meshes = nme;
+        // Zähler werden beim Anlegen/Freigeben mitgeführt (vorher: jedes Bild alle ~10.000 GPU-Objekte durchgezählt, ~0,4 ms)
+        _stats.Textures = _liveTextures; _stats.Materials = _liveMaterials; _stats.Meshes = _liveMeshes;
 
         var cmd = _commandBuffers[_currentFrame];
         _vk.CmdEndRenderPass(cmd);
@@ -1276,7 +1391,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         };
         fixed (Fence* pFence = &_inFlight[_currentFrame])
             _vk.ResetFences(_device, 1, pFence);
-        if (_vk.QueueSubmit(_graphicsQueue, 1, in submit, _inFlight[_currentFrame]) != Result.Success)
+        Result submitResult;
+        using (s_mSubmit.Auto())
+            submitResult = _vk.QueueSubmit(_graphicsQueue, 1, in submit, _inFlight[_currentFrame]);
+        if (submitResult != Result.Success)
             throw new Exception("QueueSubmit failed.");
 
         var swapchain = _swapchain;
@@ -1290,7 +1408,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             PSwapchains = &swapchain,
             PImageIndices = &imageIndex
         };
-        Result pr = _khrSwapchain.QueuePresent(_presentQueue, in present);
+        Result pr;
+        using (s_mPresent.Auto())
+            pr = _khrSwapchain.QueuePresent(_presentQueue, in present);
         if (pr == Result.ErrorOutOfDateKhr || pr == Result.SuboptimalKhr || _framebufferResized)
         {
             _framebufferResized = false;
@@ -1928,7 +2048,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         var view = CreateImageView(image, fmt, ImageAspectFlags.ColorBit, (uint)mips);
         var tex = new VulkanTexture(this, image, mem, view, t);
-        _live.Add(tex);
+        if (_live.Add(tex)) _liveTextures++;
 
         // Sobald Bilder laufen, IMMER verzögert: die Einzel-Kopie wartete per QueueWaitIdle auf die ganze GPU (laufendes Bild),
         // je Textur – ein neuer Sektor mit vielen Texturen kostete so 50–250 ms (Ruckler beim Fahren, schlechte 1%-Werte).
@@ -2062,7 +2182,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreateHostBuffer((ulong)(MaterialUboFloats * 4), BufferUsageFlags.UniformBufferBit, out var ubo, out var uboMem);
         var mat = new VulkanMaterial(this, d.Kind, ubo, uboMem);
         WriteMaterial(mat, d);
-        _live.Add(mat);
+        if (_live.Add(mat)) _liveMaterials++;
         return mat;
     }
 
@@ -2337,7 +2457,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             mesh.BCenter = (mn + mx) * 0.5f;
             mesh.BRadius = (mx - mn).Length() * 0.5f;
         }
-        _live.Add(mesh);
+        if (_live.Add(mesh)) _liveMeshes++;
         return mesh;
     }
 
@@ -2369,7 +2489,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             if (_disposed) return;
             _disposed = true;
-            _r._live.Remove(this);
+            if (_r._live.Remove(this)) _r._liveTextures--;
             var r = _r; var view = View; var img = Image; var mem = Mem; var st = Staging; var stm = StagingMem;
             r.DeferDestroy(() =>
             {
@@ -2384,6 +2504,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private sealed class VulkanMaterial : IGpuMaterial
     {
         private readonly VulkanRenderer _r;
+        public readonly uint SortId = NextSortId();
         public DescriptorSet Set;
         public Silk.NET.Vulkan.Buffer Ubo;
         public GpuAllocator.Allocation UboMem;
@@ -2405,7 +2526,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             if (_disposed) return;
             _disposed = true;
-            _r._live.Remove(this);
+            if (_r._live.Remove(this)) _r._liveMaterials--;
             var r = _r; var set = Set; var ubo = Ubo; var mem = UboMem;
             r.DeferDestroy(() => { r._vk.FreeDescriptorSets(r._device, r._descriptorPool, 1, in set); r.FreeBuffer(ubo, mem); });
         }
@@ -2414,6 +2535,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private sealed class VulkanMesh : IGpuMesh
     {
         private readonly VulkanRenderer _r;
+        public readonly uint SortId = NextSortId();
         public readonly Silk.NET.Vulkan.Buffer VertexBuffer, IndexBuffer;
         public readonly GpuAllocator.Allocation VMem, IMem;
         public readonly bool IsObjectFormat;
@@ -2431,7 +2553,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             if (_disposed) return;
             _disposed = true;
-            _r._live.Remove(this);
+            if (_r._live.Remove(this)) _r._liveMeshes--;
             OwnedMaterial?.Dispose();
             OwnedTexture?.Dispose();
             var r = _r; var vb = VertexBuffer; var vm = VMem; var ib = IndexBuffer; var im = IMem;

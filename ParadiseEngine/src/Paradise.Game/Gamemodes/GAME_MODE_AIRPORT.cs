@@ -138,7 +138,7 @@ public class GAME_MODE_AIRPORT : InteriorUtils
             case "wmon": _menu = false; ui.MouseEnabled = false; return;   // BackToWM: zurück in den Laufmodus
             case "camn":
             case "camf":
-                Log.Info("Flughafen: " + c + " (Kamera Hostess/frei – nicht portiert)"); return;
+                Log.NotImplemented("Flughafen: " + c + " (Kamera Hostess/frei – nicht portiert)"); return;
         }
     }
 

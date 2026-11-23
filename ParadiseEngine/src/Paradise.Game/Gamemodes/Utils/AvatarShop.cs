@@ -58,6 +58,8 @@ public abstract class AvatarShop : InteriorUtils
     protected abstract void StartFilm(VmfPlayer ui);
     /// <summary>Weitere FSCommands (Kaufen …); true = verarbeitet.</summary>
     protected virtual bool Command(string lc) => false;
+    /// <summary>Vor dem Schließen; true = Schließen aufschieben (Laden: Kauf-Kino C_BUY_ITEM, ruft danach Close erneut).</summary>
+    protected virtual bool BeforeClose() => false;
     /// <summary>Nach dem Schließen (Garderobe: zurück ins Wohnzimmer).</summary>
     protected virtual void AfterClose() { }
 
@@ -121,6 +123,7 @@ public abstract class AvatarShop : InteriorUtils
     /// <summary>Unity Close: zurück in den Modus des Raums (Laufen).</summary>
     protected void Close()
     {
+        if (BeforeClose()) return;   // z.B. Kauf-Kino des Kleidungsladens: schließt danach selbst
         CloseState();
         AfterClose();
         GameMode.Set(RoomMode);
@@ -150,6 +153,10 @@ public abstract class AvatarShop : InteriorUtils
 
     protected static bool Wears(AvatarConfig cfg, ClotheInfo? c) => c != null && cfg.Items.Contains(c.Hash);
 
+    /// <summary>Farbe eines Stücks besessen (ClothesSold-Bitmaske) oder gerade so getragen.</summary>
+    protected bool OwnsColor(ClotheInfo c, int color)
+        => Paradise.Game.Utils.PlayerUtils.OwnsClotheColor(c.Hash, color) || (Wears(_base, c) && _base.ColorOf(c.Hash) == color);
+
     protected static HashSet<int> OwnedSet()
     {
         var s = new HashSet<int>();
@@ -169,7 +176,14 @@ public abstract class AvatarShop : InteriorUtils
         ui.SetValue("/:Nb_Shoes", Count("C_shoes"));
         ui.SetValue("/:Nb_Hands", Count("C_bracelets"));
         foreach (var n in new[] { "Nb_Helmets", "Nb_BikeTops", "Nb_BikeBottoms", "Nb_Watches", "Nb_Rings", "Nb_Earrings", "Nb_Chokers", "Nb_Bracelets" }) ui.SetValue("/:" + n, 0);
-        foreach (var l in new[] { "LockHats", "LockGlasses", "LockTops", "LockBottoms", "LockShoes", "LockGloves" }) ui.SetValue("/:" + l, false);
+        // exe 0x66EC5D …: Kategorien ohne Stück gesperrt (der "Ablegen"-Eintrag zählt nicht)
+        bool Empty(string cam) { foreach (var e in BuildItems(cam)) if (e.Item != null) return false; return true; }
+        ui.SetValue("/:LockHats", Empty("C_hats"));
+        ui.SetValue("/:LockGlasses", Empty("C_head_d"));
+        ui.SetValue("/:LockTops", Empty("C_tops"));
+        ui.SetValue("/:LockBottoms", Empty("C_bottoms"));
+        ui.SetValue("/:LockShoes", Empty("C_shoes"));
+        ui.SetValue("/:LockGloves", Empty("C_bracelets"));
         foreach (var l in new[] { "LockHelmets", "LockBikeTops", "LockBikeBottoms" }) ui.SetValue("/:" + l, true);
         bool dress = false;
         foreach (int h in _base.Items) if (AvatarLibrary.Clothe(h)?.Part == ClothePart.Dress) dress = true;

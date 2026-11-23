@@ -74,6 +74,7 @@ public sealed class DebugOverlay : IDisposable
 
     private readonly Process _process = Process.GetCurrentProcess();
 
+    private int _sampling;   // 1 = Prozess-Abfrage läuft im Hintergrund
     private TimeSpan _lastCpu;
     private double _lastCpuWall;
     private float _cpuPercent;
@@ -137,7 +138,17 @@ public sealed class DebugOverlay : IDisposable
             _nextStats = now + 0.5;
 
             ComputeFrameStats();
-            SampleProcess(now);
+            // Process.Refresh + Process.Threads fragen ALLE Prozesse des Systems ab (mehrere ms, laut Profiler ~6 ms
+            // Ruckler alle 0,5 s als "Others"). Nur bei sichtbarem Overlay (F12) und im Hintergrund – die Werte sind reine Anzeige.
+            if (Visible && Interlocked.CompareExchange(ref _sampling, 1, 0) == 0)
+            {
+                double t = now;
+                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    try { SampleProcess(t); }
+                    finally { Volatile.Write(ref _sampling, 0); }
+                }, null);
+            }
 
             if (Visible && Type == DebugOverlayType.Full)
                 _gpu.Sample();

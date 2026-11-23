@@ -263,6 +263,284 @@ public sealed class SkinPrim
     public BoneWeight4[] Weights = Array.Empty<BoneWeight4>();
     public int[] Tris = Array.Empty<int>();
     public int MaterialIndex;
+
+    Vector3[]? _shadeNrm;
+    Vector4[]? _shadeTan;
+
+    static (int, int, int) QP(Vector3 p) => ((int)MathF.Round(p.X * 2000f), (int)MathF.Round(p.Y * 2000f), (int)MathF.Round(p.Z * 2000f));
+
+    /// <summary>
+    /// Gleiche Stellen: Vertices im Abstand ≤ 0,3 mm bekommen dieselbe Id (Suche über die Nachbarzellen eines 0,5-mm-Rasters) –
+    /// reines Runden trennt fast gleiche Punkte an Zellgrenzen, dann reißen Nähte (dunkle Linien an Fingern).
+    /// </summary>
+    int[] CanonIds()
+    {
+        int n = Pos.Length;
+        var ids = new int[n];
+        var cells = new Dictionary<(int, int, int), List<int>>();
+        var reps = new List<Vector3>();
+        const float eps2 = 0.0003f * 0.0003f;
+        for (int i = 0; i < n; i++)
+        {
+            var p = Pos[i]; var q = QP(p);
+            int found = -1;
+            for (int dx = -1; dx <= 1 && found < 0; dx++)
+                for (int dy = -1; dy <= 1 && found < 0; dy++)
+                    for (int dz = -1; dz <= 1 && found < 0; dz++)
+                        if (cells.TryGetValue((q.Item1 + dx, q.Item2 + dy, q.Item3 + dz), out var l))
+                            foreach (int r in l) if (Vector3.DistanceSquared(reps[r], p) <= eps2) { found = r; break; }
+            if (found < 0)
+            {
+                found = reps.Count; reps.Add(p);
+                if (!cells.TryGetValue(q, out var l)) cells[q] = l = new List<int>(2);
+                l.Add(found);
+            }
+            ids[i] = found;
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Eine Stufe gekrümmte Unterteilung (PN-Dreiecke, Vlachos et al. 2001): jedes Dreieck wird in 4 geteilt, die neuen Kantenpunkte
+    /// liegen auf der Kubik aus den Eckpunkten und ihren Normalen – Umriss und Schattierung werden rund statt eckig. Die Kantenpunkte
+    /// hängen nur von den beiden Endpunkten und ihren (über die Position gemittelten) Normalen ab, daher keine Risse über UV-Nähte;
+    /// offene Ränder (Hals, Ärmel, Saum) bleiben gerade, damit Kopf/Körper/Kleidung weiter aneinanderpassen. Normalen quadratisch
+    /// (PN), UVs/Tangenten linear, Knochengewichte gemischt (die 4 stärksten).
+    /// </summary>
+    public SkinPrim Subdivided()
+    {
+        int n = Pos.Length;
+        if (n == 0 || Tris.Length < 3 || Nrm.Length != n) return this;
+        // Geometrie-Normalen: Datei-Normalen je Stelle gemittelt (alle Vertices an derselben Stelle gleich -> rissfrei)
+        var cid = CanonIds();
+        var gsum = new Dictionary<int, Vector3>();
+        for (int i = 0; i < n; i++) { gsum.TryGetValue(cid[i], out var v); gsum[cid[i]] = v + Nrm[i]; }
+        var gn = new Vector3[n];
+        for (int i = 0; i < n; i++) { var v = gsum[cid[i]]; float l = v.Length(); gn[i] = l > 1e-6f ? v / l : Nrm[i]; }
+        // offene Kanten (nach Stelle): nur ein Dreieck
+        var edgeUse = new Dictionary<long, int>();
+        long EK(int a, int b)
+        {
+            int qa = cid[a], qb = cid[b];
+            return qa <= qb ? ((long)qa << 32) | (uint)qb : ((long)qb << 32) | (uint)qa;
+        }
+        for (int k = 0; k + 2 < Tris.Length; k += 3)
+            for (int e = 0; e < 3; e++)
+            {
+                int a = Tris[k + e], b = Tris[k + (e + 1) % 3];
+                if ((uint)a >= (uint)n || (uint)b >= (uint)n) continue;
+                var key = EK(a, b); edgeUse.TryGetValue(key, out int c); edgeUse[key] = c + 1;
+            }
+        var pos = new List<Vector3>(Pos); var nrm = new List<Vector3>(Nrm);
+        var tan = Tan != null && Tan.Length == n ? new List<Vector4>(Tan) : null;
+        var uvs = new List<Vector2>[Uv.Length];
+        for (int u = 0; u < Uv.Length; u++) uvs[u] = new List<Vector2>(Uv[u].Length == n ? Uv[u] : new Vector2[n]);
+        var wts = new List<BoneWeight4>(Weights.Length == n ? Weights : new BoneWeight4[n]);
+        var mid = new Dictionary<long, int>();
+        int Mid(int a, int b)
+        {
+            long key = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+            if (mid.TryGetValue(key, out int m)) return m;
+            // Endpunkte in fester Reihenfolge (nach Stellen-Id), damit beide Seiten einer Naht denselben Punkt rechnen
+            int ga = a, gb = b;
+            if (cid[ga] > cid[gb]) { ga = b; gb = a; }
+            Vector3 pa = Pos[ga], pb = Pos[gb];
+            Vector3 p;
+            if (edgeUse.TryGetValue(EK(a, b), out int use) && use >= 2)
+            {
+                Vector3 na = gn[ga], nb = gn[gb];
+                var b210 = (2f * pa + pb - Vector3.Dot(pb - pa, na) * na) / 3f;
+                var b120 = (2f * pb + pa - Vector3.Dot(pa - pb, nb) * nb) / 3f;
+                p = (pa + pb) * 0.125f + (b210 + b120) * 0.375f;
+            }
+            else p = (pa + pb) * 0.5f;
+            // Schattierungs-Normale quadratisch (PN): n110 = normalize(Na + Nb - v (Pb - Pa))
+            Vector3 sa = Nrm[a], sb = Nrm[b], d = pb - pa;
+            float dd = Vector3.Dot(d, d);
+            var n110 = sa + sb - (dd > 1e-12f ? 2f * Vector3.Dot(d, sa + sb) / dd : 0f) * d;
+            float l110 = n110.Length();
+            n110 = l110 > 1e-6f ? n110 / l110 : Vector3.Normalize(sa + sb + new Vector3(0f, 1e-6f, 0f));
+            var sn = 0.25f * sa + 0.25f * sb + 0.5f * n110;
+            float ls = sn.Length();
+            sn = ls > 1e-6f ? sn / ls : sa;
+            int idx = pos.Count;
+            pos.Add(p); nrm.Add(sn);
+            if (tan != null)
+            {
+                var ta = Tan![a]; var tb = Tan[b];
+                var t3 = new Vector3(ta.X + tb.X, ta.Y + tb.Y, ta.Z + tb.Z);
+                float lt = t3.Length();
+                tan.Add(new Vector4(lt > 1e-6f ? t3 / lt : new Vector3(ta.X, ta.Y, ta.Z), ta.W));
+            }
+            for (int u = 0; u < uvs.Length; u++) uvs[u].Add((uvs[u][a] + uvs[u][b]) * 0.5f);
+            wts.Add(MixWeights(wts[a], wts[b]));
+            mid[key] = idx;
+            return idx;
+        }
+        var tris = new List<int>(Tris.Length * 4);
+        for (int k = 0; k + 2 < Tris.Length; k += 3)
+        {
+            int a = Tris[k], b = Tris[k + 1], c = Tris[k + 2];
+            if ((uint)a >= (uint)n || (uint)b >= (uint)n || (uint)c >= (uint)n || a == b || b == c || a == c) continue;
+            int ab = Mid(a, b), bc = Mid(b, c), ca = Mid(c, a);
+            tris.Add(a); tris.Add(ab); tris.Add(ca);
+            tris.Add(ab); tris.Add(b); tris.Add(bc);
+            tris.Add(ca); tris.Add(bc); tris.Add(c);
+            tris.Add(ab); tris.Add(bc); tris.Add(ca);
+        }
+        var res = new SkinPrim { Pos = pos.ToArray(), Nrm = nrm.ToArray(), Tan = tan?.ToArray(), Weights = wts.ToArray(), Tris = tris.ToArray(), MaterialIndex = MaterialIndex };
+        res.Uv = new Vector2[uvs.Length][];
+        for (int u = 0; u < uvs.Length; u++) res.Uv[u] = uvs[u].ToArray();
+        return res;
+    }
+
+    static BoneWeight4 MixWeights(BoneWeight4 a, BoneWeight4 b)
+    {
+        var acc = new Dictionary<int, float>(8);
+        void Add(int bone, float w) { if (w <= 0f || bone < 0) return; acc.TryGetValue(bone, out float v); acc[bone] = v + 0.5f * w; }
+        Add(a.B0, a.W0); Add(a.B1, a.W1); Add(a.B2, a.W2); Add(a.B3, a.W3);
+        Add(b.B0, b.W0); Add(b.B1, b.W1); Add(b.B2, b.W2); Add(b.B3, b.W3);
+        var l = new List<KeyValuePair<int, float>>(acc);
+        l.Sort((x, y) => y.Value.CompareTo(x.Value));
+        var r = new BoneWeight4 { B0 = a.B0, B1 = a.B1, B2 = a.B2, B3 = a.B3 };
+        float s = 0f;
+        for (int i = 0; i < l.Count && i < 4; i++) s += l[i].Value;
+        if (l.Count == 0 || s <= 1e-6f) return a;
+        if (l.Count > 0) { r.B0 = l[0].Key; r.W0 = l[0].Value / s; } else r.W0 = 0f;
+        if (l.Count > 1) { r.B1 = l[1].Key; r.W1 = l[1].Value / s; } else r.W1 = 0f;
+        if (l.Count > 2) { r.B2 = l[2].Key; r.W2 = l[2].Value / s; } else r.W2 = 0f;
+        if (l.Count > 3) { r.B3 = l[3].Key; r.W3 = l[3].Value / s; } else r.W3 = 0f;
+        return r;
+    }
+
+    /// <summary>Normalen-Glättung: Vertices gleicher Position, deren Normalen höchstens so weit auseinander liegen (cos), werden gemittelt.</summary>
+    public static float SmoothCos = 0.5f;
+
+    /// <summary>
+    /// Normalen fürs Zeichnen: die Teile liegen teils mit getrennten Vertices je Dreieck vor (gleiche Position, eigene Normale) –
+    /// dann ist jede Fläche einzeln schattiert (eckig). Hier werden die Normalen gleicher Positionen gemittelt, solange sie nicht
+    /// weiter als <see cref="SmoothCos"/> auseinander liegen (echte Kanten bleiben).
+    /// </summary>
+    public Vector3[] ShadingNormals()
+    {
+        if (_shadeNrm != null) return _shadeNrm;
+        int n = Pos.Length;
+        // Mit Datei-Tangenten: Datei-Normalen, aber an Nähten (gleiche Position, getrennte Vertices – UV-/Materialnaht, harte Kante
+        // der Datei) gemittelt, solange sie höchstens SmoothCos auseinander liegen: sonst springt das Licht dort (helle Kante an der
+        // Schulter). Echte Kanten (> 60°) bleiben; die Tangenten der Datei richtet der Shader an der neuen Normale aus.
+        if (Tan != null && Tan.Length == n && Nrm.Length == n)
+        {
+            var cid = CanonIds();
+            var grp = new Dictionary<int, List<int>>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!grp.TryGetValue(cid[i], out var l)) grp[cid[i]] = l = new List<int>(4);
+                l.Add(i);
+            }
+            var outN = new Vector3[n];
+            for (int i = 0; i < n; i++)
+            {
+                var g = grp[cid[i]];
+                if (g.Count == 1) { outN[i] = Nrm[i]; continue; }
+                Vector3 acc = Vector3.Zero;
+                foreach (int j in g) if (Vector3.Dot(Nrm[i], Nrm[j]) >= SmoothCos) acc += Nrm[j];
+                float l = acc.Length();
+                outN[i] = l > 1e-6f && !float.IsNaN(l) ? acc / l : Nrm[i];
+            }
+            _shadeNrm = outN;
+            return outN;
+        }
+        var src = new Vector3[n];
+        for (int i = 0; i < n; i++) src[i] = Nrm.Length == n ? Nrm[i] : Vector3.UnitY;
+        // Flächennormalen (nach Fläche gewichtet) je Vertex, damit auch Teile ohne glatte Datei-Normalen weich werden
+        var face = new Vector3[n];
+        for (int k = 0; k + 2 < Tris.Length; k += 3)
+        {
+            int i0 = Tris[k], i1 = Tris[k + 1], i2 = Tris[k + 2];
+            if ((uint)i0 >= (uint)n || (uint)i1 >= (uint)n || (uint)i2 >= (uint)n) continue;
+            var fn = Vector3.Cross(Pos[i1] - Pos[i0], Pos[i2] - Pos[i0]);
+            // Wicklung an der Datei-Normale ausrichten
+            if (Vector3.Dot(fn, src[i0] + src[i1] + src[i2]) < 0f) fn = -fn;
+            face[i0] += fn; face[i1] += fn; face[i2] += fn;
+        }
+        var groups = new Dictionary<(int, int, int), List<int>>();
+        for (int i = 0; i < n; i++)
+        {
+            var q = (Q(Pos[i].X), Q(Pos[i].Y), Q(Pos[i].Z));
+            if (!groups.TryGetValue(q, out var l)) groups[q] = l = new List<int>(4);
+            l.Add(i);
+        }
+        var res = new Vector3[n];
+        for (int i = 0; i < n; i++)
+        {
+            var g = groups[(Q(Pos[i].X), Q(Pos[i].Y), Q(Pos[i].Z))];
+            var me = src[i];
+            Vector3 acc = Vector3.Zero;
+            foreach (int j in g)
+                if (Vector3.Dot(me, src[j]) >= SmoothCos) acc += face[j].LengthSquared() > 0f ? face[j] : src[j];
+            float l = acc.Length();
+            res[i] = l > 1e-12f && !float.IsNaN(l) ? acc / l : me;
+        }
+        _shadeNrm = res;
+        return res;
+    }
+
+    static int Q(float v) => (int)MathF.Round(v * 2000f);   // 0,5 mm
+
+    /// <summary>
+    /// Tangenten für die Normalmaps der Avatar-Shader (Ruhepose, UV0; w = Händigkeit, 0 = keine), über alle Dreiecke an derselben
+    /// Stelle gemittelt (gleiche Position, ähnliche Normale, gleiche UV). Gleiche Richtung wie die Bildschirm-Ableitungen des Shaders
+    /// (T = dP/du, B = dP/dv), aber stetig – die Ableitungen sind je Dreieck konstant und ließen die Schattierung springen.
+    /// </summary>
+    public Vector4[] ShadingTangents()
+    {
+        if (_shadeTan != null) return _shadeTan;
+        int n = Pos.Length;
+        if (Tan != null && Tan.Length == n) { _shadeTan = Tan; return Tan; }
+        var nrm = ShadingNormals();
+        var t = new Vector3[n]; var b = new Vector3[n];
+        var uv = Uv.Length > 0 ? Uv[0] : Array.Empty<Vector2>();
+        if (uv.Length == n)
+            for (int k = 0; k + 2 < Tris.Length; k += 3)
+            {
+                int i0 = Tris[k], i1 = Tris[k + 1], i2 = Tris[k + 2];
+                if ((uint)i0 >= (uint)n || (uint)i1 >= (uint)n || (uint)i2 >= (uint)n) continue;
+                Vector3 e1 = Pos[i1] - Pos[i0], e2 = Pos[i2] - Pos[i0];
+                Vector2 d1 = uv[i1] - uv[i0], d2 = uv[i2] - uv[i0];
+                float r = d1.X * d2.Y - d2.X * d1.Y;
+                if (MathF.Abs(r) < 1e-12f) continue;
+                float f = 1f / r;
+                var tt = (e1 * d2.Y - e2 * d1.Y) * f;
+                var bb = (e2 * d1.X - e1 * d2.X) * f;
+                t[i0] += tt; t[i1] += tt; t[i2] += tt;
+                b[i0] += bb; b[i1] += bb; b[i2] += bb;
+            }
+        // gleiche Stelle (Position + UV) zusammenfassen, Normale ähnlich
+        var groups = new Dictionary<(int, int, int, int, int), List<int>>();
+        for (int i = 0; i < n; i++)
+        {
+            var u = uv.Length == n ? uv[i] : Vector2.Zero;
+            var q = (Q(Pos[i].X), Q(Pos[i].Y), Q(Pos[i].Z), (int)MathF.Round(u.X * 4096f), (int)MathF.Round(u.Y * 4096f));
+            if (!groups.TryGetValue(q, out var l)) groups[q] = l = new List<int>(4);
+            l.Add(i);
+        }
+        var res = new Vector4[n];
+        foreach (var g in groups.Values)
+            foreach (int i in g)
+            {
+                var nn = nrm[i];
+                Vector3 ts = Vector3.Zero, bs = Vector3.Zero;
+                foreach (int j in g) if (Vector3.Dot(nn, nrm[j]) >= SmoothCos) { ts += t[j]; bs += b[j]; }
+                var tt = ts - nn * Vector3.Dot(nn, ts);
+                float l = tt.Length();
+                if (l < 1e-8f || float.IsNaN(l)) { res[i] = Vector4.Zero; continue; }
+                tt /= l;
+                float w = Vector3.Dot(Vector3.Cross(nn, tt), bs) < 0f ? -1f : 1f;
+                res[i] = new Vector4(tt, w);
+            }
+        _shadeTan = res;
+        return res;
+    }
 }
 
 /// <summary>
@@ -325,13 +603,13 @@ public static class SkinnedGeometry
         int s0 = 12 + (uvS0 ? 8 * nuv : 0) + (hasIdx ? 4 : 0) + 4 * nw;
         int oUv0 = 12;
         int oIdx = 12 + (uvS0 ? 8 * nuv : 0);
-        int s1 = 0, oN = -1, oUv1 = -1, oT = -1;
+        int s1 = 0, oN = -1, oUv1 = -1, oT = -1, oB = -1;
         if (hasNormal) { oN = s1; s1 += 8; }
         if (hasColor) s1 += 4;
         if (hasColor2) s1 += 4;
         if (!uvS0) { oUv1 = s1; s1 += 8 * nuv; }
         if (hasTan) { oT = s1; s1 += 8; }
-        if (hasBin) s1 += 8;
+        if (hasBin) { oB = s1; s1 += 8; }
         int b0 = vb + 48, b1 = b0 + s0 * n;
         if (b1 + s1 * n > vb + chunkSize) return null;
         var pr = new SkinPrim { Pos = new Vector3[n], Nrm = new Vector3[n], Weights = new BoneWeight4[n], Uv = new Vector2[System.Math.Max(1, nuv)][] };
@@ -379,7 +657,15 @@ public static class SkinnedGeometry
                 var tv = new Vector3(Bin.HalfAt(d, o), Bin.HalfAt(d, o + 2), Bin.HalfAt(d, o + 4));
                 float l = tv.Length();
                 tv = l > 1e-6f && !float.IsNaN(l) ? tv / l : Vector3.UnitX;
-                pr.Tan![i] = new Vector4(tv, 1f);
+                // Händigkeit aus der Datei-Binormale (die Normalmaps sind gegen genau diese Basis gebacken)
+                float hand = 1f;
+                if (hasBin)
+                {
+                    int ob = b1 + i * s1 + oB;
+                    var bv = new Vector3(Bin.HalfAt(d, ob), Bin.HalfAt(d, ob + 2), Bin.HalfAt(d, ob + 4));
+                    if (Vector3.Dot(Vector3.Cross(pr.Nrm[i], tv), bv) < 0f) hand = -1f;
+                }
+                pr.Tan![i] = new Vector4(tv, hand);
             }
         }
         return pr;

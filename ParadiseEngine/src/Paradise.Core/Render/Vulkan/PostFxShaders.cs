@@ -162,8 +162,16 @@ void main() {
     soft = soft * soft / (4.0 * knee);
     float w = max(soft, br - p.params.x) / max(br, 1e-4);
     // Leuchtende Materialien (Alpha des Weltbilds = Bloom-Maske: Lampen, Flares, Glow-Sprites, Neon, Hologramme) leuchten
-    // unabhängig von der Schwelle – im 8-Bit-Bild sind sie sonst nicht heller als eine weiße Wand. params.z = Stärke.
-    vec3 e = c * clamp(s.a * p.params.z, 0.0, 4.0);
+    // unabhängig von der Bloom-Schwelle – im 8-Bit-Bild sind sie sonst nicht heller als eine weiße Wand. params.z = Stärke.
+    // params.w = eigene Schwelle dafür: nur der Teil über der Schwelle leuchtet (weich wie oben). Die Maske additiver Teile
+    // (Lichtscheine der Laternen) deckt deren ganze Fläche ab, auch schwache Ränder und den Hintergrund dahinter – ohne Schwelle
+    // leuchtete die ganze Fläche mit und die Lichtscheine wurden als große helle Flecken sichtbar.
+    float et = p.params.w;
+    float ek = max(min(et, 0.5) * 0.5, 1e-4);
+    float esoft = clamp(br - et + ek, 0.0, 2.0 * ek);
+    esoft = esoft * esoft / (4.0 * ek);
+    float ew = et <= 0.0 ? 1.0 : max(esoft, br - et) / max(br, 1e-4);
+    vec3 e = c * ew * clamp(s.a * p.params.z, 0.0, 4.0);
     outColor = vec4(max(c * w, e), 1.0);
 }";
 

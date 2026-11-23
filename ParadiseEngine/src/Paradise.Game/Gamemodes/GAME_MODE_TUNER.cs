@@ -367,16 +367,26 @@ public class GAME_MODE_TUNER : InteriorUtils
     }
 
     // ================================================================== Hilfen
-    /// <summary>Entdeckungslevel (DBAreaLevel 1..6) des Gebiets, in dem der Tuner steht. Noch ohne Entdeckungsfortschritt: Stufe 1.</summary>
+    /// <summary>Gebietslevel (DBAreaLevel 1..6) des Gebiets, in dem der Spieler steht (= der Tuner).</summary>
     internal static int AreaLevel()
     {
-        // exe 0xa2f720: Gebiet der Spielerposition -> Entdeckungslevel; Stufe n frei, wenn Level >= n.
-        // Entdeckungspunkte (_alpneeded) gibt es in der Engine noch nicht -> jedes Gebiet steht auf Level 1.
-        return 1;
+        // exe 0xa2f720: Gebiet der Spielerposition -> 0xa05b40 Gebietslevel aus den Entdeckungspunkten des Gebiets;
+        // Stufe n frei, wenn Level >= n.
+        var d = Paradise.Game.Gameplay.Discovery.Current;
+        return d != null ? d.AreaLevel(d.Area) : 1;
     }
 
-    /// <summary>Name des Entdeckungsgebiets (DBCruisingZones) – noch ohne Gebietszuordnung des Tuners.</summary>
-    static string AreaName() => "";
+    /// <summary>Gebietslevel am Ort eines Spots (Karten-Tooltip des Tuners: /:MaxUpgLevel).</summary>
+    internal static int AreaLevelAt(System.Numerics.Vector3 game)
+    {
+        var d = Paradise.Game.Gameplay.Discovery.Current;
+        if (d == null) return 1;
+        int area = Paradise.Game.Gameplay.Wrecks.Current?.AreaAt(game) ?? d.Area;
+        return d.AreaLevel(area < 1 ? d.Area : area);
+    }
+
+    /// <summary>Name des Entdeckungsgebiets der Spielerposition (m_HawaiArea1..4 / m_IbizaArea1..2).</summary>
+    static string AreaName() => Paradise.Game.Gameplay.Discovery.Current?.AreaName ?? "";
 
     static void UpdateMoney()
     {

@@ -38,16 +38,19 @@ The goal is to regain full control over rendering, performance, resource managem
   <img src="./Screenshots/raceeditor.PNG" width="49%" alt="Race Editor"/>
 </p>
 
-
 <p align="center">
   <img src="./Screenshots/pause_1.PNG" width="49%" alt=""/>
   <img src="./Screenshots/pause_2.PNG" width="49%" alt=""/>
 </p>
 
-
 <p align="center">
   <img src="./Screenshots/pause_3.PNG" width="49%" alt=""/>
   <img src="./Screenshots/clinic.PNG" width="49%" alt=""/>
+</p>
+
+<p align="center">
+  <img src="./Screenshots/engineProfiler.PNG" width="49%" alt=""/>
+  <img src="./Screenshots/engineProfiler2.PNG" width="49%" alt=""/>
 </p>
 ---
 

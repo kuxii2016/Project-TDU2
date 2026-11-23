@@ -314,6 +314,40 @@ public static class PlayerUtils
         return true;
     }
 
+    /// <summary>
+    /// Owned colors of a clothing item as a bitmask (bit c = color c), like AvatarSave.ClothesSold (exe 0x687AC0).
+    /// Items bought before colors were tracked (hash in ownedClothes, no entry) count for the worn color, otherwise color 0.
+    /// </summary>
+    public static int OwnedClotheColors(int hash, SaveData? save = null)
+    {
+        var s = Save(save);
+        if (s == null) return 0;
+        if (s.clothesSold != null)
+            foreach (var e in s.clothesSold) if (e != null && e.clothe == hash) return e.colors;
+        if (s.ownedClothes == null || !s.ownedClothes.Contains(hash)) return 0;
+        var av = GetAvatar(s);
+        return av != null && av.Items.Contains(hash) ? 1 << System.Math.Clamp(av.ColorOf(hash), 0, 31) : 1;
+    }
+
+    /// <summary>True if this color of the clothing item is owned.</summary>
+    public static bool OwnsClotheColor(int hash, int color, SaveData? save = null)
+        => color >= 0 && color < 32 && (OwnedClotheColors(hash, save) & (1 << color)) != 0;
+
+    /// <summary>Marks one color of a clothing item as owned (exe 0x687AC0: mask |= 1 &lt;&lt; color) and the item as owned. True if new.</summary>
+    public static bool AddOwnedClotheColor(int hash, int color, SaveData? save = null)
+    {
+        var s = Save(save);
+        if (s == null || color < 0 || color >= 32) return false;
+        int before = OwnedClotheColors(hash, s);
+        s.clothesSold ??= new List<ClothesSoldEntry>();
+        ClothesSoldEntry? entry = null;
+        foreach (var e in s.clothesSold) if (e != null && e.clothe == hash) { entry = e; break; }
+        if (entry == null) { entry = new ClothesSoldEntry { clothe = hash, colors = before }; s.clothesSold.Add(entry); }
+        entry.colors |= 1 << color;
+        AddOwnedClothes(hash, s);
+        return (before & (1 << color)) == 0;
+    }
+
     /// <summary>Removes a clothing hash from the owned list. Returns true if removed.</summary>
     public static bool RemoveOwnedClothes(int hash, SaveData? save = null) => Save(save)?.ownedClothes?.Remove(hash) == true;
 

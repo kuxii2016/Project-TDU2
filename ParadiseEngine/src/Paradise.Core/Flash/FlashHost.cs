@@ -120,13 +120,20 @@ public static class FlashHost
         Time.Tick();
         if (screenWidth > 0 && screenHeight > 0) { Screen.width = screenWidth; Screen.height = screenHeight; }
         FlashInput.BeginFrame();
+        long tU = System.Diagnostics.Stopwatch.GetTimestamp();
         for (int i = 0; i < _players.Count; i++)
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            try { _players[i].Update(); }
-            catch (Exception ex) { Log.Error("Flash-Update: " + ex.Message); }
+            var pl = _players[i];
+            pl.ProfUploads = 0;
+            using (UpdateMarker(pl).Auto())
+            {
+                try { pl.Update(); }
+                catch (Exception ex) { Log.Error("Flash-Update: " + ex.Message); }
+            }
             //PerfLog.Add("Flash-Update " + System.IO.Path.GetFileName(_players[i].BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
         }
+        s_updateMs = System.Diagnostics.Stopwatch.GetElapsedTime(tU).TotalMilliseconds;
     }
 
     /// <summary>
@@ -148,7 +155,10 @@ public static class FlashHost
     /// <summary>Draw all visible films and layers—those with a higher GuiDepth first (at the bottom)</summary>
     public static void Render()
     {
+        foreach (var p in _players) { p.ProfHeld = 0; p.ProfRevealWaitMs = 0f; }
+        s_renderMs = 0; s_drawCalls = 0;
         if (Renderer == null || (_players.Count == 0 && _layers.Count == 0)) return;
+        long tR = System.Diagnostics.Stopwatch.GetTimestamp();
         _order.Clear();
         foreach (var p in _players) _order.Add((p.GuiDepth, p, null));
         foreach (var l in _layers) _order.Add((l.GuiDepth, null, l));
@@ -162,12 +172,45 @@ public static class FlashHost
         foreach (var (_, film, layer) in _order)
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            try { if (film != null) film.Render(); else layer.Render(Renderer); }
-            catch (Exception ex) { Log.Error("Flash-Render: " + ex.Message); }
+            using (film != null ? RenderMarker(film).Auto() : default)
+            {
+                try { if (film != null) film.Render(); else layer.Render(Renderer); }
+                catch (Exception ex) { Log.Error("Flash-Render: " + ex.Message); }
+            }
+            if (film != null && film.Visible) s_drawCalls += VmfPlayer.LastDrawCalls;
             ///if (film != null) 
             //    PerfLog.Add("Flash-Render " + System.IO.Path.GetFileName(film.BankPath ?? "?"), System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
         }
+        s_renderMs = System.Diagnostics.Stopwatch.GetElapsedTime(tR).TotalMilliseconds;
     }
+
+    // ---------------------------------------------------------------- Profiler-Graph "Flash"
+    // Zeigt, warum eine Oberfläche spät erscheint: Raster-Rückstand (Hintergrund-Threads), fertige aber noch nicht hochgeladene Shapes,
+    // Uploads je Bild, zurückgehaltene Clips (atomares Einblenden wartet auf Shapes) und die längste Wartezeit bis zum Einblenden.
+    static double s_updateMs, s_renderMs;
+    static int s_drawCalls;
+    static double SumPlayers(Func<VmfPlayer, double> f) { double s = 0; foreach (var p in _players) s += f(p); return s; }
+    static double MaxPlayers(Func<VmfPlayer, double> f) { double m = 0; foreach (var p in _players) m = System.Math.Max(m, f(p)); return m; }
+    static readonly ProfilerCounter[] s_counters =
+    {
+        new("Update CPU (all movies)", ProfilerCounters.Flash, ProfilerUnit.Ms, () => s_updateMs),
+        new("Render CPU (all movies)", ProfilerCounters.Flash, ProfilerUnit.Ms, () => s_renderMs),
+        new("Sync raster (main thread)", ProfilerCounters.Flash, ProfilerUnit.Ms, () => SumPlayers(p => p.SyncRasterMs)),
+        new("Raster jobs waiting", ProfilerCounters.Flash, ProfilerUnit.Count, () => SumPlayers(p => p.RasterBacklog().jobs)),
+        new("Rasterized, not uploaded", ProfilerCounters.Flash, ProfilerUnit.Count, () => SumPlayers(p => p.RasterBacklog().ready)),
+        new("Shapes uploaded", ProfilerCounters.Flash, ProfilerUnit.Count, () => SumPlayers(p => p.ProfUploads)),
+        new("Clips waiting for shapes", ProfilerCounters.Flash, ProfilerUnit.Count, () => SumPlayers(p => p.ProfHeld)),
+        new("Longest reveal wait", ProfilerCounters.Flash, ProfilerUnit.Ms, () => MaxPlayers(p => p.ProfRevealWaitMs)),
+        new("Flash draw calls", ProfilerCounters.Flash, ProfilerUnit.Count, () => s_drawCalls),
+        new("Movies visible", ProfilerCounters.Flash, ProfilerUnit.Count, () => SumPlayers(p => p.Visible && p.Root != null ? 1 : 0)),
+        new("Movies loaded", ProfilerCounters.Flash, ProfilerUnit.Count, () => _players.Count),
+    };
+
+    // Profiler: Zeit je Film (Name = Bank-Datei), damit Ruckler in Flash.Update/Render einem Film zugeordnet werden können
+    static ProfilerMarker UpdateMarker(VmfPlayer p)
+        => p.ProfUpdate ??= ProfilerMarker.Get("Flash.Update: " + Path.GetFileName(p.BankPath ?? "?"), ProfilerCategory.UI);
+    static ProfilerMarker RenderMarker(VmfPlayer p)
+        => p.ProfRender ??= ProfilerMarker.Get("Flash.Render: " + Path.GetFileName(p.BankPath ?? "?"), ProfilerCategory.UI);
 
     public static void Shutdown()
     {

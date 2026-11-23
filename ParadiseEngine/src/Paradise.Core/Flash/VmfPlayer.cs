@@ -53,6 +53,8 @@ namespace Paradise.Core.Flash
             internal int SeenDraw = -10;
             internal bool Revealed;
             internal float RevealSince, FrozenUntil;
+            /// <summary>Profiler: Einblenden wurde mindestens ein Bild lang zurückgehalten (Shapes fehlten).</summary>
+            internal bool HeldOnce;
         }
 
         [NonSerialized] public static float LastFrameTimeMs;
@@ -626,36 +628,58 @@ namespace Paradise.Core.Flash
         }
         void ReturnList(List<DisplayObject> l) { l.Clear(); _listPool.Push(l); }
 
+        // Profiler-Abschnitte von Update (je Film darüber: FlashHost "Flash.Update: <bank>")
+        static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mRasters = new("Flash: rasters / uploads", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
+        static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mInput = new("Flash: mouse / input", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
+        static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mTick = new("Flash: timeline + scripts", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
+        static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mApply = new("Flash: visibility / pins / patches", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
+        /// <summary>Profiler-Messpunkte dieses Films (FlashHost legt sie beim ersten Bild an).</summary>
+        internal global::Paradise.Core.Diagnostics.ProfilerMarker ProfUpdate, ProfRender;
+        /// <summary>Profiler: Zeit der synchronen Rasterung (Hauptthread) in diesem Bild.</summary>
+        internal float SyncRasterMs => _rasterFrame == Time.frameCount ? _rasterMs : 0f;
+
         /// <summary>Called by the host for each frame (Unity: MonoBehaviour.Update).</summary>
         public void Update()
         {
             if (Root == null) return;
-            var swU = Stopwatch.StartNew();
+            long tU = Stopwatch.GetTimestamp();
             if (Visible && !_wasVisible) _holdUntil = Time.unscaledTime + FirstShowHoldSeconds;   // wird gerade eingeblendet
             _wasVisible = Visible;
-            var swR = Stopwatch.StartNew();
-            IntegrateRasters();   // fertige Hintergrund-Rasterungen -> Texturen (VmfPlayerAsync.cs)
-            TrimDecodedBitmaps();
-            try { UploadTick(); } catch { }
-            LastRasterIntegrateTimeMs = (float)swR.Elapsed.TotalMilliseconds;
-            var swM = Stopwatch.StartNew();
-            UpdateMouse();
-            ListScrollTick();   // Scrollbalken der nativen Listen (VmfScript.cs)
-            TextInputTick();    // Tastatur in das Feld von setInputFocus (VmfHelpers.cs)
-            LastMouseTimeMs = (float)swM.Elapsed.TotalMilliseconds;
+            long t = Stopwatch.GetTimestamp();
+            using (s_mRasters.Auto())
+            {
+                IntegrateRasters();   // fertige Hintergrund-Rasterungen -> Texturen (VmfPlayerAsync.cs)
+                TrimDecodedBitmaps();
+                try { UploadTick(); } catch { }
+            }
+            LastRasterIntegrateTimeMs = (float)Stopwatch.GetElapsedTime(t).TotalMilliseconds;
+            t = Stopwatch.GetTimestamp();
+            using (s_mInput.Auto())
+            {
+                UpdateMouse();
+                ListScrollTick();   // Scrollbalken der nativen Listen (VmfScript.cs)
+                TextInputTick();    // Tastatur in das Feld von setInputFocus (VmfHelpers.cs)
+            }
+            LastMouseTimeMs = (float)Stopwatch.GetElapsedTime(t).TotalMilliseconds;
             _accum += Time.unscaledDeltaTime;   // Menüs laufen auch bei angehaltenem Spiel (Pause)
             float step = 1f / Mathf.Max(1f, Movie.FrameRate);
             int guard = 0;
-            var swT = Stopwatch.StartNew();
-            while (_accum >= step && guard++ < 4) { _accum -= step; Tick(Root); RunEnterFrames(); }
+            t = Stopwatch.GetTimestamp();
+            using (s_mTick.Auto())
+            {
+                while (_accum >= step && guard++ < 4) { _accum -= step; Tick(Root); RunEnterFrames(); }
+            }
             if (guard >= 4) _accum = 0f;
-            LastTickTimeMs = (float)swT.Elapsed.TotalMilliseconds;
-            var swA = Stopwatch.StartNew();
-            ApplyForcedVisibility();   // ForceVisible (VmfHelpers) gilt auch nach _visible-Änderungen des Films
-            ApplyPins();               // festgehaltene Werte/Labels (VmfHelpers: PinText/PinValue/PinLabel/PinScope)
-            ApplyPatches();            // Korrekturen aus TDU2FlashPatches (VmfPatches.cs)
-            LastApplyTimeMs = (float)swA.Elapsed.TotalMilliseconds;
-            LastFrameTimeMs = (float)swU.Elapsed.TotalMilliseconds;
+            LastTickTimeMs = (float)Stopwatch.GetElapsedTime(t).TotalMilliseconds;
+            t = Stopwatch.GetTimestamp();
+            using (s_mApply.Auto())
+            {
+                ApplyForcedVisibility();   // ForceVisible (VmfHelpers) gilt auch nach _visible-Änderungen des Films
+                ApplyPins();               // festgehaltene Werte/Labels (VmfHelpers: PinText/PinValue/PinLabel/PinScope)
+                ApplyPatches();            // Korrekturen aus TDU2FlashPatches (VmfPatches.cs)
+            }
+            LastApplyTimeMs = (float)Stopwatch.GetElapsedTime(t).TotalMilliseconds;
+            LastFrameTimeMs = (float)Stopwatch.GetElapsedTime(tU).TotalMilliseconds;
         }
 
         void Tick(Instance inst)

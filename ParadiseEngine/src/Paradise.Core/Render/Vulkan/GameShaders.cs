@@ -1367,6 +1367,12 @@ layout(set = 0, binding = 6) uniform AvatarMat { vec4 c[28]; } am;
 
     public const string AvatarVert = Common + ObjectInputs + AvatarMat + @"
 layout(location = 0) out vec3 vNormal;
+layout(location = 7) out vec4 vTangent;   // xyz Welt, w Händigkeit; 0 = keine (Ableitungen im Fragment-Shader)
+vec3 OctDecode(vec2 e) {
+    vec3 v = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (v.z < 0.0) v.xy = (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(v);
+}
 layout(location = 1) out vec2 vUv0;
 layout(location = 2) out vec2 vUv1;
 layout(location = 3) out vec2 vUv2;
@@ -1377,6 +1383,8 @@ void main() {
     vec4 world = pc.model * vec4(inPos, 1.0);
     gl_Position = pc.viewProj * world;
     vNormal = mat3(pc.model) * inNormal;
+    // AvatarRig.Skin: Tangente in Uv3 (Oktaeder), Farbe B = 0 als Kennung, G = Händigkeit
+    vTangent = inColor.b < 0.5 ? vec4(mat3(pc.model) * OctDecode(inUv3), inColor.g > 0.5 ? 1.0 : -1.0) : vec4(0.0);
     vUv0 = inUv0; vUv1 = inUv1; vUv2 = inUv2;
     vWorld = world.xyz;
     // gehäutete Höhe im Avatar-Raum
@@ -1405,8 +1413,18 @@ const vec3 LUM = vec3(0.299, 0.587, 0.114);
 
 vec2 SampleUV(float which) { return which < 0.5 ? vUv0 : (which < 1.5 ? vUv1 : vUv2); }
 
-// Tangentenraum ohne Tangenten im Vertex: Basis aus den Bildschirmableitungen (UV0)
+layout(location = 7) in vec4 vTangent;
+// Tangentenraum: gemittelte Vertex-Tangenten (stetig über die Dreiecke); ohne sie Basis aus den Bildschirmableitungen (UV0),
+// die je Dreieck konstant sind (Kanten sichtbar)
 vec3 TangentToWorld(vec3 n, vec3 N) {
+    if (dot(vTangent.xyz, vTangent.xyz) > 1e-8) {
+        vec3 T = vTangent.xyz - N * dot(N, vTangent.xyz);
+        if (dot(T, T) > 1e-10) {
+            T = normalize(T);
+            vec3 B = cross(N, T) * vTangent.w;
+            return normalize(mat3(T, B, N) * n);
+        }
+    }
     vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
     vec2 du1 = dFdx(vUv0), du2 = dFdy(vUv0);
     vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);

@@ -464,7 +464,7 @@ public static class AvatarLibrary
         var bank = BnkArchive.Open(path);
         string stem = file.ToLowerInvariant();
         bool hair = c.Part == ClothePart.Hair || c.Part == ClothePart.Beard;
-        var part = LoadPart(bank, stem, null, hair ? null : stem + "_mat.2dm", hair ? 0 : color, true);
+        var part = LoadPart(bank, stem, null, hair ? null : stem + "_mat.2dm", hair ? 0 : color, true, !hair);
         if (part != null && hair && color > 0 && HairColor(color, out var p, out var s)) { part.HasHairColor = true; part.HairPrim = p; part.HairScd = s; }
         return part;
     }
@@ -508,7 +508,13 @@ public static class AvatarLibrary
     /// Part of a bench: .3dd (instance -> object, material list) + .3dg (skinned geometry) + .2dm (materials); color variant
     /// from stem_mat.2dm (materials in alphabetical order instead of the piece’s materials, except for “UNCHANGEABLE”).
     /// </summary>
-    static AvatarPartData? LoadPart(BnkArchive bank, string stem, string? mat2dm, string? variants2dm, int color, bool ownTextures)
+    static SkinPrim Subdivide(SkinPrim p)
+    {
+        for (int i = 0; i < Paradise.Core.Config.AvatarRenderConfig.Subdivisions; i++) p = p.Subdivided();
+        return p;
+    }
+
+    static AvatarPartData? LoadPart(BnkArchive bank, string stem, string? mat2dm, string? variants2dm, int color, bool ownTextures, bool smooth = true)
     {
         var e3dd = bank.Find(stem + ".3dd");
         var e3dg = bank.Find(stem + ".3dg");
@@ -546,8 +552,10 @@ public static class AvatarLibrary
             if (ins.Lods == null || ins.Lods.Length == 0) continue;
             if (!geo.GeoHash.TryGetValue(ins.Lods[0].ObjKey, out int geom)) continue;
             var bankKeys = scene.ReadMaterialBank(ins.MaterialBankOffset);
-            foreach (var pr in SkinnedGeometry.Read(geo, geom))
+            foreach (var pr0 in SkinnedGeometry.Read(geo, geom))
             {
+                // gekrümmte Unterteilung gegen eckige Umrisse (Haare/Bärte nicht: Haarkarten sollen flach bleiben), Config/AvatarRenderConfig
+                var pr = smooth ? Subdivide(pr0) : pr0;
                 ulong mk = pr.MaterialIndex >= 0 && pr.MaterialIndex < bankKeys.Length ? bankKeys[pr.MaterialIndex] : 0;
                 MaterialDef? def = null;
                 if (mats != null && mk != 0) mats.Materials.TryGetValue(mk, out def);

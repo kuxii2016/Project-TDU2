@@ -26,6 +26,11 @@ public sealed partial class PlacementRenderer
         public Matrix4x4[] LocalMatrix = Array.Empty<Matrix4x4>();
         public float[] Radius = Array.Empty<float>();
         public List<int>[] PerLod = Array.Empty<List<int>>();
+        /// <summary>Box um alle Instanz-Positionen (FindInstances: ganze Gruppe überspringen, wenn außerhalb des Suchradius).</summary>
+        public Vector3 PMin, PMax;
+        /// <summary>Ergebnis des Namens-Präfix-Vergleichs für das zuletzt gefragte Präfix-Array (spart die String-Vergleiche).</summary>
+        public string[]? PrefixKey;
+        public bool PrefixMatch;
     }
 
     public float MaxDistance = 800f;
@@ -48,9 +53,18 @@ public sealed partial class PlacementRenderer
         foreach (var b in _batches)
         {
             if (b.Obj.Lods.Length == 0 || string.IsNullOrEmpty(b.Obj.Name)) continue;
-            bool ok = false;
-            foreach (var p in prefixes) if (b.Obj.Name.StartsWith(p, StringComparison.OrdinalIgnoreCase)) { ok = true; break; }
-            if (!ok) continue;
+            // Gleiches Ergebnis wie vorher, nur zwischengespeichert: der Name einer Gruppe ändert sich nicht. Vorher wurden bei jeder
+            // Suche (Stromleitungen, Straßenlampen) für alle Gruppen aller Sektoren die Namen verglichen (bis ~16 ms in einem Bild).
+            if (!ReferenceEquals(b.PrefixKey, prefixes))
+            {
+                bool ok = false;
+                foreach (var p in prefixes) if (b.Obj.Name.StartsWith(p, StringComparison.OrdinalIgnoreCase)) { ok = true; break; }
+                b.PrefixKey = prefixes;
+                b.PrefixMatch = ok;
+            }
+            if (!b.PrefixMatch) continue;
+            var nearest = Vector3.Clamp(pos, b.PMin, b.PMax);
+            if ((nearest - pos).LengthSquared() > r2) continue;   // keine Instanz der Gruppe kann im Radius liegen
             for (int i = 0; i < b.LocalMatrix.Length; i++)
             {
                 if ((b.LocalPos[i] - pos).LengthSquared() > r2) continue;
@@ -80,6 +94,8 @@ public sealed partial class PlacementRenderer
             b.Radius[i] = br * s;
         }
         for (int l = 0; l < b.PerLod.Length; l++) b.PerLod[l] = new List<int>();
+        b.PMin = new Vector3(float.MaxValue); b.PMax = new Vector3(float.MinValue);
+        foreach (var p in b.LocalPos) { b.PMin = Vector3.Min(b.PMin, p); b.PMax = Vector3.Max(b.PMax, p); }
         _batches.Add(b);
         InstanceCount += b.LocalMatrix.Length;
         _lastViewer = new Vector3(float.MaxValue, 0, 0);

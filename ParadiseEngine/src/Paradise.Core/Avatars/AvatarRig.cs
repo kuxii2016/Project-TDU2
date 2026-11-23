@@ -182,7 +182,8 @@ public sealed class AvatarRig
     /// </summary>
     public void Skin(SkinPrim pr, ObjectVertex[] dst, int offset)
     {
-        var w = pr.Weights; var pos = pr.Pos; var nrm = pr.Nrm;
+        var w = pr.Weights; var pos = pr.Pos; var nrm = pr.ShadingNormals();
+        var tan = pr.ShadingTangents();
         var uv0 = pr.Uv[0];
         var uv1 = pr.Uv.Length > 1 ? pr.Uv[1] : uv0;
         var uv2 = pr.Uv.Length > 2 ? pr.Uv[2] : uv0;
@@ -190,25 +191,61 @@ public sealed class AvatarRig
         for (int v = 0; v < pos.Length; v++)
         {
             var bw = w[v];
-            Vector3 p = Vector3.Zero, nn = Vector3.Zero;
-            Acc(bw.B0, bw.W0, pos[v], nrm[v], n, ref p, ref nn);
-            Acc(bw.B1, bw.W1, pos[v], nrm[v], n, ref p, ref nn);
-            Acc(bw.B2, bw.W2, pos[v], nrm[v], n, ref p, ref nn);
-            Acc(bw.B3, bw.W3, pos[v], nrm[v], n, ref p, ref nn);
+            Vector3 p = Vector3.Zero, nn = Vector3.Zero, tt = Vector3.Zero;
+            var t4 = tan[v];
+            var t3 = new Vector3(t4.X, t4.Y, t4.Z);
+            // Gewichtete Knochenmatrizen zuerst mischen, dann je Vertex nur 3 Transformationen statt 12 (je Einfluss Position,
+            // Normale, Tangente). Mathematisch gleich: Σ w·(v·M) = v·(Σ w·M), auch für die Verschiebung (w = 1 bei Positionen).
+            Matrix4x4 m = default;
+            bool any = false;
+            Blend(bw.B0, bw.W0, n, ref m, ref any);
+            Blend(bw.B1, bw.W1, n, ref m, ref any);
+            Blend(bw.B2, bw.W2, n, ref m, ref any);
+            Blend(bw.B3, bw.W3, n, ref m, ref any);
+            if (any)
+            {
+                p = Vector3.Transform(pos[v], m);
+                nn = Vector3.TransformNormal(nrm[v], m);
+                tt = Vector3.TransformNormal(t3, m);
+            }
             float l = nn.Length();
             ref var o = ref dst[offset + v];
             o.Position = p;
             o.Normal = l > 1e-6f ? nn / l : Vector3.UnitY;
-            o.Color = 0xFFFFFFFFu;
-            o.Uv0 = uv0[v]; o.Uv1 = uv1[v]; o.Uv2 = uv2[v]; o.Uv3 = Vector2.Zero;
+            o.Uv0 = uv0[v]; o.Uv1 = uv1[v]; o.Uv2 = uv2[v];
+            // Tangente für den Avatar-Shader: Richtung oktaeder-kodiert in Uv3, Farbe B = 0 als Kennung, G = Händigkeit
+            float lt = tt.Length();
+            if (t4.W != 0f && lt > 1e-6f)
+            {
+                o.Uv3 = OctEncode(tt / lt);
+                o.Color = ObjectVertex.PackColor(255, (byte)(t4.W < 0f ? 0 : 255), 0, 255);
+            }
+            else { o.Uv3 = Vector2.Zero; o.Color = 0xFFFFFFFFu; }
         }
     }
 
-    void Acc(int b, float wt, Vector3 pos, Vector3 nrm, int n, ref Vector3 p, ref Vector3 nn)
+    void Blend(int b, float wt, int n, ref Matrix4x4 m, ref bool any)
+    {
+        if (wt <= 0f || b < 0 || b >= n) return;
+        m += _skin[b] * wt;
+        any = true;
+    }
+
+    void Acc(int b, float wt, Vector3 pos, Vector3 nrm, Vector3 tan, int n, ref Vector3 p, ref Vector3 nn, ref Vector3 tt)
     {
         if (wt <= 0f || b < 0 || b >= n) return;
         ref var m = ref _skin[b];
         p += Vector3.Transform(pos, m) * wt;
         nn += Vector3.TransformNormal(nrm, m) * wt;
+        tt += Vector3.TransformNormal(tan, m) * wt;
+    }
+
+    /// <summary>Einheitsvektor -> 2 Werte (Oktaeder), Gegenstück OctDecode im Avatar-Vertexshader.</summary>
+    static Vector2 OctEncode(Vector3 v)
+    {
+        float s = MathF.Abs(v.X) + MathF.Abs(v.Y) + MathF.Abs(v.Z);
+        var e = new Vector2(v.X, v.Y) / s;
+        if (v.Z < 0f) e = new Vector2((1f - MathF.Abs(e.Y)) * (e.X >= 0f ? 1f : -1f), (1f - MathF.Abs(e.X)) * (e.Y >= 0f ? 1f : -1f));
+        return e;
     }
 }

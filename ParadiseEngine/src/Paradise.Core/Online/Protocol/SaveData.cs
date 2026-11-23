@@ -25,6 +25,9 @@ namespace Paradise.Core.Online
         public string avatar = "";
         /// <summary>Gekaufte Kleidungsstücke (DBClothe._hashcode).</summary>
         public List<int> ownedClothes = new List<int>();
+        /// <summary>Gekaufte Farben je Kleidungsstück wie das Original (AvatarSave.ClothesSold: Bitmaske je DBClothe-Id, Bit c = Farbe c,
+        /// exe 0x687AC0) – ein Kauf gilt nur für die gekaufte Farbe.</summary>
+        public List<ClothesSoldEntry> clothesSold = new List<ClothesSoldEntry>();
         /// <summary>Lesezeichen der großen Karte (je Insel, Spielkoordinaten).</summary>
         public List<BookmarkEntry> bookmarks = new List<BookmarkEntry>();
         /// <summary>Als Favorit markierte Spots der großen Karte (Spot-Code).</summary>
@@ -118,6 +121,14 @@ namespace Paradise.Core.Online
         public int multiChallengesWithBandages;
         /// <summary>Zeit in der Klinik in s (StatisticsData._time_spent_in_surgery).</summary>
         public float timeSpentInSurgery;
+    }
+
+    /// <summary>Gekaufte Farben eines Kleidungsstücks (DBClothe._hashcode, Bit c = Farbe c).</summary>
+    [Serializable]
+    public sealed class ClothesSoldEntry
+    {
+        public int clothe;
+        public int colors;
     }
 
     /// <summary>Gefundene Wracks einer Insel – Indizes sind die 0-basierten Array-Indizes aus wrecks.bnk.</summary>

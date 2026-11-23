@@ -30,6 +30,20 @@ public sealed class ScreenModule : GameModule, IGameModeContext
     /// <summary>Startmodus (Program: --gamemode, --login, --freeride).</summary>
     public Gamemode StartMode = Gamemode.GAME_MODE_LOGIN;
 
+    // Profiler (F1 > Performance > Open Profiler): Systeme, die jedes Bild neben dem Spielmodus laufen
+    static readonly ProfilerMarker s_mChat = new("Chat.Update", ProfilerCategory.UI);
+    static readonly ProfilerMarker s_mIsland = new("IslandTravel.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mStory = new("Story.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mStoryRender = new("Story.Render", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mRadio = new("Radio / Ambience", ProfilerCategory.Audio);
+    static readonly ProfilerMarker s_mAutosave = new("SessionAutosave.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mGameData = new("TDU2GameData.Update", ProfilerCategory.Network);
+    static readonly ProfilerMarker s_mMultiplayer = new("Multiplayer.Update", ProfilerCategory.Network);
+    static readonly ProfilerMarker s_mParty = new("Party.Update", ProfilerCategory.Network);
+    static readonly ProfilerMarker s_mRoomAvatars = new("RoomAvatars.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mNameTags = new("NameTags.Update", ProfilerCategory.UI);
+    static readonly ProfilerMarker s_mOverlays = new("GeneralOverlay / LoadingScreen", ProfilerCategory.UI);
+
     // Test-Umschalter F5/F6/F7 (KeyConfig "dev_*"), bis Login/Pausemenü/Karte als Abläufe portiert sind
     readonly bool[] _was = new bool[256];
 
@@ -68,30 +82,52 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (TDU2Controls.Pressed("dev_freeride")) GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
         if (TDU2Controls.Pressed("dev_map")) GameMode.Set(GameMode.Current == Gamemode.GAME_MODE_MAP ? Gamemode.GAME_MODE_FREERIDE : Gamemode.GAME_MODE_MAP);
         // Chat (general.bnk /pop_chat) vor dem Modus: solange getippt wird, sind Tasten/Enter/Esc gesperrt (Unity ChatTyping)
-        Chat.Update(this, time.DeltaTime);
+        using (s_mChat.Auto())
+            Chat.Update(this, time.DeltaTime);
         // Bestätigungsbox (general.bnk /dialog_box) – unabhängig vom Modus, solange offen
         Gamemodes.FlashDialog.Update();
-        _active?.Run(this, in time);
-        IslandTravel.Update(this, time.DeltaTime);   // Inselwechsel (Unity TDU2IslandTravel, Gamemodes/Utils)
-        Story.Update(this, time.DeltaTime);          // Geschichte (Unity TDU2Story): Schritte über mehrere Spielmodi, Gamemodes/Utils/Story
+        var active = _active;
+        if (active != null)
+            using (active.RunMarker.Auto())   // Profiler: "GAME_MODE_X.Run"
+                active.Run(this, in time);
+        using (s_mIsland.Auto())
+            IslandTravel.Update(this, time.DeltaTime);   // Inselwechsel (Unity TDU2IslandTravel, Gamemodes/Utils)
+        using (s_mStory.Auto())
+            Story.Update(this, time.DeltaTime);          // Geschichte (Unity TDU2Story): Schritte über mehrere Spielmodi, Gamemodes/Utils/Story
         ImportProfile();
-        GAME_MODE_FREERIDE.UpdateRadio(this, time.DeltaTime);   // Autoradio läuft in jedem Modus (Unity TDU2Radio)
-        GAME_MODE_FREERIDE.UpdateAmbience(this, time.DeltaTime);   // Umgebungsgeräusche der Insel (ambiences.xmb, Klangzonen .psa)
-        SessionAutosave.Update(this, time.DeltaTime);   // Unity TDU2Login.UpdatePlaying (läuft in jedem Modus)
-        TDU2GameData.Update(this, time.DeltaTime);       // Online-Status, Spielerzahl, Flash-Variablen (Unity TDU2GameData)
-        Multiplayer.Update(this, time.DeltaTime);        // UDP: eigener Zustand, Mitspieler-Autos, Chat-Netz (Unity TDU2Multiplayer)
-        Party.Update(this, time.DeltaTime);              // Einladungen, Antworten, Mitfahrt (Unity TDU2Party)
-        RoomAvatars.Update(this, time.DeltaTime);        // Mitspieler als Spielfigur im Interieur (Unity TDU2Multiplayer)
-        NameTags.Update(this);                           // Namen über den Mitspieler-Autos (general.bnk av_name_XX)
-        GeneralOverlay.Update(time.DeltaTime);
-        LoadingScreen.Update();
+        using (s_mRadio.Auto())
+        {
+            GAME_MODE_FREERIDE.UpdateRadio(this, time.DeltaTime);   // Autoradio läuft in jedem Modus (Unity TDU2Radio)
+            GAME_MODE_FREERIDE.UpdateAmbience(this, time.DeltaTime);   // Umgebungsgeräusche der Insel (ambiences.xmb, Klangzonen .psa)
+        }
+        using (s_mAutosave.Auto())
+            SessionAutosave.Update(this, time.DeltaTime);   // Unity TDU2Login.UpdatePlaying (läuft in jedem Modus)
+        using (s_mGameData.Auto())
+            TDU2GameData.Update(this, time.DeltaTime);       // Online-Status, Spielerzahl, Flash-Variablen (Unity TDU2GameData)
+        using (s_mMultiplayer.Auto())
+            Multiplayer.Update(this, time.DeltaTime);        // UDP: eigener Zustand, Mitspieler-Autos, Chat-Netz (Unity TDU2Multiplayer)
+        using (s_mParty.Auto())
+            Party.Update(this, time.DeltaTime);              // Einladungen, Antworten, Mitfahrt (Unity TDU2Party)
+        using (s_mRoomAvatars.Auto())
+            RoomAvatars.Update(this, time.DeltaTime);        // Mitspieler als Spielfigur im Interieur (Unity TDU2Multiplayer)
+        using (s_mNameTags.Auto())
+            NameTags.Update(this);                           // Namen über den Mitspieler-Autos (general.bnk av_name_XX)
+        using (s_mOverlays.Auto())
+        {
+            GeneralOverlay.Update(time.DeltaTime);
+            LoadingScreen.Update();
+        }
         if (GeneralOverlay.DisconnectedOpen && (Pressed(0x0D) || TDU2GameData.Online)) GeneralOverlay.CloseDisconnected();
     }
 
     public override void Render(in GameTime time)
     {
-        _active?.Render(this, in time);
-        Story.Render(this);   // Darsteller der Story-Szenen, Tess im Auto
+        var active = _active;
+        if (active != null)
+            using (active.RenderMarker.Auto())   // Profiler: "GAME_MODE_X.Render"
+                active.Render(this, in time);
+        using (s_mStoryRender.Auto())
+            Story.Render(this);   // Darsteller der Story-Szenen, Tess im Auto
     }
 
     public override void Unload()

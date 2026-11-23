@@ -11,6 +11,9 @@ public static class RenderFx
 {
     /// <summary>Bodenspiegelung an (Interieur mit Spiegelboden) und Höhe der Ebene (Render-Raum).</summary>
     public static bool PlanarOn;
+    /// <summary>GPU-Diagnose (F1 > Performance): Hauptbild nur in ein Viertel der Pixel zeichnen (Viewport halb so breit/hoch,
+    /// Bild verzerrt). Wird "GPU Scene" dadurch deutlich schneller, bremsen die Pixel (Shader/Überzeichnung), sonst die Geometrie.</summary>
+    public static bool DiagQuarterPixels;
     public static float PlanarY;
     /// <summary>Unity InteriorFx.ReflectionScale: Auflösung des Spiegelbilds relativ zum Bildschirm.</summary>
     public static float PlanarScale = 0.5f;

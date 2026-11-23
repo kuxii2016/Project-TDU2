@@ -98,8 +98,6 @@ public class GAME_MODE_SURGERY : InteriorUtils
     static bool _purchased;                             // exe +0x1BB978
     /// <summary>Spätester Start von "surg:cine:intr", falls der Film den Befehl nicht schickt (wie der Friseur sein Menü selbst startet).</summary>
     static float _introAt = -1f;
-    /// <summary>Fehlersuche: Baum des Films einmal nach dem Öffnen des Menüs ins Log (VmfPlayer.DumpTree).</summary>
-    static float _dumpAt = -1f;
     const float IntroWait = 3f;
     static SpotCinematics? _cin, _ext;
     static bool _menuCin;                               // C_HEAD/C_360 laufen (sonst Ersatz: Anprobe-Avatar wie der Friseur)
@@ -176,7 +174,7 @@ public class GAME_MODE_SURGERY : InteriorUtils
     {
         if (_phase == Phase.Closed) return;
         _phase = Phase.Closed;
-        _introAt = -1f; _dumpAt = -1f;
+        _introAt = -1f;
         EndCinematics();
         _preview?.Dispose(); _preview = null;
         if (_sui != null) { _sui.FSCommand -= OnCommand; _sui = null; }
@@ -231,22 +229,13 @@ public class GAME_MODE_SURGERY : InteriorUtils
         LoadSlots();
         _phase = Phase.Menu;
         _menuCin = false;
-        if (_cin != null && _cin.Find("C_360") != null)
-        {
-            if (_cin.Find("C_HEAD") != null) _cin.PlayBackground("C_HEAD", true);
-            _cin.PlayBackground("C_LIFE", true);
-            _cin.PlayMain("C_360", false);
-            float len = MathF.Max(0.05f, _cin.MainDuration);
-            _rot = 0.95f / len;                     // exe 0xBEEC65: 0.95 / Länge, Zeit = Anteil x Länge
-            _cin.MainHold = _rot * len;
-            _menuCin = true;
-        }
+        // exe 0xBEEC65: C_360 gehalten (0,95 / Länge, Zeit = Anteil x Länge), dazu C_HEAD und C_LIFE
+        if (_cin != null && ShopCinema.Start360(_cin, out _rot, "C_HEAD", "C_LIFE")) _menuCin = true;
         else ShowPreview();
         // Der Film setzt _root.Input erst im Bild "surgeon_stop" (Laufmodus); ItemType("valid") springt daran vorbei
         // nach "surgeon_block". Eingaben ans Menü wie beim Friseur freigeben.
         ui.SetValue("/:Input", true);
         if (!ui.CallClip("/", "openMenuSurgeon")) Log.Warn("Schönheitsklinik: _root.openMenuSurgeon fehlt im Film");
-        _dumpAt = _clock + 1.5f;   // Fehlersuche "Menü unsichtbar": Zustand des Films ins Log
     }
 
     /// <summary>Ohne C_360 in der Bank: Anprobe-Avatar am Darsteller "Avatar" der HEAD-Szene, Kamera C_HEAD (wie der Friseur).</summary>
@@ -638,6 +627,7 @@ public class GAME_MODE_SURGERY : InteriorUtils
             if (ext == null) { Leave(); return; }
             ext.Update(dt);
             foreach (var n in ext.TakeEndEvents()) if (n == "C_NEW_FACE_E") { Leave(); return; }
+            if (ShopCinema.SkipPressed()) { ext.StopMain(); Leave(); return; }   // überspringbar
             CinemaCamera(ext, dt, true);
             return;
         }
@@ -655,6 +645,8 @@ public class GAME_MODE_SURGERY : InteriorUtils
         if (_phase == Phase.Observe && _cin != null)
         {
             foreach (var n in _cin.TakeEndEvents()) if (n == "C_OBSERVE") { OpenMenu(); break; }
+            // überspringbar: Bestätigen beendet C_OBSERVE und öffnet das Menü (Zurück bricht wie bisher ab)
+            if (_phase == Phase.Observe && TDU2Controls.ConfirmPressed()) { _cin.StopMain(); OpenMenu(); return; }
             if (_phase == Phase.Observe && !_cin.MainPlaying) OpenMenu();   // Kino weg ohne Ende-Ereignis: nicht hängen bleiben
         }
 
@@ -662,12 +654,6 @@ public class GAME_MODE_SURGERY : InteriorUtils
         if (_phase == Phase.Paying && CountMoney(dt)) { Finish(); return; }
 
         var ui = _sui;
-        if (ui != null && _dumpAt > 0f && _clock >= _dumpAt)
-        {
-            _dumpAt = -1f;
-            Log.Info("Schönheitsklinik: Film nach openMenuSurgeon (Root-Label " + (ui.Label("/") ?? "-") + ", Input " + (ui.GetVariable("/:Input") ?? "-")
-                     + ", menu_sq " + (ui.Label("/menu_sq") ?? "-") + ")\n" + ui.DumpTree(3));
-        }
         if (ui != null && _phase is (Phase.Intro or Phase.Observe or Phase.Menu) && !FlashDialog.Active)
         {
             // Menü-Tasten wie der Flash Player des Spiels (auch vor dem Menü, wie der Friseur); 2x Zurück: Abbruch (wie Friseur)
@@ -689,20 +675,11 @@ public class GAME_MODE_SURGERY : InteriorUtils
         Close();
     }
 
-    /// <summary>Drehen mit rechtem Stick / Tasten / Maus (0xBF0EE9): Anteil += (rechts - links) x dt, auf [0, 0,95], C_360-Zeit = Anteil x Länge.</summary>
+    /// <summary>Drehen mit rechtem Stick / Tasten / Maus (0xBF0EE9): gemeinsam mit dem Friseur (ShopCinema.Rotate).</summary>
     static void Rotate(float dt)
     {
         if (!_menuCin || _cin == null) return;
-        float mouse = 0f;
-        var input = _t.Input;
-        if (input.RightMouseDown) mouse = -2f * input.MouseDeltaX * SurgeryConfig.MouseRotateScale;   // Aktion 0x6A: -(2 x Mausachse)
-        var look = TDU2InputDevices.Look;
-        float right = MathF.Max(0f, look.X) + (TDU2Controls.Held("walk_turnr") ? 1f : 0f);
-        float left = MathF.Max(0f, -look.X) + (TDU2Controls.Held("walk_turnl") ? 1f : 0f);
-        _rot += (right + mouse - left) * dt;
-        if (_rot < 0f) _rot = 0f;
-        if (_rot > 0.95f) _rot = 0.95f;
-        _cin.MainHold = _rot * MathF.Max(0.05f, _cin.MainDuration);
+        ShopCinema.Rotate(_cin, ref _rot, dt, SurgeryConfig.MouseRotateScale);
     }
 
     /// <summary>ScatteringCoeff der 2DM (Haut), solange die Konfiguration keinen Tint hat (Preis-Raste des Originals).</summary>
@@ -717,14 +694,7 @@ public class GAME_MODE_SURGERY : InteriorUtils
 
     static void CinemaCamera(SpotCinematics cin, float dt, bool outdoor)
     {
-        if (!cin.Camera(out var eye, out var fwd, out var up, out float fov)) { if (!outdoor) HeadCamera(dt); return; }
-        var cam = _t.Camera; var st = _t.Streamer;
-        if (cam == null || st == null) return;
-        _t.FlyCameraEnabled = false;
-        cam.Position = st.GameToRender(eye);
-        cam.Override = (fwd, up);
-        _t.FieldOfView = fov;
-        _t.NearClip = outdoor ? 0.1f : 0.03f;
+        if (!ShopCinema.Camera(cin, outdoor)) { if (!outdoor) HeadCamera(dt); return; }
         _camInit = false;
     }
 

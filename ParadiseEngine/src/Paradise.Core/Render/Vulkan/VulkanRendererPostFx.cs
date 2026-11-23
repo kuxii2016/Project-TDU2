@@ -446,7 +446,7 @@ public sealed unsafe partial class VulkanRenderer
     private void RecordBloom(CommandBuffer cmd)
     {
         float qx = 1f / _pfxQW, qy = 1f / _pfxQH;
-        var pc = new PfxPush { Vars = new(qx, qy, 0.25f * qx, 0.25f * qy), Params = new(PostFx.BloomThreshold, PostFx.BloomKnee, PostFx.BloomEmissive, 0f) };
+        var pc = new PfxPush { Vars = new(qx, qy, 0.25f * qx, 0.25f * qy), Params = new(PostFx.BloomThreshold, PostFx.BloomKnee, PostFx.BloomEmissive, PostFx.BloomEmissiveThreshold) };
         PfxPass(cmd, _pfxBloomAFb, _pfxQW, _pfxQH, _pfxBright, _pfxSetBright, pc);
         var g = PfxGauss();
         float r = System.Math.Clamp(PostFx.BloomRadius, 0.25f, 8f);

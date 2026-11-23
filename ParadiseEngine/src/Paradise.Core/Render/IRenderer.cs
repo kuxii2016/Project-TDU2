@@ -65,6 +65,15 @@ public interface IRenderer : IDisposable
     /// </summary>
     void DrawDynamic(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices, IGpuMaterial material, Matrix4x4 model);
 
+    /// <summary>
+    /// Dauerhaftes Mesh für Geometrie, die sich jedes Bild ändert (gehäutete Avatare): Puffer werden einmal angelegt und danach
+    /// nur noch beschrieben (je Bild im Flug ein Satz). null = vom Backend nicht unterstützt -> <see cref="DrawDynamic"/> verwenden.
+    /// </summary>
+    IGpuMesh? CreateDynamicMesh(int vertexCount, ReadOnlySpan<uint> indices) => null;
+
+    /// <summary>Vertices in ein <see cref="CreateDynamicMesh"/>-Mesh schreiben und zeichnen. Begrenzungskugel im Mesh-Raum.</summary>
+    void DrawDynamicMesh(IGpuMesh mesh, ReadOnlySpan<ObjectVertex> vertices, IGpuMaterial material, Matrix4x4 model, Vector3 boundsCenter, float boundsRadius) { }
+
     /// <summary>Altpfad: Mesh mit seiner eigenen Textur (oder weiß) zeichnen.</summary>
     void DrawMesh(IGpuMesh mesh, Matrix4x4 model);
 

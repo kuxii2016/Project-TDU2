@@ -831,7 +831,13 @@ public class GAME_MODE_MAP : GameModeHandler
         {
             // Tooltip des Tuners (infos.setTuner): Anzahl Marken (Seiten zu 8) und beste freie Tuningstufe (txt.upg level0..5)
             ui.SetValue("/:NbBrands", TunerLogos(ms.spot).Count);
-            ui.SetVariable("/:MaxUpgLevel", "level" + System.Math.Clamp(GAME_MODE_TUNER.AreaLevel(), 0, 5));
+            ui.SetVariable("/:MaxUpgLevel", "level" + System.Math.Clamp(GAME_MODE_TUNER.AreaLevelAt(ms.spot.Position), 0, 5));
+        }
+        else if (ms.label == "surgery")
+        {
+            // exe 0xB1D1A5: Anzahl Operationen (Profil +0xD8); Verband an -> Spot gesperrt (/:IsSpotLocked)
+            ui.SetVariable("/:NbSurgeriesDone", (TDU2Session.Save?.surgery?.nbSurgeries ?? 0).ToString(CultureInfo.InvariantCulture));
+            if (BandageUtils.Active) ui.SetValue("/:IsSpotLocked", true);
         }
         if (ms.label == "carDealer" || ms.label == "bikeDealer" || ms.label == "carRental")
         {

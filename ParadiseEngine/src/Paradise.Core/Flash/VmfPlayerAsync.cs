@@ -46,6 +46,17 @@ namespace Paradise.Core.Flash
         bool _revealHolding;
 
         readonly Queue<(int id, int target, int gen, VmfRaster.Result r)> _uploadQueue = new Queue<(int id, int target, int gen, VmfRaster.Result r)>();
+
+        // Profiler-Graph "Flash" (FlashHost): je Bild hochgeladene Shapes, zurückgehaltene Clips, längste Wartezeit bis zum Einblenden
+        internal int ProfUploads, ProfHeld;
+        internal float ProfRevealWaitMs;
+
+        /// <summary>Profiler: wartende Raster-Aufträge und fertig gerasterte, noch nicht hochgeladene Shapes.</summary>
+        internal (int jobs, int ready) RasterBacklog()
+        {
+            lock (_rasterLock) return (_rasterJobs.Count, _rasterDone.Count + _uploadQueue.Count);
+        }
+
         public void UploadTick()
         {
             if (_uploadQueue.Count == 0) return;
@@ -62,6 +73,7 @@ namespace Paradise.Core.Flash
                 try { StoreShape(e.id, e.target, e.r); } catch { }
                 done++;
             }
+            ProfUploads += done;
         }
 
         /// <summary>
@@ -74,7 +86,7 @@ namespace Paradise.Core.Flash
             float now = Time.unscaledTime;
             bool appearing = d.SeenDraw != _drawSerial && d.SeenDraw != _drawSerial - 1;   // im letzten Zeichnen nicht dabei
             d.SeenDraw = _drawSerial;
-            if (appearing) { d.Revealed = false; d.RevealSince = now; }
+            if (appearing) { d.Revealed = false; d.RevealSince = now; d.HeldOnce = false; }
             if (d.Revealed) return true;
             // Prüfdurchgang ohne Zeichnen (rastert kleine Shapes sofort, große im Hintergrund)
             var clip = _clip; var mask = _maskTex; var maskRect = _maskRect;
@@ -86,11 +98,14 @@ namespace Paradise.Core.Flash
             _missing = wasMissing; _clip = clip; _maskTex = mask; _maskRect = maskRect;
             if (!missing || now - d.RevealSince >= RevealHoldSeconds)
             {
+                if (d.HeldOnce) { ProfRevealWaitMs = System.Math.Max(ProfRevealWaitMs, (now - d.RevealSince) * 1000f); d.HeldOnce = false; }
                 d.Revealed = true; d.FrozenUntil = 0f;
                 return true;
             }
             d.FrozenUntil = now + 0.15f;   // verlängert sich, solange der Clip gezeichnet werden will
             _revealHolding = true;
+            d.HeldOnce = true;
+            ProfHeld++;
             return false;
         }
 

@@ -434,10 +434,23 @@ public sealed class PhysicsWorld : IDisposable
         }
     }
 
+    private static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mStep =
+        new("Physics.Step (Bepu Timestep)", global::Paradise.Core.Diagnostics.ProfilerCategory.Physics);
+
     /// <summary>Simulationsschritt (fester Takt).</summary>
     public void Step(float dt)
     {
-        if (dt > 0f) Simulation.Timestep(dt, _dispatcher);
+        using (s_mStep.Auto())
+        {
+            if (dt > 0f) Simulation.Timestep(dt, _dispatcher);
+        }
+        if (global::Paradise.Core.Diagnostics.Profiler.Enabled)
+        {
+            // Zähler für den Profiler-Graphen "Physics"
+            global::Paradise.Core.Diagnostics.ProfilerCounters.PhysicsSteps.Add(1);
+            global::Paradise.Core.Diagnostics.ProfilerCounters.PhysicsActiveBodies.Set(Simulation.Bodies.ActiveSet.Count);
+            global::Paradise.Core.Diagnostics.ProfilerCounters.PhysicsStatics.Set(Simulation.Statics.Count);
+        }
     }
 
     public void Dispose()

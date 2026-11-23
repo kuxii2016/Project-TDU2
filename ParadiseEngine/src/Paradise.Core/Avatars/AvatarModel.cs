@@ -175,7 +175,22 @@ public sealed partial class AvatarModel : IDisposable
         public bool Head;
         /// <summary>COEFFS / SPECPARM der 2DM (Haut): Vorgabe, wenn die Konfiguration keinen Wert setzt.</summary>
         public Vector4 BaseCoeffs, BaseSpec;
+        /// <summary>Gehäutete Vertices dieses Teils (eigener Puffer, damit die Teile parallel gehäutet werden können).</summary>
+        public ObjectVertex[]? Skinned;
+        public bool SkinnedThisFrame;
+        /// <summary>Dauerhaftes GPU-Mesh (nur noch beschreiben statt jedes Bild neu anlegen); null = Backend kann es nicht.</summary>
+        public IGpuMesh? Dyn;
+        public bool DynUnsupported;
+        /// <summary>Begrenzungskugel der gehäuteten Vertices (Avatar-Raum), beim Häuten berechnet.</summary>
+        public Vector3 BCenter;
+        public float BRadius;
     }
+
+    // Profiler: CPU-Häutung (Driver.Render lag im Debug-Build bei ~4,8 ms je Bild)
+    static readonly ProfilerMarker s_mSkin = new("AvatarModel.Skin (CPU)", ProfilerCategory.Animation);
+    static readonly ProfilerMarker s_mDraw = new("AvatarModel.DrawDynamic", ProfilerCategory.Rendering);
+    /// <summary>Ab so vielen Vertices werden die Teile parallel gehäutet (darunter lohnt der Thread-Wechsel nicht).</summary>
+    const int ParallelSkinVertices = 4000;
     readonly List<Piece> _pieces = new();
     readonly List<AvatarPartData> _parts = new();
     ObjectVertex[] _verts = Array.Empty<ObjectVertex>();
@@ -412,20 +427,55 @@ public sealed partial class AvatarModel : IDisposable
         if (_lightVersion != AvatarLight.Version) { _lightVersion = AvatarLight.Version; Refresh(); }
         ApplyFace();
         Rig.UpdateSkin();
-        foreach (var p in _pieces)
+        var rig = Rig;
+        using (s_mSkin.Auto())
         {
-            int n = p.Prim.Pos.Length;
-            if (n == 0 || p.Indices.Length == 0) continue;
-            if (p.Head && _headHidden) continue;   // Cockpit-Kamera: Kopfteile nicht zeichnen
-            Rig.Skin(p.Prim, _verts, 0);
-            _r.DrawDynamic(new ReadOnlySpan<ObjectVertex>(_verts, 0, n), p.Indices, p.Mat, model);
+            int total = 0;
+            foreach (var p in _pieces)
+            {
+                p.SkinnedThisFrame = p.Prim.Pos.Length > 0 && p.Indices.Length > 0 && !(p.Head && _headHidden);   // Cockpit-Kamera: Kopfteile nicht zeichnen
+                if (p.SkinnedThisFrame) total += p.Prim.Pos.Length;
+            }
+            // Teile unabhängig voneinander häuten (jeder Teil schreibt nur in seinen eigenen Puffer); Zeichnen danach im Hauptthread.
+            if (total >= ParallelSkinVertices && _pieces.Count > 1)
+                Parallel.For(0, _pieces.Count, i => SkinPiece(rig, _pieces[i]));
+            else
+                foreach (var p in _pieces) SkinPiece(rig, p);
         }
+        using (s_mDraw.Auto())
+            foreach (var p in _pieces)
+            {
+                if (!p.SkinnedThisFrame || p.Skinned == null) continue;
+                int n = p.Prim.Pos.Length;
+                var verts = new ReadOnlySpan<ObjectVertex>(p.Skinned, 0, n);
+                if (p.Dyn == null && !p.DynUnsupported)
+                {
+                    p.Dyn = _r.CreateDynamicMesh(n, p.Indices);
+                    p.DynUnsupported = p.Dyn == null;
+                }
+                if (p.Dyn != null) _r.DrawDynamicMesh(p.Dyn, verts, p.Mat, model, p.BCenter, p.BRadius);
+                else _r.DrawDynamic(verts, p.Indices, p.Mat, model);
+            }
+    }
+
+    static void SkinPiece(AvatarRig rig, Piece p)
+    {
+        if (!p.SkinnedThisFrame) return;
+        int n = p.Prim.Pos.Length;
+        if (p.Skinned == null || p.Skinned.Length < n) p.Skinned = new ObjectVertex[n];
+        rig.Skin(p.Prim, p.Skinned, 0);
+        // Begrenzungskugel wie UploadMesh (Mitte der Box, halbe Diagonale) – hier im Arbeits-Thread statt im Hauptthread
+        var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
+        var sk = p.Skinned;
+        for (int i = 0; i < n; i++) { var q = sk[i].Position; mn = Vector3.Min(mn, q); mx = Vector3.Max(mx, q); }
+        p.BCenter = (mn + mx) * 0.5f;
+        p.BRadius = (mx - mn).Length() * 0.5f;
     }
 
     public void Dispose()
     {
         EditorDisposed = true;
-        foreach (var p in _pieces) p.Mat.Dispose();
+        foreach (var p in _pieces) { p.Mat.Dispose(); p.Dyn?.Dispose(); p.Dyn = null; }
         _pieces.Clear();
         foreach (var p in _parts) p.Textures.Destroy();
         _parts.Clear();

@@ -21,7 +21,7 @@ public sealed partial class MapStreamer : IDisposable
     public string Island = "ibiza";
     public float AreaLoadDistance = 900f;
     public float AreaUnloadMargin = 1000f;
-    public float SectorLoadDistance = 1500f;   // Unity: 900 (Objekte/Bäume ploppten zu spät auf)
+    public float SectorLoadDistance = 900f;   // Unity: 900 (1500 kostete ~2,8x Gelände-Dreiecke im Bild, Schatten und Spiegelung)
     public float SectorUnloadMargin = 300f;
     public int MaxParallelLoads = 4;
     public bool ShowIslandLod = true;

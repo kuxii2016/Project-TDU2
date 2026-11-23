@@ -559,6 +559,68 @@ internal sealed class Discovery : GameModule
     public int NextThreshold => DiscoveryConfig.NextThreshold(TotalPoints);
     public int Area => _area;
     public string AreaName => AreaLabel(_area);
+
+    // ------------------------------------------------------------------ Gebietslevel (Tuner-Stufen, DBAreaLevel)
+    /// <summary>
+    /// Entdeckungspunkte eines Gebiets der geladenen Insel (Original: Profil +0x30 = Spielstand PlayerLevels/CruisingLevels/Area_n;
+    /// exe FUN_00a0cc43 Kategorie 3 addiert jede Cruising-Belohnung auf das Gebiet, in dem sie liegt). Hier aus denselben Quellen
+    /// wie die Gesamtpunkte: aufgedeckte Straßen des Gebiets, gefundene Wracks (25), Gebiets-Events (DBRewardXP _cruisingpoints).
+    /// Aussichtspunkte sind nur je Insel geführt (CRUISING_PHOTOS_*) und lassen sich keinem Gebiet zuordnen.
+    /// </summary>
+    public int AreaPoints(int area)
+    {
+        if (area < 1) return 0;
+        int pts = 0;
+        foreach (var s in _segments)
+            if (s.Area == area && _unlocked.Contains(s.Id)) pts += Math.Max(1, (int)MathF.Floor(s.Length / 50f));
+        var w = Wrecks.Current;
+        if (w != null && string.Equals(w.Island, _island, StringComparison.OrdinalIgnoreCase)) pts += w.CountsInArea(area).found * Wrecks.XpPerWreck;
+        bool hawaii = _island.StartsWith("h", StringComparison.OrdinalIgnoreCase);
+        foreach (var rw in CruiseRewards().Values)
+            if (rw.Area == area && rw.PointsEach > 0 && rw.Island.StartsWith(hawaii ? "H" : "I", StringComparison.OrdinalIgnoreCase))
+                pts += Math.Clamp(CruiseEventCount(rw.Event), 0, rw.Times) * rw.PointsEach;
+        return pts;
+    }
+
+    /// <summary>
+    /// Gebietslevel 1..6 (exe 0xa05b40): DBCruisingZones liefert die Insel des Gebiets (_island: Ibiza 0, Hawaii 1), dann die erste
+    /// DBAreaLevel-Zeile dieser Insel mit _alpneeded &gt; Punkte -&gt; _level - 1; ab der letzten Schwelle (Gebiet voll) deren _level.
+    /// Gebiet -1 (außerhalb) = 1. Der Tuner schaltet Stufe n frei, wenn das Gebietslevel &gt;= n ist (exe 0xa2f720).
+    /// </summary>
+    public int AreaLevel(int area) => AreaLevelFor(_island, area, AreaPoints(area));
+
+    public static int AreaLevelFor(string island, int area, int points)
+    {
+        if (area < 1) return 1;
+        int code = island.StartsWith("h", StringComparison.OrdinalIgnoreCase) ? 1 : 0;   // DBCruisingZones._island (i1/i2 = 0, h1..h4 = 1)
+        var rows = AreaLevelRows();
+        int last = 1, lastNeed = -1;
+        foreach (var (isl, need, level) in rows)
+        {
+            if (isl != code) continue;
+            if (need > points) return Math.Max(1, level - 1);
+            if (need >= lastNeed) { lastNeed = need; last = level; }
+        }
+        return lastNeed >= 0 ? last : 1;
+    }
+
+    static List<(int island, int need, int level)>? _areaLevels;
+
+    /// <summary>DBAreaLevel (db_data.cpr) in Dateireihenfolge: _island, _alpneeded, _level.</summary>
+    static List<(int island, int need, int level)> AreaLevelRows()
+    {
+        if (_areaLevels != null) return _areaLevels;
+        var list = new List<(int, int, int)>();
+        try
+        {
+            var root = XmbFile.Parse(CprCrypto.Decrypt(GameFiles.ReadAllBytes(Path.Combine(FlashHost.BnkDir, "database", "db_data.cpr"))));
+            foreach (var e in root.Get("DBAreaLevel")?.Items ?? new List<XmbNode>())
+                list.Add((e.I("_island", -1), e.I("_alpneeded"), e.I("_level", 1)));
+        }
+        catch (Exception ex) { Log.Warn("Discovery: DBAreaLevel nicht lesbar: " + ex.Message); }
+        _areaLevels = list;
+        return list;
+    }
     public string LastRoadId => string.IsNullOrEmpty(_lastRoadId) ? "-" : _lastRoadId;
 
     /// <summary>

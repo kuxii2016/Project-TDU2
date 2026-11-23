@@ -484,13 +484,17 @@ public sealed unsafe partial class VulkanRenderer
         Matrix4x4.Invert(view, out var camWorld);
         var eye = camWorld.Translation;
         float far = farLimit > 0f ? farLimit : float.MaxValue;
-        foreach (var (mesh, mat, model) in _opaque)
+        EnsureEnvSpheres();   // Welt-Kugeln einmal je Bild (parallel), gemeinsam für Spiegel-/Meer- und Sondendurchgang
+        var opaque = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_opaque);
+        for (int k = 0; k < opaque.Length; k++)
         {
+            var (mesh, mat, model) = opaque[k];
             if (skipCars && mat.Kind == MaterialKind.Car) continue;   // Unity cullingMask: das eigene Auto nicht mitspiegeln
-            if (mesh is VulkanMesh vm && vm.BRadius < 1e5f)
+            var s = _envSpheres[k];
+            if (s.W >= 0f)
             {
-                var c = Vector3.Transform(vm.BCenter, model);
-                float r = vm.BRadius * MathF.Max(new Vector3(model.M11, model.M12, model.M13).Length(), MathF.Max(new Vector3(model.M21, model.M22, model.M23).Length(), new Vector3(model.M31, model.M32, model.M33).Length()));
+                var c = new Vector3(s.X, s.Y, s.Z);
+                float r = s.W;
                 bool outside = false;
                 for (int i = 0; i < 4 && !outside; i++) if (planes[i].X * c.X + planes[i].Y * c.Y + planes[i].Z * c.Z + planes[i].W < -r) outside = true;
                 if (outside || Vector3.Distance(c, eye) - r > far) continue;
@@ -501,5 +505,34 @@ public sealed unsafe partial class VulkanRenderer
         _vk.CmdEndRenderPass(cmd);
         _boundPipeline = null;
         _activeFrameSet = _frameSets[_currentFrame];
+    }
+
+    // Welt-Begrenzungskugel je opakem Objekt (xyz = Mitte, w = Radius, w < 0 = nicht cullen). Vorher rechnete jeder Spiegel-/Sonden-
+    // durchgang sie einzeln im Hauptthread (3 Längen + Transformation je Objekt und Durchgang, laut Profiler ~1,7 ms je Bild).
+    private Vector4[] _envSpheres = Array.Empty<Vector4>();
+    private long _envSpheresFrame = -1;
+    private int _envSpheresCount = -1;
+
+    private void EnsureEnvSpheres()
+    {
+        int n = _opaque.Count;
+        if (_envSpheresFrame == _frameCounter && _envSpheresCount == n) return;
+        _envSpheresFrame = _frameCounter;
+        _envSpheresCount = n;
+        if (_envSpheres.Length < n) _envSpheres = new Vector4[System.Math.Max(n, _envSpheres.Length * 2)];
+        var list = _opaque;
+        var arr = _envSpheres;
+        if (n >= 512)
+            Parallel.For(0, n, i => { var e = list[i]; arr[i] = EnvSphere(e.mesh, e.model); });   // nur lesen, jeder Index schreibt seinen Platz
+        else
+            for (int i = 0; i < n; i++) { var e = list[i]; arr[i] = EnvSphere(e.mesh, e.model); }
+    }
+
+    private static Vector4 EnvSphere(VulkanMesh? mesh, Matrix4x4 model)
+    {
+        if (mesh == null || !(mesh.BRadius < 1e5f)) return new Vector4(0f, 0f, 0f, -1f);
+        var c = Vector3.Transform(mesh.BCenter, model);
+        float r = mesh.BRadius * MathF.Max(new Vector3(model.M11, model.M12, model.M13).Length(), MathF.Max(new Vector3(model.M21, model.M22, model.M23).Length(), new Vector3(model.M31, model.M32, model.M33).Length()));
+        return new Vector4(c, r);
     }
 }

@@ -87,7 +87,12 @@ public class GAME_MODE_DRESSING : AvatarShop
         found.Sort(Order);
         if (Removable(parts[0])) list.Add(new Entry { Item = null, Part = parts[0], Owned = true });
         foreach (var c in found)
-            for (int col = 0; col < System.Math.Max(1, c.NbColors); col++) list.Add(new Entry { Item = c, Part = c.Part, Color = col, Owned = true });
+        {
+            // nur gekaufte Farben (ClothesSold) bzw. die getragene; Standardteile in allen Farben
+            bool standard = AvatarConfig.Default(sex).Items.Contains(c.Hash);
+            for (int col = 0; col < System.Math.Max(1, c.NbColors); col++)
+                if (standard || OwnsColor(c, col)) list.Add(new Entry { Item = c, Part = c.Part, Color = col, Owned = true });
+        }
         return list;
     }
 }

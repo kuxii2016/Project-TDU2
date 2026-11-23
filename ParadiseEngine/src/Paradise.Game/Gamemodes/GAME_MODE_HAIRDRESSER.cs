@@ -6,7 +6,6 @@ using Paradise.Core.Flash;
 using Paradise.Core.Online;
 using Paradise.Game.Screens;
 using System.Numerics;
-using static Paradise.Game.Racing.RaceCinematics;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -31,8 +30,11 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     const int StyleShort = 1, StyleLong = 2, StyleAfro = 4, StyleAttached = 9;
     const int BeardFull = 6, BeardMoustache = 7, BeardGoatee = 8;
 
-    static SpotCinematics? _cin, _ext; 
+    static SpotCinematics? _cin, _ext;
     static bool _menuCin;
+    /// <summary>Anteil der gehaltenen C_360 (exe +0x1BB92C), Kauf erfolgt (+0x1BBA58), Kauf-Kino läuft.</summary>
+    static float _rot;
+    static bool _bought, _outro;
 
     static VmfPlayer? _hui;
     static bool _open;
@@ -49,17 +51,47 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
 
     static Vector3 _camPos, _camFwd, _camUp; static float _camFov; static bool _camInit;
 
+    // ------------------------------------------------------------------ Augenbrauen (exe 0x675260, 0xBA11B0 … 0xBA1990)
+    /// <summary>Augenbrauen-Typen je Geschlecht (exe 0x675260): Id = Zelle des 2x4-Atlas (u = Id/4 x 0,5, v = Id%4 x 0,25), Text-Hash.</summary>
+    static readonly int[] BrowTextMan = { 4080, 4082, 4084, 4086, 4081, 4083, 4085, 4087 };
+    static readonly int[] BrowTextWoman = { 4088, 4090, 4092, 4094, 4089, 4091, 4093, 4095 };
+    /// <summary>Augenbrauen-Farben (exe @0x1675590, 0x00BBGGRR) und ihre Texte (@0x1675520: 5414 … 5427), Index 0 … 13 (exe +0x1BB96C = 13).</summary>
+    static readonly int[] BrowColors = { 0x000000, 0x465a6e, 0x5a6478, 0x505a64, 0x464664, 0x141428, 0x0a1e46, 0x1e3c5a, 0x0a1432, 0x1e4664, 0x28466e, 0x143282, 0x32508c, 0x14003c };
+    const int BrowColorText0 = 5414, BrowPrice = 25;   // exe 0xBA14D6: +0x1BBA68 = 25
+    static int _browIdx, _browColor;
+
+    static int BrowColorIndex(AvatarConfig c)
+    {
+        if (!c.HasBrowColor) return 0;
+        for (int i = 0; i < BrowColors.Length; i++)
+        {
+            var v = BrowColorOf(i);
+            if (MathF.Abs(v.X - c.BrowColor.X) < 0.003f && MathF.Abs(v.Y - c.BrowColor.Y) < 0.003f && MathF.Abs(v.Z - c.BrowColor.Z) < 0.003f) return i;
+        }
+        return 0;
+    }
+
+    /// <summary>Farbe i als COLOR wie exe 0x67CE12 (Byte / 255, R = niedrigstes Byte).</summary>
+    static System.Numerics.Vector4 BrowColorOf(int i)
+    {
+        int v = BrowColors[System.Math.Clamp(i, 0, BrowColors.Length - 1)];
+        return new System.Numerics.Vector4((v & 0xFF) / 255f, ((v >> 8) & 0xFF) / 255f, ((v >> 16) & 0xFF) / 255f, 1f);
+    }
+
+    /// <summary>exe 0xBA147C: Typ-Id oder Farbindex weicht von den getragenen Augenbrauen ab.</summary>
+    static bool BrowChanged => System.Math.Max(0, _edit.BrowId) != System.Math.Max(0, _orig.BrowId) || BrowColorIndex(_edit) != BrowColorIndex(_orig);
+
     /// <summary>Auswahlpunkt Typ 29 (InteriorUtils.Activate): Friseur öffnen.</summary>
     internal static bool Open()
     {
         if (!AvatarLibrary.Ready) { Log.Info("Friseur: Avatar-Daten werden noch geladen …"); return false; }
         if (_t == null || _scene == null) return false;
         // Original: Friseur gesperrt, solange der Verband der Schönheitsklinik sitzt (Text 7169, Karte /:hairdresser_locked 0xBD7364)
-        if (Paradise.Game.Utils.BandageUtils.Active) 
+        if (Paradise.Game.Utils.BandageUtils.Active)
         {
             var msg = Lang(7169, "You cannot go to the hairdresser until you have your bandages removed.");
-            Paradise.Game.Utils.BandageUtils.Notify(Paradise.Game.Utils.BandageUtils.TextHairdresserLocked, msg); 
-            return false; 
+            Paradise.Game.Utils.BandageUtils.Notify(Paradise.Game.Utils.BandageUtils.TextHairdresserLocked, msg);
+            return false;
         }
         GameMode.Set(Gamemode.GAME_MODE_HAIRDRESSER);
         return true;
@@ -78,14 +110,21 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         _npc = InteriorNpcs.First("Hair") ?? InteriorNpcs.First(null);
         if (_npc != null) { var a = InteriorNpcs.FindActor(_npc.Hc, "HEAD"); if (a != null) InteriorNpcs.SetPose(_npc.ConfigName, a); }
         if (ctx.Terrain != null) ctx.Terrain.Input.CursorLocked = false;
-        _preview?.Dispose();
-        _preview = new AvatarPreview(_v.Renderer);
-        var act = InteriorNpcs.FindObject("Avatar", "HEAD");
-        if (act == null) Log.Warn("Friseur: Darsteller \"Avatar\" der HEAD-Szene fehlt");
-        _preview.Place(act, act?.Clip, _orig.Sex, "hd_sitstand_loop-m", "co_stand-w");
-        if (act == null) _preview.Pose = Matrix4x4.CreateTranslation(_t.Streamer != null && _t.Camera != null
-            ? Vector3.Transform(_t.Streamer.RenderToGame(_t.Camera.Position) + _t.Camera.Forward * 2f - Vector3.UnitY * 1.6f, _holderInv) : Vector3.Zero);
-        _preview.Show(_edit, true);
+        _bought = false; _outro = false; _menuCin = false;
+        // exe 0xB9FD25: Kinos der Bank, C_LIFE beim Betreten (der Spieler-Darsteller sitzt im Kino); ohne C_360 der Anprobe-Avatar
+        OpenCinematics();
+        _cin?.PlayBackground("C_LIFE", true);
+        _preview?.Dispose(); _preview = null;
+        if (_cin?.Find("C_360") == null)
+        {
+            _preview = new AvatarPreview(_v.Renderer);
+            var act = InteriorNpcs.FindObject("Avatar", "HEAD");
+            if (act == null) Log.Warn("Friseur: Darsteller \"Avatar\" der HEAD-Szene fehlt");
+            _preview.Place(act, act?.Clip, _orig.Sex, "hd_sitstand_loop-m", "co_stand-w");
+            if (act == null) _preview.Pose = Matrix4x4.CreateTranslation(_t.Streamer != null && _t.Camera != null
+                ? Vector3.Transform(_t.Streamer.RenderToGame(_t.Camera.Position) + _t.Camera.Forward * 2f - Vector3.UnitY * 1.6f, _holderInv) : Vector3.Zero);
+            _preview.Show(_edit, true);
+        }
         _camInit = false;
         _open = true;
         ui.Visible = true;
@@ -111,6 +150,8 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     {
         if (!_open) return;
         _open = false; _startAt = -1f;
+        _bought = false; _outro = false;
+        EndCinematics();
         _preview?.Dispose(); _preview = null;
         if (_npc != null) InteriorNpcs.ResetPose(_npc);
         _npc = null;
@@ -134,16 +175,18 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         ui.SetValue("/:isWoman", woman);
         ui.SetValue("/:LockHair", false);
         ui.SetValue("/:LockPilosity", woman);
-        ui.SetValue("/:LockEyebrows", true);   // Augenbrauen-Varianten nicht nachgebaut (wie Unity)
+        ui.SetValue("/:LockEyebrows", false);   // Augenbrauen: Typ (8 je Geschlecht) und Farbe (14), exe 0xBA11B0
         ui.SetValue("/:LockHairCancel", false);
         ui.SetValue("/:LockHairValid", false);
         ui.SetValue("/:Input", true);
         UpdatePrice();
-        OpenCinematics();
-        if (!ui.CallClip("/", "openMenuHairDresser")) 
-        { 
-            ui.GotoLabel("/", "hairdresser_edit", false); 
-            ui.CallClip("/", "setSquareMenu"); 
+        // exe 0xBA1CD0: C_LIFE aus, C_360 gehalten (0,95 / Länge) + C_HEAD; ohne C_360 bleibt der Anprobe-Avatar
+        if (_cin == null) OpenCinematics();
+        if (_cin != null && ShopCinema.Start360(_cin, out _rot, "C_HEAD")) { _cin.StopBackground("C_LIFE"); _menuCin = true; }
+        if (!ui.CallClip("/", "openMenuHairDresser"))
+        {
+            ui.GotoLabel("/", "hairdresser_edit", false);
+            ui.CallClip("/", "setSquareMenu");
         }
     }
 
@@ -164,6 +207,33 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         _menuCin = false;
         _cin?.Dispose(); _cin = null;
         _ext?.Dispose(); _ext = null;
+    }
+
+    /// <summary>Aussehen auf den Anprobe-Avatar bzw. den Spieler-Darsteller des Kinos.</summary>
+    static void ShowEdit()
+    {
+        _preview?.Show(_edit, false);
+        _cin?.SetPlayer(_edit.Clone());
+    }
+
+    /// <summary>
+    /// Schließen (exe 0xB9FDD0): Kinos neu – C_LIFE, nach einem Kauf C_BUY_HAIR als Haupt-Kino (mit Kamera); danach zurück in den Raum.
+    /// </summary>
+    static void Leave()
+    {
+        if (_bought && _cin != null && _cin.Find("C_BUY_HAIR") != null)
+        {
+            _menuCin = false;
+            _cin.StopMain();
+            _cin.StopBackground();
+            _cin.SetPlayer(_orig.Clone());
+            _cin.PlayBackground("C_LIFE", true);
+            _cin.PlayMain("C_BUY_HAIR");
+            _outro = true;
+            if (_hui != null) { _hui.Visible = false; _hui.MouseEnabled = false; }
+            return;
+        }
+        Close();
     }
 
     // ================================================================== Auswahl
@@ -204,7 +274,8 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     static string StyleName(int st, bool beard)
     {
         if (beard) return st == BeardGoatee ? "goatee" : st == BeardMoustache ? "moustache" : st == BeardFull ? "beard" : "shave";
-        return st == StyleLong ? "long" : st == StyleAfro ? "afro" : st == StyleAttached ? "w_attached" : "short";
+        bool woman = _edit.Sex == 1;   // exe 0xBA00A0: Frauen "w_short" / "w_afro"
+        return st == StyleLong ? "long" : st == StyleAfro ? (woman ? "w_afro" : "afro") : st == StyleAttached ? "w_attached" : woman ? "w_short" : "short";
     }
 
     static string CutName(ClotheInfo? c)
@@ -224,7 +295,7 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         if (c != null && !c.IsNothing) _edit.Set(c, System.Math.Clamp(_color, 0, System.Math.Max(0, c.NbColors - 1)));
         UpdateTexts();
         UpdatePrice();
-        _preview?.Show(_edit, false);
+        ShowEdit();
     }
 
     static void UpdateTexts()
@@ -239,8 +310,35 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         string col = (System.Math.Clamp(_color, 0, nc - 1) + 1) + "/" + nc;
         if (beard) { ui.SetVariable("/:PilosityType", type); ui.SetVariable("/:PilosityCut", cut); ui.SetVariable("/:PilosityColor", col); }
         else { ui.SetVariable("/:HairType", type); ui.SetVariable("/:HairCut", cut); ui.SetVariable("/:HairColor", col); }
+        ui.CallClip("/hair_menu", "updateParameters");   // exe 0xBA21E4 (sperrt Schnitt/Farbe bei "shave")
     }
 
+    static void UpdateBrowTexts()
+    {
+        var ui = _hui; if (ui == null) return;
+        var names = _edit.Sex == 1 ? BrowTextWoman : BrowTextMan;
+        int i = System.Math.Clamp(_browIdx, 0, names.Length - 1);
+        string type = Lang(names[i], "Eyebrows " + (i + 1));
+        // exe 0xBA1247: getragene (gekaufte) Augenbrauen mit " (Aktuell)"
+        if (i == System.Math.Max(0, _orig.BrowId) % names.Length) type += " (" + Lang(110, "Current") + ")";
+        ui.SetVariable("/:EyebrowsType", type);
+        ui.SetVariable("/:EyebrowsColor", Lang(BrowColorText0 + System.Math.Clamp(_browColor, 0, BrowColors.Length - 1), (_browColor + 1).ToString()));
+        ui.CallClip("/eyebrows_menu", "updateParameters");   // exe 0xBA178A
+    }
+
+    static void ApplyBrow()
+    {
+        _edit.BrowId = _browIdx;
+        _edit.BrowColor = BrowColorOf(_browColor);
+        UpdateBrowTexts();
+        UpdatePrice();
+        ShowEdit();
+    }
+
+    /// <summary>
+    /// Preis wie exe 0xBA3FF9: Frisur (+0x1BBA60) + Bart (+0x1BBA64) + Augenbrauen (+0x1BBA68); je Teil der Preis des gewählten Stücks,
+    /// wenn es (oder seine Farbe) vom Getragenen abweicht; rasieren kostet nichts (exe 0xBA0360), Augenbrauen 25.
+    /// </summary>
     static int Price()
     {
         int p = 0;
@@ -248,10 +346,10 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         {
             var a = _orig.Worn(part); var b = _edit.Worn(part);
             if (a == b && (b == null || _orig.ColorOf(b.Hash) == _edit.ColorOf(b.Hash))) continue;
-            if (b != null && b.Price < 999999) p += b.Price;
-            else if (b == null) p += 100;
-            else p += 300;
+            if (b == null || b.IsNothing) continue;
+            if (b.Price < 999999) p += b.Price;
         }
+        if (BrowChanged) p += BrowPrice;
         return p;
     }
 
@@ -284,25 +382,43 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         if (c == "dbxo") { AnswerDialog(); return; }
         if (c == "evmo") { UpdatePrice(); return; }
         if (c == "moup") { UpdateMoney(); return; }
-        if (c == "hadr:clos" || c == "gofr" || c == "wmon") { Close(); return; }
+        if (c == "hadr:clos" || c == "gofr" || c == "wmon") { Leave(); return; }
         if (c == "hadr:edit:vali") { Commit(); return; }
-        if (c == "hadr:edit:canc") { _edit = _orig.Clone(); _preview?.Show(_edit, false); return; }
+        if (c == "hadr:edit:canc") { _edit = _orig.Clone(); ShowEdit(); return; }
         if (c == "hadr:open" || c == "hadr:edit:open" || c == "hadr:edit:chpa") return;
         if (!c.StartsWith("hadr:edit:", StringComparison.Ordinal)) { Log.Debug("Friseur: " + c); return; }
         var p = c.Substring(10).Split(':');   // maha:type:scne
         if (p.Length < 2) return;
         string menu = p[0];
-        if (menu == "eybr") return;
+        if (menu == "eybr") { BrowCommand(p); return; }
         if (p[1] == "open") { _menu = menu; _menuBackup = _edit.Clone(); BuildLists(menu); UpdateTexts(); return; }
         if (_menu != menu || _types == null) { _menu = menu; _menuBackup = _edit.Clone(); BuildLists(menu); }
-        if (p[1] == "vali") { _menuBackup = null; UpdatePrice(); return; }
-        if (p[1] == "canc") { if (_menuBackup != null) _edit = _menuBackup; _menuBackup = null; UpdateTexts(); UpdatePrice(); _preview?.Show(_edit, false); return; }
+        if (p[1] == "vali")
+        {
+            // exe 0xBA02B0 / 0xBA0400: unverändert (Stück + Farbe wie getragen) -> "Bestätigen" gesperrt
+            var part = menu == "pilo" ? ClothePart.Beard : ClothePart.Hair;
+            var a = _orig.Worn(part); var b = _edit.Worn(part);
+            bool same = a == b && (b == null || _orig.ColorOf(b.Hash) == _edit.ColorOf(b.Hash));
+            _menuBackup = null; UpdatePrice();
+            _hui?.SetValue("/:LockHairValid", same && Price() == 0);
+            return;
+        }
+        if (p[1] == "canc") { if (_menuBackup != null) _edit = _menuBackup; _menuBackup = null; UpdateTexts(); UpdatePrice(); ShowEdit(); return; }
         int d = p.Length > 2 && p[2] == "scpr" ? -1 : 1;
         switch (p[1])
         {
             case "type":
-                _typeIdx = (_typeIdx + d + _types!.Length) % _types.Length; _cutIdx = 0;
-                break;
+                {
+                    // Die Symbol-Auswahl (choicebox_ic) stellt _root.HairType/PilosityType selbst um und schickt den Befehl ohne Richtung;
+                    // wie exe 0xBA2240 / 0xBA2DE0 den Wert zurücklesen ("beard", "moustache", "goatee", "shave", "short" …)
+                    string? v = _hui?.GetVariable(menu == "pilo" ? "/:PilosityType" : "/:HairType");
+                    int k = -1;
+                    if (!string.IsNullOrEmpty(v))
+                        for (int i = 0; i < _types!.Length; i++) if (StyleName(_types[i], menu == "pilo") == v) { k = i; break; }
+                    _typeIdx = k >= 0 ? k : (_typeIdx + d + _types!.Length) % _types.Length;
+                    _cutIdx = 0;
+                    break;
+                }
             case "cuts":
                 { int n = System.Math.Max(1, CurList.Count); _cutIdx = (_cutIdx + d + n) % n; break; }
             case "colo":
@@ -310,6 +426,45 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
             default: return;
         }
         ApplySelection();
+    }
+
+    /// <summary>
+    /// Augenbrauen-Menü (eyebrows_menu, FSCommands "hadr:edit:eybr:&lt;open|type|colo|vali|canc&gt;[:scne|scpr]"):
+    /// open 0xBA11B0 (Sicherung, Texte), type 0xBA17E0/0xBA1870 (nächster/vorheriger Typ des Geschlechts), colo 0xBA1900/0xBA1990
+    /// (Farbe 0 … 13 im Kreis), vali 0xBA1430 (unverändert -> Bestätigen gesperrt, sonst 25), canc 0xBA04B0 (Sicherung zurück).
+    /// </summary>
+    static void BrowCommand(string[] p)
+    {
+        int n = BrowTextMan.Length;
+        switch (p[1])
+        {
+            case "open":
+                _menu = "eybr"; _menuBackup = _edit.Clone();
+                _browIdx = System.Math.Max(0, _edit.BrowId) % n;
+                _browColor = BrowColorIndex(_edit);
+                UpdateBrowTexts();
+                return;
+            case "vali":
+                {
+                    _menuBackup = null;
+                    UpdatePrice();
+                    _hui?.SetValue("/:LockHairValid", !BrowChanged && Price() == 0);
+                    return;
+                }
+            case "canc":
+                if (_menuBackup != null) _edit = _menuBackup;
+                _menuBackup = null;
+                _browIdx = System.Math.Max(0, _edit.BrowId) % n;
+                _browColor = BrowColorIndex(_edit);
+                UpdateBrowTexts(); UpdatePrice(); ShowEdit();
+                return;
+        }
+        if (_menu != "eybr") { _menu = "eybr"; _menuBackup = _edit.Clone(); _browIdx = System.Math.Max(0, _edit.BrowId) % n; _browColor = BrowColorIndex(_edit); }
+        int d = p.Length > 2 && p[2] == "scpr" ? -1 : 1;
+        if (p[1] == "type") _browIdx = (_browIdx + d + n) % n;
+        else if (p[1] == "colo") _browColor = (_browColor + d + BrowColors.Length) % BrowColors.Length;
+        else return;
+        ApplyBrow();
     }
 
     static void Commit()
@@ -332,6 +487,7 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
             }
         }
         _orig = _edit.Clone();
+        _bought = true;   // exe +0x1BBA58: beim Schließen C_BUY_HAIR
         AvatarConfigs.SetLocal(_orig);   // schreibt Avatar und speichert (Kopie enthält Geld + Besitzliste)
         UpdateMoney();
         Log.Info("Friseur: neue Frisur gespeichert, bezahlt $" + price);
@@ -358,17 +514,35 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         var ui = _hui;
         if (!_open || ui == null || _t == null) return;
         if (ctx.Paused) return;
+        float dt = time.DeltaTime;
+        ShopCinema.Update(_cin, dt);
+        if (_outro)
+        {
+            // Kauf-Kino C_BUY_HAIR: Kamera des Kinos, danach zurück in den Raum
+            // überspringbar (Bestätigen/Zurück)
+            if (_cin == null || !_cin.MainPlaying || ShopCinema.SkipPressed()) { _cin?.StopMain(); _outro = false; Close(); return; }
+            if (!ShopCinema.Camera(_cin, false)) UpdateCamera(dt);
+            return;
+        }
         if (_startAt > 0f && _clock >= _startAt) { _startAt = -1f; StartMenu(); }
-        _preview?.Update(time.DeltaTime);
-        if (FlashDialog.Active) { UpdateCamera(time.DeltaTime); return; }   // Bestätigungsbox offen: Tasten gehören ihr
+        _preview?.Update(dt);
+        if (_menuCin && _cin != null) ShopCinema.Rotate(_cin, ref _rot, dt, Paradise.Game.Config.HairdresserConfig.MouseRotateScale);
+        if (FlashDialog.Active) { CameraStep(dt); return; }   // Bestätigungsbox offen: Tasten gehören ihr
         // Menü-Tasten wie der Flash Player des Spiels (Tasten-Buttons der Auswahlboxen, sonst Move/A/B): Gamemodes/Utils/FlashNav
         if (FlashNav.Update(ui, out bool backHandled))
         {
-            if (_clock - _lastEsc < 1.2f) { _edit = _orig.Clone(); Close(); return; }   // 2x Zurück: Abbruch
+            if (_clock - _lastEsc < 1.2f) { _edit = _orig.Clone(); Leave(); return; }   // 2x Zurück: Abbruch
             _lastEsc = _clock;
-            if (!backHandled) { Close(); return; }
+            if (!backHandled) { Leave(); return; }
         }
-        UpdateCamera(time.DeltaTime);
+        CameraStep(dt);
+    }
+
+    /// <summary>Menü mit Kino: Kamera der gehaltenen C_360; sonst C_HEAD der Szene.</summary>
+    static void CameraStep(float dt)
+    {
+        if (_menuCin && _cin != null && ShopCinema.Camera(_cin, false)) { _camInit = false; return; }
+        UpdateCamera(dt);
     }
 
     /// <summary>Kamera C_HEAD der Szene (sonst auf den Kopf des Avatars), weich nachgeführt (Unity LateUpdate).</summary>
@@ -413,6 +587,6 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     {
         base.Render(ctx, time);   // Interieur-Autos und Figuren
         var st = _t?.Streamer;
-        if (_open && st != null) _preview?.Render(_holder * st.RootMatrix);
+        if (_open && st != null) { _cin?.Render(st.RootMatrix); _preview?.Render(_holder * st.RootMatrix); }
     }
 }

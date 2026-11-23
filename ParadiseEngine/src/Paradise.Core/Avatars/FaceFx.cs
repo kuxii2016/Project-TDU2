@@ -36,6 +36,8 @@ public sealed class FaceFxActor
         public string Name = "";
         public Vector3 Pos, Scl;
         public Quaternion Rot;
+        /// <summary>Inverse Ruhedrehung aus der Datei (FxMasterBoneList, w zuerst), exe "invRot" in FUN_00b77b20.</summary>
+        public Quaternion InvRot = Quaternion.Identity;
         public Delta[] Deltas = Array.Empty<Delta>();
     }
 
@@ -99,7 +101,7 @@ public sealed class FaceFxActor
         {
             ReadBone(r, names, out var bn, out var bp, out var bq, out var bs);
             var b = new Bone { Name = bn, Pos = bp, Rot = bq, Scl = bs };
-            r.F32(); r.F32(); r.F32(); r.F32();   // inverse Ruhedrehung
+            { float iw = r.F32(), ix = r.F32(), iy = r.F32(), iz = r.F32(); b.InvRot = new Quaternion(ix, iy, iz, iw); }   // inverse Ruhedrehung
             r.U32(); r.F32();                      // Index, Gewicht
             int np = (int)r.U32();
             b.Deltas = new Delta[np];
@@ -199,17 +201,6 @@ public sealed class FaceFxActor
         }
     }
 
-    /// <summary>Unity Quaternion.SlerpUnclamped(identity, q, w) (kürzester Weg).</summary>
-    static Quaternion SlerpFromIdentity(Quaternion q, float w)
-    {
-        if (q.W < 0f) q = new Quaternion(-q.X, -q.Y, -q.Z, -q.W);
-        float cos = System.Math.Clamp(q.W, -1f, 1f);
-        float th = MathF.Acos(cos), s = MathF.Sin(th);
-        if (MathF.Abs(s) < 1e-6f) return Quaternion.Normalize(new Quaternion(q.X * w, q.Y * w, q.Z * w, 1f - w + q.W * w));
-        float a = MathF.Sin((1f - w) * th) / s, b = MathF.Sin(w * th) / s;
-        return new Quaternion(q.X * b, q.Y * b, q.Z * b, a + q.W * b);
-    }
-
     float[]? _neutral;
 
     /// <summary>
@@ -229,24 +220,42 @@ public sealed class FaceFxActor
     /// <summary>Lokale Knochenlage im Avatar-Raum der Engine (Position in m, .xsb-Konvention wie <see cref="XsbSkeleton"/>).</summary>
     public void Pose(int bone, float[] vals, out Vector3 pos, out Quaternion rot, out Vector3 scl)
     {
+        // exe FUN_00b77b20 (Knochen-Teil): Positionen/Skalen der Posen sind Deltas, Drehungen ABSOLUT (Head_Facial-Posen tragen
+        // die 90°-Ruhedrehung). Je Pose: r zur Pose hin drehen (Slerp unter 0,55, sonst Lerp), acc = acc x (invRot x S).
+        const float Eps = 1.192e-7f;   // DAT_00f49b08 / DAT_00f49b60
         var b = Bones[bone];
-        var p = b.Pos; var s = b.Scl; var q = b.Rot;
+        var p = b.Pos; var s = b.Scl;
+        var r = b.Rot; var acc = b.Rot;
         var n0 = Neutral;
         foreach (var dl in b.Deltas)
         {
             if (dl.Node < 0 || dl.Node >= vals.Length) continue;
             float w = vals[dl.Node] - (dl.Node < n0.Length ? n0[dl.Node] : 0f);
-            if (MathF.Abs(w) < 1e-5f) continue;
+            if (w < Eps && w > -Eps) continue;
             p += dl.Pos * w;
+            var P = dl.Rot;
+            if (LenSq(r + P) < LenSq(r - P)) r = Quaternion.Negate(r);   // bleibt für die folgenden Posen
+            float d = Quaternion.Dot(r, P);
+            Quaternion S;
+            if (d <= 0.55f)   // float @0xf90738
+            {
+                float th = MathF.Acos(System.Math.Clamp(d, -1f, 1f)), inv = 1f / MathF.Sin(th);
+                S = r * (MathF.Sin((1f - w) * th) * inv) + P * (MathF.Sin(w * th) * inv);
+            }
+            else S = P * w + r * (1f - w);   // ohne Normierung
+            acc = acc * (b.InvRot * S);       // Hamilton-Produkt
             s += dl.Scl * w;
-            q = q * SlerpFromIdentity(dl.Rot, w);
         }
+        float l2 = LenSq(acc);
+        if (MathF.Abs(l2 - 1f) >= Eps)
+            acc = l2 < Eps ? Quaternion.Identity : acc * (1f / MathF.Sqrt(l2));
         pos = new Vector3(-p.X, p.Y, p.Z) * 0.01f;
-        float l = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);
-        if (l < 1e-6f) q = Quaternion.Identity; else q = new Quaternion(q.X / l, q.Y / l, q.Z / l, q.W / l);
-        rot = new Quaternion(q.X, -q.Y, -q.Z, q.W);
-        scl = new Vector3(MathF.Abs(s.X) < 1e-4f ? 1f : s.X, MathF.Abs(s.Y) < 1e-4f ? 1f : s.Y, MathF.Abs(s.Z) < 1e-4f ? 1f : s.Z);
+        // Eden (-x, y, z, w); in der Engine (wie XsbSkeleton) konjugiert
+        rot = new Quaternion(acc.X, -acc.Y, -acc.Z, acc.W);
+        scl = s;
     }
+
+    static float LenSq(Quaternion q) => q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W;
 }
 
 /// <summary>Eine FaceFX-Animation (.fxe): Hermite-Kurven je Knoten.</summary>

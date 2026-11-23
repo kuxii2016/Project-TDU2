@@ -12,18 +12,24 @@ namespace Paradise.Game.Config;
 public sealed class PostFxConfig
 {
     /// <summary>Turn Bloom on/off.</summary>
-    public bool Bloom { get; set; } = false;
-    /// <summary>Intensity 0–2 (0 = off, 1 = bright spots fully on). Default value is subtle.</summary>
-    public float BloomIntensity { get; set; } = 1f;
+    public bool Bloom { get; set; } = true;
+    // Hinweis: Das Bild ist 8 Bit (kein HDR). Helle Flächen (Himmel, weiße Wände, Straße in der Sonne) liegen deshalb schon bei
+    // 0,8–1,0 – eine niedrige Schwelle lässt sie alle strahlen. Darum Schwelle hoch, Stärke moderat; Lampen/Neon kommen über die
+    // Bloom-Maske (BloomEmissive) mit eigener Schwelle (BloomEmissiveThreshold).
+    /// <summary>Intensity 0–2 (0 = off, 1 = bright spots fully on).</summary>
+    public float BloomIntensity { get; set; } = 0.6f;
     /// <summary>Threshold 0–1: An image pixel is considered lit starting at this brightness level (the brightest color channel in the final image).</summary>
-    public float BloomThreshold { get; set; } = 0.75f;
+    public float BloomThreshold { get; set; } = 0.88f;
     /// <summary>Smooth transition below the threshold 0–0.5 (0 = hard edge).</summary>
-    public float BloomKnee { get; set; } = 0.15f;
+    public float BloomKnee { get; set; } = 0.08f;
     /// <summary>Beam width 0.25–8 (1 = default value; higher values = wider beam).</summary>
-    public float BloomRadius { get; set; } = 2f;
+    public float BloomRadius { get; set; } = 1.5f;
     /// <summary>Glowing materials 0–4 (car lights, flares, neon, illuminated windows, spot holograms): glow regardless of
     /// the threshold. 0 = off (threshold only).</summary>
-    public float BloomEmissive { get; set; } = 1.5f;
+    public float BloomEmissive { get; set; } = 1f;
+    /// <summary>Glowing materials only glow above this brightness 0–1 (brightest color channel). Keeps the faint parts of
+    /// lamp light cones/halos and the background behind them from glowing. 0 = everything under the mask glows (old behaviour).</summary>
+    public float BloomEmissiveThreshold { get; set; } = 0.55f;
 
     /// <summary>Ambient Occlusion on/off.</summary>
     public bool AmbientOcclusion { get; set; } = true;
@@ -44,6 +50,7 @@ public sealed class PostFxConfig
         PostFx.BloomKnee = System.Math.Clamp(BloomKnee, 0f, 0.5f);
         PostFx.BloomRadius = System.Math.Clamp(BloomRadius, 0.25f, 8f);
         PostFx.BloomEmissive = System.Math.Clamp(BloomEmissive, 0f, 4f);
+        PostFx.BloomEmissiveThreshold = System.Math.Clamp(BloomEmissiveThreshold, 0f, 1f);
         PostFx.AoEnabled = AmbientOcclusion;
         PostFx.AoIntensity = System.Math.Clamp(AoIntensity, 0f, 1f);
         PostFx.AoRadius = System.Math.Clamp(AoRadius, 0.1f, 5f);

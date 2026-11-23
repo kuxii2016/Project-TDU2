@@ -259,6 +259,7 @@ namespace Paradise.Core.Savegame
             // ---- Avatar
             string av = WriteAvatar(root, s.avatar);
             WriteSurgery(root, s.surgery);
+            WriteClothesSold(root, s);
 
             // ---- Profil
             var lv = root["PlayerLevels"] as XObject;
@@ -437,6 +438,56 @@ namespace Paradise.Core.Savegame
         {
             var o = FindObject(root, x => x[key] is XPrim);
             if (o != null) Set(o, key, value);
+        }
+
+        /// <summary>
+        /// Gekaufte Kleidung wie das Original: AvatarSave.ClothesSold (4096 x s32, Index = DBClothe._id_num, Bit c = Farbe c gekauft;
+        /// exe 0x687AC0 setzt 1 &lt;&lt; Farbe, 0x687AF0 alle Farben). Die Vorgabe der Vorlage (Standardteile) bleibt, Käufe werden hineingeodert.
+        /// Ohne Farbeintrag (ältere Käufe) zählt die getragene Farbe, sonst Farbe 0.
+        /// </summary>
+        static void WriteClothesSold(XObject root, SaveData s)
+        {
+            if (!HasClothes()) return;
+            var arr = (root["AvatarSave"] as XObject)?["ClothesSold"] as XArray;
+            if (arr == null) return;
+            var done = new HashSet<int>();
+            void Put(int hash, int mask)
+            {
+                var c = AvatarLibrary.Clothe(hash);
+                if (c == null || mask == 0 || c.IdNum < 0 || c.IdNum >= arr.Items.Count || !(arr.Items[c.IdNum] is XPrim p)) return;
+                p.Value = (long)(int)((uint)p.AsLong() | (uint)mask);
+            }
+            if (s.clothesSold != null)
+                foreach (var e in s.clothesSold) if (e != null && e.clothe != 0) { Put(e.clothe, e.colors); done.Add(e.clothe); }
+            if (s.ownedClothes != null)
+            {
+                var cfg = AvatarConfig.Decode(s.avatar ?? "");
+                foreach (int h in s.ownedClothes)
+                    if (!done.Contains(h)) Put(h, cfg != null && cfg.Items.Contains(h) ? 1 << System.Math.Clamp(cfg.ColorOf(h), 0, 31) : 1);
+            }
+        }
+
+        /// <summary>Gegenstück zu <see cref="WriteClothesSold"/>: gekaufte Stücke (ohne Standard-/Nichts-Teile) mit ihren Farben.</summary>
+        static void ReadClothesSold(XObject root, SaveData s)
+        {
+            var arr = (root["AvatarSave"] as XObject)?["ClothesSold"] as XArray;
+            if (arr == null || !HasClothes()) return;
+            var byNum = new Dictionary<int, ClotheInfo>();
+            foreach (var c in AvatarLibrary.AllClothes) if (!byNum.ContainsKey(c.IdNum)) byNum[c.IdNum] = c;
+            s.clothesSold ??= new List<ClothesSoldEntry>();
+            s.ownedClothes ??= new List<int>();
+            for (int i = 0; i < arr.Items.Count; i++)
+            {
+                if (!(arr.Items[i] is XPrim p)) continue;
+                int mask = (int)p.AsLong();
+                if (mask == 0 || !byNum.TryGetValue(i, out var c)) continue;
+                // Standardteile (Vorlage: alle Farben, $999.999) und "Nichts"-Teile sind keine Käufe
+                if (c.IsNothing || c.Price >= 999999 || mask == -1) continue;
+                bool found = false;
+                foreach (var e in s.clothesSold) if (e.clothe == c.Hash) { e.colors |= mask; found = true; break; }
+                if (!found) s.clothesSold.Add(new ClothesSoldEntry { clothe = c.Hash, colors = mask });
+                if (!s.ownedClothes.Contains(c.Hash)) s.ownedClothes.Add(c.Hash);
+            }
         }
 
         /// <summary>DBClothe-Id (u16) eines Teils, ohne Teil das "Nichts"-Teil des Platzes (das Original sichert immer ein getragenes Teil).</summary>
@@ -702,6 +753,7 @@ namespace Paradise.Core.Savegame
             if (vars.TryGetValue("U3D_Avatar", out string va) && !string.IsNullOrEmpty(va)) { s.avatar = va; avInfo = "U3D_Avatar"; }
             else { string av = ReadAvatar(root, out avInfo); if (av != null) s.avatar = av; }
             s.surgery = ReadSurgery(root);
+            ReadClothesSold(root, s);
 
             // Profil
             var life = root["MyLife"] as XObject;
@@ -757,7 +809,8 @@ namespace Paradise.Core.Savegame
             if (server.favoriteSpots != null && server.favoriteSpots.Count > 0) local.favoriteSpots = server.favoriteSpots;
             if (server.liveries != null && server.liveries.Count > 0) local.liveries = server.liveries;
             if (server.stickerBoards != null && server.stickerBoards.Count > 0) local.stickerBoards = server.stickerBoards;
-            if (server.ownedClothes != null && server.ownedClothes.Count > 0) local.ownedClothes = server.ownedClothes;
+            if (server.ownedClothes != null && server.ownedClothes.Count > 0 && (local.ownedClothes == null || local.ownedClothes.Count == 0)) local.ownedClothes = server.ownedClothes;
+            if (server.clothesSold != null && server.clothesSold.Count > 0 && (local.clothesSold == null || local.clothesSold.Count == 0)) local.clothesSold = server.clothesSold;
             if (server.houses != null && server.houses.Count > 0) local.houses = server.houses;
             if (server.ownedFurniture != null && server.ownedFurniture.Count > 0) local.ownedFurniture = server.ownedFurniture;
             if (server.ownedMaterials != null && server.ownedMaterials.Count > 0) local.ownedMaterials = server.ownedMaterials;

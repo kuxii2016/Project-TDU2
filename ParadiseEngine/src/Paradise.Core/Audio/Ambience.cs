@@ -28,6 +28,10 @@ public sealed class Ambience : IDisposable
     readonly string _dir;
     readonly Dictionary<int, Env> _envs = new();
     readonly Dictionary<string, AudioClip?> _clips = new(StringComparer.OrdinalIgnoreCase);
+    // WAV lesen + dekodieren läuft im Hintergrund (eine Umgebungs-WAV sind mehrere MB: synchron kostete das 10+ ms und 8 MB Garbage
+    // auf dem Hauptthread beim Zonenwechsel); bis die Datei da ist, spielt der neue Eintrag noch nicht
+    readonly Dictionary<string, Task<AudioClip?>> _loading = new(StringComparer.OrdinalIgnoreCase);
+    Env? _curEnv;
     string? _rainName;
     readonly List<(string name, float volume)> _thunder = new();
     AudioVoice? _thunderVoice;
@@ -96,6 +100,9 @@ public sealed class Ambience : IDisposable
                     var n = l.S("Name", "") ?? "";
                     if (n.Length > 0) a._thunder.Add((n, l.F("Volume", 1f)));
                 }
+            // Regen und Donner vorab laden: sie müssen sofort spielen können (Donner gehört zum Blitz)
+            if (a._rainName != null) a.Clip(a._rainName);
+            foreach (var (n, _) in a._thunder) a.Clip(n);
             return a;
         }
         catch (Exception ex)
@@ -105,16 +112,39 @@ public sealed class Ambience : IDisposable
         }
     }
 
-    AudioClip? Clip(string name)
+    /// <summary>Clip aus dem Cache; noch nicht geladen -> Laden im Hintergrund anstoßen und null (später erneut fragen).</summary>
+    AudioClip? Clip(string name) => Clip(name, out _);
+
+    AudioClip? Clip(string name, out bool pending)
     {
+        pending = false;
         if (string.IsNullOrEmpty(name)) return null;
         if (_clips.TryGetValue(name, out var c)) return c;
-        var path = Path.Combine(_dir, name.ToLowerInvariant() + ".wav");
-        c = GameFiles.Exists(path) ? AudioClip.FromWav(name, GameFiles.ReadAllBytes(path)) : null;
-        if (c == null)
-            Log.Warn($"Ambience: {path} is missing or is not a readable WAV file.");
+        if (!_loading.TryGetValue(name, out var task))
+        {
+            var path = Path.Combine(_dir, name.ToLowerInvariant() + ".wav");
+            _loading[name] = task = Task.Run(() => LoadClip(name, path));
+        }
+        if (!task.IsCompleted) { pending = true; return null; }
+        _loading.Remove(name);
+        c = task.IsFaulted ? null : task.Result;
         _clips[name] = c;
         return c;
+    }
+
+    static AudioClip? LoadClip(string name, string path)
+    {
+        try
+        {
+            var c = GameFiles.Exists(path) ? AudioClip.FromWav(name, GameFiles.ReadAllBytes(path)) : null;
+            if (c == null) Log.Warn($"Ambience: {path} is missing or is not a readable WAV file.");
+            return c;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Ambience: {path}: {ex.Message}");
+            return null;
+        }
     }
 
     float RainCurve(float x)
@@ -156,6 +186,7 @@ public sealed class Ambience : IDisposable
         }
         if (key != _curKey) SwitchTo(key, env);
         else if (key != null && env != null && _slot[0] != null) _slot[0]!.Pitch = env.Pitch;
+        else if (_curKey != null && _curEnv != null && _slot[0] == null) StartSlot(_curKey, _curEnv);   // Datei wurde nachgeladen
 
         // Regen-Schicht
         float rv = active && rain > 0.001f ? Volume * _rainVolume * RainCurve(System.Math.Clamp(rain, 0f, 1f)) : 0f;
@@ -193,12 +224,22 @@ public sealed class Ambience : IDisposable
         // alter Eintrag: ausblenden, danach anhalten
         if (_slot[0] != null) { _slot[0]!.FadeTo(0f, CrossFade); _slot[1]?.Stop(); _slot[1] = _slot[0]; _stopIn[1] = CrossFade + 0.1f; }
         _slot[0] = null; _stopIn[0] = 0f;
-        _curKey = key; _pendingKey = null;
+        _curKey = key; _pendingKey = null; _curEnv = env;
         CurrentType = env?.Type ?? -1;
         if (key == null || env == null) return;
+        StartSlot(key, env);
+    }
+
+    /// <summary>Eintrag einblenden, sobald seine WAV geladen ist (sonst beim nächsten Update erneut).</summary>
+    void StartSlot(string key, Env env)
+    {
         var name = key[(key.IndexOf(':') + 1)..];
-        var clip = Clip(name);
-        if (clip == null) return;
+        var clip = Clip(name, out bool pending);
+        if (clip == null)
+        {
+            if (!pending) _curEnv = null;   // Datei fehlt: nicht jedes Bild erneut versuchen
+            return;
+        }
         var v = new AudioVoice { Clip = clip, Loop = true, Pitch = env.Pitch };
         v.Volume = 0f;
         v.Play();
@@ -211,6 +252,6 @@ public sealed class Ambience : IDisposable
         for (int i = 0; i < 2; i++) { _slot[i]?.Stop(); _slot[i] = null; }
         _rain?.Stop(); _rain = null;
         _thunderVoice?.Stop(); _thunderVoice = null;
-        _curKey = null;
+        _curKey = null; _curEnv = null;
     }
 }

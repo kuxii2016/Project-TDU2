@@ -497,6 +497,18 @@ public sealed class PauseMenu
         ui.SetVariable(nameVar, Loc(nameHash, nameFallback));
     }
 
+    /// <summary>
+    /// Discovery-Prozente aus dem aktuellen Stand: Straßen (Discovery), Wracks (frisch vom Wrecks-Modul), Event-/Fotozeilen
+    /// (für PushCruisingProgress). Dieselben Quellen wie beim Öffnen der Listen.
+    /// </summary>
+    void PushDiscoveryPercents()
+    {
+        Wrecks.Current?.PushPauseMenu();   // ruft InsertWrecks -> PushWrecks
+        PushWrecks();
+        PushRoadProgress();
+        RefreshProgressRows();
+    }
+
     /// <summary>Prozentwerte mit 0 initialisieren, damit unten "0%" statt "%" steht.</summary>
     void InitProgressPercents()
     {
@@ -973,6 +985,9 @@ public sealed class PauseMenu
                 ui.SetFrame("/gameprogress_menu/transition_menu/content_menu/main_menu/pbox/progression/racing_gge/maskLevel", (int)Math.Clamp(p.RacingPoints * 100 / 10000, 0, 100));
                 ui.SetFrame("/gameprogress_menu/transition_menu/content_menu/main_menu/pbox/progression/global_gge/maskLevel", (int)Math.Clamp(p.GlobalLevel * 100 / 73, 0, 100));
                 ui.SetText("/gameprogress_menu/transition_menu/content_menu/main_menu/pbox/progression/global_gge:gradeLevel", p.GlobalLevel.ToString());
+                // InitProgressPercents hat alle Prozente auf 0 gesetzt: Discovery-Seite (Straßen, Wracks, Events, Fotos)
+                // sofort wieder füllen – sonst stand dort 0 %, bis eine der Listen einmal geöffnet war.
+                PushDiscoveryPercents();
                 PushCruisingProgress();
                 PushRacingProgress();
                 // Alle vier Gauges vor dem ersten Tab-Klick füllen – sonst zeigt Collection/Social
@@ -992,6 +1007,7 @@ public sealed class PauseMenu
 
             case "gapr:part:crui":  //Discovery (colon-Form wie gapr:part:raci)
             case "gapr:part.crui":  //Discovery (Punkt-Form aus main.bnk)
+                PushDiscoveryPercents();
                 PushCruisingProgress();
                 break;
 

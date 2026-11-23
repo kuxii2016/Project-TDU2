@@ -17,6 +17,7 @@ public static class PerfLog
     /// <summary>Messwert in ms (Hauptthread).</summary>
     public static void Add(string name, double ms)
     {
+        Profiler.Record(name, ms);   // Engine-Profiler (F1 > Performance > Open Profiler): erscheint als Unterpunkt in Hierarchy/Timeline
         //if (!_acc.TryGetValue(name, out var a)) _acc[name] = a = new Acc();
         //a.Sum += ms; a.N++; if (ms > a.Max) a.Max = ms;
     }

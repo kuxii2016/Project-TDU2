@@ -57,7 +57,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     }
 
     /// <summary>Autos auf den Stellplätzen zeichnen (Szene/Möbel zeichnet MapStreamer).</summary>
-    public override void Render(IGameModeContext ctx, in GameTime time) { if (_t != null) RenderCars(); }
+    public override void Render(IGameModeContext ctx, in GameTime time) { if (_t != null) { RenderCars(); RenderRoomCinematics(); } }
 
     public override void Exit(IGameModeContext ctx, Gamemode to)
     {
@@ -655,14 +655,9 @@ public abstract partial class InteriorUtils : GameModeHandler
             if (Matrix4x4.Invert(s.Volume, out var w))
                 ext = new Vector3(new Vector3(w.M11, w.M12, w.M13).Length(), new Vector3(w.M21, w.M22, w.M23).Length(), new Vector3(w.M31, w.M32, w.M33).Length());
         }
-        // Diagnose (wie Unity InteriorFx.LogInventory): Materialien mit Art, Haupttextur, Lightmap/Alpha
-        var seen = new HashSet<IGpuMaterial>(ReferenceEqualityComparer.Instance);
-        foreach (var o in _scene.Objects)
-            foreach (var lod in o.Lods)
-                foreach (var pt in lod.Parts)
-                    if (seen.Add(pt.Material) && MaterialFactory.TryGetInfo(pt.Material, out var mi))
-        // Unity _afterBuild: Schritt nach dem Aufbau (Garderobe öffnet ihren Modus, sobald idr_* steht)
+        // Unity _afterBuild: Schritt nach dem Aufbau (Garderobe öffnet ihren Modus, sobald idr_* steht); sonst die Kinos des Raums
         if (_afterBuild != null) { var a = _afterBuild; _afterBuild = null; a(); }
+        else StartRoomCinematics();
     }
 
     /// <summary>Wird einmal nach dem nächsten BuildInterior ausgeführt (Unity TDU2Interiors._afterBuild).</summary>
@@ -979,7 +974,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (bins.Count == 0) { return; }
         int best = 0; float bw = 0f;
         foreach (var kv in bins) if (kv.Value > bw) { bw = kv.Value; best = kv.Key; }
-        if (bw < 4f) {  return; }   // Unity: kein Boden
+        if (bw < 4f) { return; }   // Unity: kein Boden
         // Unity FindFloorPlane: Boden = die UNTERSTE große waagerechte Ebene (Decken, Galerien, Dächer sind gleich groß oder größer)
         int lowest = best;
         foreach (var kv in bins) if (kv.Value >= bw * 0.3f && kv.Key < lowest) lowest = kv.Key;
@@ -1236,6 +1231,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (st != null) st.HideWorld = false;
         if (_scene != null && st != null) st.DestroyScene(_scene);
         _scene = null; _data = null;
+        EndRoomCinematics();
         InteriorNpcs.Clear();
         foreach (var f in _furniture) st?.DestroyScene(f);
         EndDealerModes();
@@ -1308,6 +1304,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         PollScene();
         if (!Inside) return false;
         if (_fp == null || _scene == null || _data == null) return true;
+        if (RoomCinemaStep(dt, paused)) return Inside;   // Eingangs-Kino des Raums (exe 0xA7E2F0): kein Laufen, Kamera des Kinos
         // Fahrzeugmenü (Unity TDU2CarDealer): Maus frei für den Film, kein Laufen/Umsehen; im Auto Maus gefangen (Umsehen)
         // Fahrzeugliste der Garage (home.vmf garage/vehicule_list): wie ein Menü – Maus frei, kein Laufen/Umsehen
         bool carList = GAME_MODE_GARAGE.GarageListOpen;

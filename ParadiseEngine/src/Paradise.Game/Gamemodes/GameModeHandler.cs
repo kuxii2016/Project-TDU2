@@ -1,3 +1,4 @@
+using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Flash;
 using Paradise.Core.Platform;
@@ -47,6 +48,11 @@ public abstract class GameModeHandler
     public virtual void Exit(IGameModeContext ctx, Gamemode to) { }
 
     protected const int VK_ESCAPE = 0x1B;
+
+    // Profiler-Messpunkte "GAME_MODE_X.Run" / ".Render" (ScreenModule misst damit den aktiven Modus)
+    ProfilerMarker? _runMarker, _renderMarker;
+    internal ProfilerMarker RunMarker => _runMarker ??= ProfilerMarker.Get(GetType().Name + ".Run", ProfilerCategory.Scripts);
+    internal ProfilerMarker RenderMarker => _renderMarker ??= ProfilerMarker.Get(GetType().Name + ".Render", ProfilerCategory.Rendering);
 
     /// <summary>ESC: Pausemenü öffnen (Wechsel nach GAME_MODE_PAUSE) – wie TDU2PauseMenu. Offen gehört ESC dem Film (Zurück/Schließen).</summary>
     protected static void HandlePauseKey(IGameModeContext ctx)

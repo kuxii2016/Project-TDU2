@@ -160,6 +160,15 @@ public sealed class TerrainModule : GameModule
         return ok;
     }
 
+    // Profiler (F1 > Performance > Open Profiler)
+    static readonly ProfilerMarker s_mStreamer = new("MapStreamer.Update", ProfilerCategory.Streaming);
+    static readonly ProfilerMarker s_mWeather = new("WorldWeather.Update", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mBirds = new("Birds.Tick", ProfilerCategory.Animation);
+    static readonly ProfilerMarker s_mRaycast = new("Terrain.RaycastDown (camera)", ProfilerCategory.Physics);
+    static readonly ProfilerMarker s_mStreamerRender = new("MapStreamer.Render", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mMapTerrain = new("MapStreamer.RenderMapTerrain", ProfilerCategory.Rendering);
+    static readonly ProfilerMarker s_mWeatherFx = new("Birds / Rain / Lightning draw", ProfilerCategory.Rendering);
+
     public override void Update(in GameTime time)
     {
         if (_cam == null || _streamer == null) return;
@@ -173,7 +182,8 @@ public sealed class TerrainModule : GameModule
             focus -= shift;
         }
         long tp = System.Diagnostics.Stopwatch.GetTimestamp();
-        _streamer.Update(focus, time.DeltaTime);
+        using (s_mStreamer.Auto())
+            _streamer.Update(focus, time.DeltaTime);
 
         // Tag/Nacht + Wetter (Serverzeit -> für alle gleich)
         if (_weather != null && _weather.Loaded)
@@ -184,7 +194,8 @@ public sealed class TerrainModule : GameModule
             _weather.CameraForward = _cam.Override?.forward ?? _cam.Forward;
             var strm = _streamer;
             _weather.GroundHeight ??= (lx, lz) => strm.TryGetMapGroundHeight(lx, lz, out float lh) ? lh : null;
-            _weather.Update(now, time.TotalTime, time.DeltaTime, _streamer.ViewerGame, _streamer.RootOffset, _streamer.FindPlacementInstances);
+            using (s_mWeather.Auto())
+                _weather.Update(now, time.TotalTime, time.DeltaTime, _streamer.ViewerGame, _streamer.RootOffset, _streamer.FindPlacementInstances);
             var g = _weather.Globals;
             g.ShadowDistance = GraphicsSettings.ShadowDistance > 0f ? GraphicsSettings.ShadowDistance : _light.ShadowDistance;   // Effektqualität (Optionen)
             g.ShadowStrength *= _light.ShadowStrength > 0f ? 1f : 0f;
@@ -196,14 +207,18 @@ public sealed class TerrainModule : GameModule
         if (_birds != null)
         {
             var strm = _streamer;
-            _birds.Tick(time.DeltaTime, _globals.RainSpecs.X, 1f - _globals.NightK,
-                (float x, float z, float y, out float h) => strm.TryGetMapGroundHeight(x, z, out h));
+            using (s_mBirds.Auto())
+                _birds.Tick(time.DeltaTime, _globals.RainSpecs.X, 1f - _globals.NightK,
+                    (float x, float z, float y, out float h) => strm.TryGetMapGroundHeight(x, z, out h));
         }
 
         // Physik-Test: Boden unter der Kamera per Raycast (wie die Radkontakte der Fahrzeuge)
         var camGame = _streamer.ViewerGame;
         tp = System.Diagnostics.Stopwatch.GetTimestamp();
-        bool ground = _streamer.RaycastDown(camGame, 2f, 3000f, out float gy);
+        bool ground;
+        float gy;
+        using (s_mRaycast.Auto())
+            ground = _streamer.RaycastDown(camGame, 2f, 3000f, out gy);
         _groundInfo = ground
             ? $"Boden unter Kamera: y {gy:0.00}  (Abstand {camGame.Y - gy:0.0} m)"
             : "Boden unter Kamera: kein Kollider";
@@ -227,14 +242,18 @@ public sealed class TerrainModule : GameModule
         {
             g.FogEnd = g.FogStart; g.ShadowStrength = 0f;
             g.NoSky = true; g.BackgroundColor = MapSeaColor;
-            if (MapTerrainShown) { _streamer.RenderMapTerrain(_cam.Position, g); return; }   // nur die Kartenkacheln
+            if (MapTerrainShown) { using (s_mMapTerrain.Auto()) _streamer.RenderMapTerrain(_cam.Position, g); return; }   // nur die Kartenkacheln
         }
-        _streamer.Render(_cam.Position, view * proj, g);
-        // Vögel werden im selben (transparenten) Szenenpass wie Regen gezeichnet; Position + RootOffset
-        // erfolgt in Birds.Draw, die Kameraposition muss deshalb in Spielkoordinaten übergeben werden.
-        if (!MapView) _birds?.Draw(_renderer, _streamer.RenderToGame(_cam.Position), _streamer.RootOffset, view, 1f - g.NightK);
-        if (!MapView) _weather?.DrawRain(_renderer, new Vector3(view.M11, view.M21, view.M31));
-        if (!MapView) _weather?.DrawLightning(_renderer, _streamer.RootOffset, _cam.Override?.forward ?? _cam.Forward);
+        using (s_mStreamerRender.Auto())
+            _streamer.Render(_cam.Position, view * proj, g);
+        using (s_mWeatherFx.Auto())
+        {
+            // Vögel werden im selben (transparenten) Szenenpass wie Regen gezeichnet; Position + RootOffset
+            // erfolgt in Birds.Draw, die Kameraposition muss deshalb in Spielkoordinaten übergeben werden.
+            if (!MapView) _birds?.Draw(_renderer, _streamer.RenderToGame(_cam.Position), _streamer.RootOffset, view, 1f - g.NightK);
+            if (!MapView) _weather?.DrawRain(_renderer, new Vector3(view.M11, view.M21, view.M31));
+            if (!MapView) _weather?.DrawLightning(_renderer, _streamer.RootOffset, _cam.Override?.forward ?? _cam.Forward);
+        }
     }
 
     public override void Unload()

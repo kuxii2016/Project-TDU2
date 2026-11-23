@@ -310,6 +310,16 @@ namespace Paradise.Core.Vehicles
         }
 
         /// <summary>Unity LateUpdate: Räder/Lenkrad, Kamera.</summary>
+        // Profiler: Teile von LateUpdate (laut Profiler ~0,5 ms und bis 640 KB Speicher je Bild)
+        static readonly ProfilerMarker s_mLuCar = new("Vehicle.LateUpdate (wheels)", ProfilerCategory.Scripts);
+        static readonly ProfilerMarker s_mLuFx = new("VehicleFx.LateUpdate", ProfilerCategory.Scripts);
+        static readonly ProfilerMarker s_mLuLights = new("VehicleLights/CarDirt.Update", ProfilerCategory.Scripts);
+        static readonly ProfilerMarker s_mLuTunnel = new("TunnelLight.Update", ProfilerCategory.Scripts);
+        static readonly ProfilerMarker s_mLuHud = new("Gauges/HUD.LateUpdate", ProfilerCategory.UI);
+        static readonly ProfilerMarker s_mLuMinimap = new("Minimap.LateUpdate (GPS)", ProfilerCategory.UI);
+        static readonly ProfilerMarker s_mLuAudio = new("VehicleAudio.Update", ProfilerCategory.Audio);
+        static readonly ProfilerMarker s_mLuCamera = new("VehicleCamera.LateUpdate", ProfilerCategory.Scripts);
+
         public void LateUpdate(float dt, float time, InputState? input, float fixedAlpha)
         {
             if (Current == null) return;
@@ -326,23 +336,35 @@ namespace Paradise.Core.Vehicles
             {
                 var vp = Current.VisualPose; vp.position.Y -= _terrainDrop; Current.VisualPose = vp;
             }
-            Current.LateUpdate(dt);
-            _fx?.LateUpdate(dt, U.Rot(Camera.rotation, Vec.Right), U.Rot(Camera.rotation, Vec.Up), Camera.position);
-            _lights?.Update(dt);
-            // Unity TDU2Weather.UpdateCarDirt: Regen (Rain > 0,2) wäscht den Schmutz auf der Straße ab (DBCarDirtData)
-            if (_dirt != null) _dirt.Raining = Paradise.Core.World.WorldWeather.Rain > 0.2f;
-            _dirt?.Update(dt);
+            using (s_mLuCar.Auto())
+                Current.LateUpdate(dt);
+            using (s_mLuFx.Auto())
+                _fx?.LateUpdate(dt, U.Rot(Camera.rotation, Vec.Right), U.Rot(Camera.rotation, Vec.Up), Camera.position);
+            using (s_mLuLights.Auto())
+            {
+                _lights?.Update(dt);
+                // Unity TDU2Weather.UpdateCarDirt: Regen (Rain > 0,2) wäscht den Schmutz auf der Straße ab (DBCarDirtData)
+                if (_dirt != null) _dirt.Raining = Paradise.Core.World.WorldWeather.Rain > 0.2f;
+                _dirt?.Update(dt);
+            }
             // Original 0x718140: Tunnelfaktor des Spielerautos (Abstand zum nächsten Tunnelende auf der Straße), Kamera im Umkreis von 100 m
-            Paradise.Core.World.TunnelLight.Update(dt, _minimap?.Gps.Network, ToGame(Current.VisualPose.position), ToGame(Camera.position));
-            _gauges?.LateUpdate(dt);
-            if (_hud != null) { _hud.ShowHud = ShowHud; _hud.LateUpdate(_r.Width, _r.Height); }
+            using (s_mLuTunnel.Auto())
+                Paradise.Core.World.TunnelLight.Update(dt, _minimap?.Gps.Network, ToGame(Current.VisualPose.position), ToGame(Camera.position));
+            using (s_mLuHud.Auto())
+            {
+                _gauges?.LateUpdate(dt);
+                if (_hud != null) { _hud.ShowHud = ShowHud; _hud.LateUpdate(_r.Width, _r.Height); }
+            }
             if (_minimap != null)
             {
                 var vp = Current.VisualPose;
-                _minimap.LateUpdate(dt, ShowHud, ToGame(vp.position), U.Mirror(vp.forward), U.Mirror(vp.right), vp.forward, Current.SpeedKmh);
+                using (s_mLuMinimap.Auto())
+                    _minimap.LateUpdate(dt, ShowHud, ToGame(vp.position), U.Mirror(vp.forward), U.Mirror(vp.right), vp.forward, Current.SpeedKmh);
             }
-            if (_audio != null) { _audio.InteriorView = Camera.IsInterior; _audio.Update(dt); }
-            Camera.LateUpdate(dt, time, input);
+            using (s_mLuAudio.Auto())
+                if (_audio != null) { _audio.InteriorView = Camera.IsInterior; _audio.Update(dt); }
+            using (s_mLuCamera.Auto())
+                Camera.LateUpdate(dt, time, input);
         }
 
         /// <summary>GPS weiterrechnen, wenn das Fahrzeug eingefroren ist (große Karte/Pausemenü; sonst über die Minimap).</summary>
@@ -859,9 +881,18 @@ namespace Paradise.Core.Vehicles
         /// <summary>Unity TDU2VehicleManager.MirrorReflections: Echtzeit-Reflexionssonde am eigenen Auto.</summary>
         public bool MirrorReflections = true;
 
+        // Profiler: Teile von Render (VehicleManager.Render brauchte im Debug-Build ~4,8 ms)
+        static readonly ProfilerMarker s_mSkids = new("VehicleEffects.RenderSkids", ProfilerCategory.Rendering);
+        static readonly ProfilerMarker s_mTransforms = new("CarModel.UpdateTransforms", ProfilerCategory.Rendering);
+        static readonly ProfilerMarker s_mModelDraw = new("CarModel.Draw", ProfilerCategory.Rendering);
+        static readonly ProfilerMarker s_mDriver = new("Driver.Render (avatar)", ProfilerCategory.Rendering);
+        static readonly ProfilerMarker s_mFxRender = new("VehicleFx.Render", ProfilerCategory.Rendering);
+        static readonly ProfilerMarker s_mFlares = new("VehicleLights.RenderFlares", ProfilerCategory.Rendering);
+
         public void Render(Matrix4x4 gameToRender)
         {
-            VehicleEffects.RenderSkids(_r, UnityToRender(gameToRender));
+            using (s_mSkids.Auto())
+                VehicleEffects.RenderSkids(_r, UnityToRender(gameToRender));
             Paradise.Core.Render.RenderFx.ProbeOn = false;
             Paradise.Core.Render.RenderFx.ProbeStatic = false;   // fährt mit dem Auto: Seite für Seite laufend neu
             if (_model == null || Current == null) return;
@@ -874,11 +905,16 @@ namespace Paradise.Core.Vehicles
                 Paradise.Core.Render.RenderFx.ProbeOn = true;
                 Paradise.Core.Render.RenderFx.ProbePos = Vector3.Transform(new Vector3(0f, 1.1f, 0.2f), root);
             }
-            _model.UpdateTransforms(root);
-            _model.Draw(_r);
-            _driver?.Render(Vector3.Transform(Camera.position, UnityToRender(gameToRender)), Paradise.Core.World.WorldWeather.Inside);
-            _fx?.Render(UnityToRender(gameToRender));
-            _lights?.RenderFlares(_r, tr, Camera.position, U.Rot(Camera.rotation, Vec.Up), UnityToRender(gameToRender));
+            using (s_mTransforms.Auto())
+                _model.UpdateTransforms(root);
+            using (s_mModelDraw.Auto())
+                _model.Draw(_r);
+            using (s_mDriver.Auto())
+                _driver?.Render(Vector3.Transform(Camera.position, UnityToRender(gameToRender)), Paradise.Core.World.WorldWeather.Inside);
+            using (s_mFxRender.Auto())
+                _fx?.Render(UnityToRender(gameToRender));
+            using (s_mFlares.Auto())
+                _lights?.RenderFlares(_r, tr, Camera.position, U.Rot(Camera.rotation, Vec.Up), UnityToRender(gameToRender));
         }
 
         public IEnumerable<string> DebugLines()

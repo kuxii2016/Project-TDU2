@@ -203,7 +203,7 @@ public sealed partial class DevMenu
         l.Add(Int("Parallel load jobs", () => s.MaxParallelLoads, v => s.MaxParallelLoads = v, 1, 8, 4));
         l.Add(Float("Load areas up to", () => s.AreaLoadDistance, v => s.AreaLoadDistance = v, 100f, 500f, 10000f, 900f, "0", " m"));
         l.Add(Float("Unload areas (+)", () => s.AreaUnloadMargin, v => s.AreaUnloadMargin = v, 100f, 100f, 5000f, 1000f, "0", " m"));
-        l.Add(Float("Load sectors up to", () => s.SectorLoadDistance, v => s.SectorLoadDistance = v, 50f, 100f, 5000f, 950f, "0", " m"));
+        l.Add(Float("Load sectors up to", () => s.SectorLoadDistance, v => s.SectorLoadDistance = v, 50f, 100f, 5000f, 900f, "0", " m"));
         l.Add(Float("Unload sectors (+)", () => s.SectorUnloadMargin, v => s.SectorUnloadMargin = v, 50f, 50f, 3000f, 300f, "0", " m"));
         l.Add(Head("RENDER DISTANCE  (immediate)"));
         l.Add(Table("Object render distance", RenderDistance.Names, () => (int)RenderDistance.Level, i => RenderDistance.Level = (RenderDistanceLevel)i, (int)RenderDistanceLevel.Normal));
@@ -321,6 +321,12 @@ public sealed partial class DevMenu
         var st = _r.Stats;
         return new List<Item>
         {
+            Head("PROFILER  (CPU / GPU / Rendering / Memory / Physics, Hierarchy + Timeline, Report export)"),
+#if WINDOWS
+            Action_("Open Profiler", OpenProfiler),
+#endif
+            Bool("GPU test: scene in 1/4 of the pixels (image distorted)", () => RenderFx.DiagQuarterPixels, v => RenderFx.DiagQuarterPixels = v, false),
+            Info("  -> compare 'GPU Scene' in the profiler: much faster = pixel bound, same = geometry bound"),
             Head("FRAME RATE"),
             Info("FPS", () => Num(_fps, "0.0")),
             Info("Frame time avg / min / max", () => Num(_ftAvg, "0.0") + " / " + Num(_ftMin, "0.0") + " / " + Num(_ftMax, "0.0") + " ms"),

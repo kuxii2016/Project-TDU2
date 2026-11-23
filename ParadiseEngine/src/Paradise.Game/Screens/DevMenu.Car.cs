@@ -247,6 +247,7 @@ public sealed partial class DevMenu
         l.Add(Float("Bloom threshold", () => PostFx.BloomThreshold, v => PostFx.BloomThreshold = v, 0.02f, 0f, 1f, d.BloomThreshold, "0.00"));
         l.Add(Float("Bloom knee", () => PostFx.BloomKnee, v => PostFx.BloomKnee = v, 0.01f, 0f, 0.5f, d.BloomKnee, "0.00"));
         l.Add(Float("Bloom emissive (lights, neon, holograms)", () => PostFx.BloomEmissive, v => PostFx.BloomEmissive = v, 0.1f, 0f, 4f, d.BloomEmissive, "0.0"));
+        l.Add(Float("Bloom emissive threshold (lamp halos)", () => PostFx.BloomEmissiveThreshold, v => PostFx.BloomEmissiveThreshold = v, 0.02f, 0f, 1f, d.BloomEmissiveThreshold, "0.00"));
         l.Add(Float("Bloom radius", () => PostFx.BloomRadius, v => PostFx.BloomRadius = v, 0.25f, 0.25f, 8f, d.BloomRadius, "0.00", " x"));
         l.Add(Head("AMBIENT OCCLUSION (engine extra, not in the original)"));
         l.Add(Bool("Ambient occlusion", () => PostFx.AoEnabled, v => PostFx.AoEnabled = v, d.AmbientOcclusion));
