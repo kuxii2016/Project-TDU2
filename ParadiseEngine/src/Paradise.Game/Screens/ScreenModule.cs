@@ -135,6 +135,8 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (music != null) FrontendMusic.Play(music);
         else if (FrontendMusic.Current != null) FrontendMusic.Stop();
 
+        // Original: der Basis-Start jedes Spielmodus nimmt einen abgelaufenen Verband der Schönheitsklinik ab (exe 0xA7EA2A)
+        Paradise.Game.Utils.BandageUtils.OnModeStart(now);
         _active = next;
         _active.Enter(this, old);
     }

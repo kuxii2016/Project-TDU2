@@ -153,7 +153,6 @@ public sealed class PauseMenu
     Paradise.Game.Gameplay.Social.ListKind _socialList = Paradise.Game.Gameplay.Social.ListKind.Friends;
     /// <summary>Die aktive Instanz – Discovery pusht seine Daten auch, bevor main.bnk angehängt wurde.</summary>
     public static PauseMenu? MenuInstance { get; private set; }
-    void DbgWreck(string msg) => Log.Info("[WreckListDbg] " + msg);
     public Options? Settings => _options;
     bool _open, _pendingDialog;
     float _clock, _escAt = -1f;
@@ -201,7 +200,6 @@ public sealed class PauseMenu
     {
         if (wrecks == null) return;
         _wrecks = wrecks;
-        DbgWreck($"InsertWrecks island='{wrecks.Island}' found={wrecks.Found}/{wrecks.Total} rows={wrecks.Rows?.Length ?? 0}");
         PushWrecks();
     }
 
@@ -270,10 +268,6 @@ public sealed class PauseMenu
             .Replace("§NB-PT§", xp.ToString(inv)).Replace("§MX-PT§", maxCruising.ToString(inv))
             .Replace("§RATIO§", cruisePercent.ToString(inv));
         ui.SetVariable("/:GPTitle", foundText + "  |  " + xpText);
-
-        // Zwei getrennte Quellen: Straßen aus Discovery, Wracks aus wreckinfo.Rows.
-
-        // Eine bereits offene gameprogress_fl-Liste sofort nachziehen (Fund/DevMenu/Save-Import).
     }
 
     /// <summary>
@@ -370,10 +364,6 @@ public sealed class PauseMenu
         _collectRows.AddRange(Paradise.Game.Gameplay.Collectable.Current?.Rows(_collectList) ?? System.Array.Empty<AreaRow>());
         _socialRows.Clear();
         _socialRows.AddRange(Paradise.Game.Gameplay.Social.Current?.Rows(_socialList) ?? System.Array.Empty<AreaRow>());
-
-        DbgWreck($"RefreshProgressRows road={_roadRows.Count} wreck={_treasureRows.Count} " +
-                 $"event={_eventRows.Count} photo={_photoRows.Count} racing={_racingRows.Count} " +
-                 $"collect={_collectRows.Count} social={_socialRows.Count}");
     }
 
     /// <summary>Vom FSCommand gewählte Quelle setzen und eine bereits offene Liste sofort nachziehen.</summary>
@@ -386,8 +376,6 @@ public sealed class PauseMenu
         PushRoadProgress();      // Roads-% bleibt auf der Hauptseite aktuell
         PushCruisingProgress();  // Event-/Foto-% und der richtige Discovery-Text
         UpdateProgressLists();
-        Log.Info($"CruiseFill mode={mode} road={_roadRows.Count} wreck={_treasureRows.Count} " +
-                 $"event={_eventRows.Count} photo={_photoRows.Count}");
     }
 
     /// <summary>Wettbewerbs-Seite: gewählte Racing-Liste setzen und die offene gameprogress_fl neu füllen.</summary>
@@ -408,7 +396,6 @@ public sealed class PauseMenu
         PushRacingHeadline();
         RefreshProgressRows();
         UpdateProgressLists();
-        Log.Info($"RacingFill mode={key} kind={_racingList} rows={_racingRows.Count}");
     }
 
     /// <summary>Collection-Seite: gewählte coll:*-Liste setzen und die offene Liste neu füllen.</summary>
@@ -429,7 +416,6 @@ public sealed class PauseMenu
         PushCollectionHeadline();
         RefreshProgressRows();
         UpdateProgressLists();
-        Log.Info($"CollectFill mode={key} kind={_collectList} rows={_collectRows.Count}");
     }
 
     /// <summary>Social-Seite: gewählte soci:*-Liste setzen und die offene Liste neu füllen.</summary>
@@ -449,7 +435,6 @@ public sealed class PauseMenu
         PushSocialHeadline();
         RefreshProgressRows();
         UpdateProgressLists();
-        Log.Info($"SocialFill mode={key} kind={_socialList} rows={_socialRows.Count}");
     }
 
     /// <summary>
@@ -470,7 +455,6 @@ public sealed class PauseMenu
         ui.SetVariable("/:AreaCruisingLevel", d.Level.ToString(inv));
         ui.SetVariable("/:AreaCruisingTitle", d.AreaName);
         ui.SetVariable("/:AreaName", d.AreaName);
-        DbgWreck($"PercentRoad={unlocked * 100 / total}% ({unlocked}/{total}) roadRows={_roadRows.Count} treasureRows={_treasureRows.Count}");
     }
 
     /// <summary>
@@ -499,7 +483,6 @@ public sealed class PauseMenu
         ui.SetVariable("/:GPCruisingTitle", grade);
         ui.SetVariable("/:CruisingTitle", grade);
         ui.SetVariable("/:CruisingLevelCount", level.ToString(inv) + "/" + maxCruisingLevel.ToString(inv));
-        DbgWreck($"GPTitle='{text}' grade='{grade}' eventRows={_eventRows.Count} photoRows={_photoRows.Count}");
     }
 
     /// <summary>
@@ -575,10 +558,6 @@ public sealed class PauseMenu
         ui.SetVariable("/:GPRacingTitle", grade);
         ui.SetVariable("/:GPTitleRacing", grade);
         ui.SetVariable("/:GPRacingText", grade);
-        DbgWreck($"Racing: pts={points} lvl={level} pct={percent} grade='{grade}' " +
-                 $"school={GetRacingPercent(r, Paradise.Game.Gameplay.Racing.ListKind.School)} " +
-                 $"champ={GetRacingPercent(r, Paradise.Game.Gameplay.Racing.ListKind.Championship)} " +
-                 $"cup={GetRacingPercent(r, Paradise.Game.Gameplay.Racing.ListKind.Cup)}");
     }
 
     /// <summary>
@@ -598,7 +577,6 @@ public sealed class PauseMenu
             .Replace("§NB-PT§", points.ToString(inv)).Replace("§MX-PT§", maxRacing.ToString(inv))
             .Replace("§RATIO§", percent.ToString(inv));
         ui.SetVariable("/:GPTitle", text);
-        DbgWreck($"GPTitle='{text}'");
     }
 
     /// <summary>Grade-Titel zum Level aus DBRacingLevel (_grade_hc), wie pause_menu.cpp:1027.</summary>
@@ -630,7 +608,6 @@ public sealed class PauseMenu
         ui.SetVariable("/:CollectionTitle", grade);
         ui.SetVariable("/:GPCollectionTitle", grade);
         ui.SetVariable("/:GPTitleCollection", grade);
-        DbgWreck($"Collection: pts={pts} lvl={level} pct={pct} grade='{grade}'");
     }
 
     void PushCollectionHeadline()
@@ -674,7 +651,6 @@ public sealed class PauseMenu
         ui.SetVariable("/:SocialTitle", grade);
         ui.SetVariable("/:GPSocialTitle", grade);
         ui.SetVariable("/:GPTitleSocial", grade);
-        DbgWreck($"Social: pts={pts} lvl={level} pct={pct} grade='{grade}'");
     }
 
     void PushSocialHeadline()
@@ -729,13 +705,6 @@ public sealed class PauseMenu
         }
         catch (Exception) { }
         return fallback;
-    }
-
-    static int GetRacingPercent(Paradise.Game.Gameplay.Racing r, Paradise.Game.Gameplay.Racing.ListKind kind)
-    {
-        int found = 0, total = 0;
-        foreach (var row in r.Rows(kind)) { found += row.Found; total += row.Total; }
-        return total > 0 ? Math.Clamp(found * 100 / total, 0, 100) : 0;
     }
 
     // ------------------------------------------------------------------ Öffnen / Schließen
@@ -1072,9 +1041,6 @@ public sealed class PauseMenu
         }
     }
 
-    // ------------------------------------------------------------------ Bestätigungsdialoge ("dbxo")
-    // Der Film setzt _root.DgbxCase/Msg1Txt … und meldet "dbxo"; das Spiel zeigt eine Ja/Nein-Box und ruft danach
-    // DialogBox() mit _root.PlayerAnswer ("a" Ja, "b" Nein). Box aus general.bnk (FlashDialog), wie im Spiel.
     void AnswerDialog()
     {
         _pendingDialog = false;
@@ -1108,7 +1074,6 @@ public sealed class PauseMenu
         }
     }
 
-    // ------------------------------------------------------------------ Uhr (/pause_menu/clock/time)
     void UpdateClock()
     {
         var ui = _ui!;
@@ -1133,9 +1098,6 @@ public sealed class PauseMenu
         }
     }
 
-    // ------------------------------------------------------------------ Inselkarte
-    // Marke: /pause_menu/data_extd/map/island/location/circle bekommt x = Breite(lure) * SpielX / (AreasX * 6144),
-    // y = Höhe(lure) * SpielZ / (AreasZ * 6144). Gebiet: level/cruisingzones.bin (ein Polygon je Gebiet).
     List<(string label, (float x, float z)[] poly)>? _zones;
     string? _zonesFor;
 
@@ -1237,18 +1199,10 @@ public sealed class PauseMenu
         ui.SetPosition(loc + "/circle", new Vector2(r.Value.width * gp.Value.X / ax, r.Value.height * gp.Value.Z / az));
     }
 
-    // ------------------------------------------------------------------ Spielerlisten (Lobby, Zuletzt gesehen …)
-    // Liste "players_list" (ASFlashList, Name = list_name): Zeilen line1..6 mit PlayerName / PlayerTitle / GlobalLevel,
-    // Online-Symbol line%d/content/state (online/offline).
     static readonly HashSet<string> PlayerLists = new(StringComparer.OrdinalIgnoreCase) { "friends", "club_members", "current_players", "recent_players", "black_list" };
     readonly List<VmfPlayer.FlashList> _playerLists = new();
     readonly Dictionary<VmfPlayer.FlashList, List<PlayerInfo>> _listPlayers = new();
     float _nextListRefresh;
-
-    // ------------------------------------------------------------------ Game Progress (Cruising)
-    // main.bnk: die sichtbaren Zeilen-Textfelder lesen ../:Goal, ../:Points, ../:Position,
-    // ../:Island. Die m_*-Namen aus tColumns sind nur die Spaltentitel, keine Datenfelder.
-    // Status wird über den Zeilenzustand (lock/on/normal) dargestellt, nicht als Text.
     static readonly string[] ProgressColumnVars = { "Status", "Position", "Goal", "Island", "Points" };
 
     static string[] ProgressColumns(int columns)
@@ -1357,7 +1311,6 @@ public sealed class PauseMenu
             }
         }
         if (l.Selected >= l.Rows.Count) { l.Selected = System.Math.Max(0, l.Rows.Count - 1); l.Top = 0; }
-        DbgWreck($"FillProgressList mode={_progressFill} owner='{VmfPlayer.PathOf(l.Owner)}' rows={l.Rows.Count} cols={string.Join(",", l.ColumnVars)}");
     }
 
     /// <summary>Offene Progress-Liste nach Fund/Rücknahme/Import/FSCommand ohne erneutes Öffnen aktualisieren.</summary>
@@ -1463,8 +1416,6 @@ public sealed class PauseMenu
             checkOk = ui.GotoLabel(lp + "/content/checkbox", checkFrame, false);
         }
         bool contentOk = ui.PinLabel(lp + "/content", contentFrame, true);
-        DbgWreck($"line={line} row={row} area={a.Index} found={a.Found}/{a.Total} complete={complete} sel={selected} " +
-                 $"state={state} points='{a.Points}' content={contentFrame}({contentOk}) check={checkFrame}({checkOk}) path='{lp}'");
     }
 
     /// <summary>

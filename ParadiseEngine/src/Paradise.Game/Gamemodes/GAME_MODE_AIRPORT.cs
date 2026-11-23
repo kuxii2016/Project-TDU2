@@ -167,23 +167,7 @@ public class GAME_MODE_AIRPORT : InteriorUtils
     }
 
     /// <summary>Cinematics der Exterior-Bank eines Spots (Rahmen wie das gestreamte Exterior), mit Requisiten (CF_Plane).</summary>
-    static SpotCinematics? OpenExterior(Spot s)
-    {
-        string? ext = ExteriorBank(s);
-        var c = SpotCinematics.Open(_v.Renderer, ext);
-        if (c == null) return null;
-        c.Frame = Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Vector3.UnitY, s.Value1)) * Matrix4x4.CreateTranslation(s.Position);
-        if (_t.Streamer != null && ext != null) c.AttachProps(_t.Streamer, ext, s.Code);
-        return c;
-    }
-
-    static string? ExteriorBank(Spot s)
-    {
-        var dir = _t.Streamer?.Index?.ExteriorDir;
-        if (dir == null || string.IsNullOrEmpty(s.Code)) return null;
-        var f = Path.Combine(dir, s.Code.ToLowerInvariant() + ".bnk");
-        return Paradise.Core.Files.GameFiles.Exists(f) ? f : null;
-    }
+    static SpotCinematics? OpenExterior(Spot s) => SpotCinematics.OpenExterior(_v.Renderer, _t.Streamer, s);
 
     /// <summary>flok: C_BUY_TICKET (falls vorhanden), Oberfläche zu; danach C_TAKE_OFF.</summary>
     static void BuyTicket()

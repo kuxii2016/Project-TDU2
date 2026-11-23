@@ -3,6 +3,7 @@
 // Story-Schritt direkt aus SaveData.story (TDU2StoryProgress folgt mit der Geschichte), Avatar bleibt wie in der Vorlage,
 // bis die Avatare (AvatarConfig/AvatarLibrary) portiert sind.
 using EdenSavegame;
+using Paradise.Core.Avatars;
 using Paradise.Core.Config;
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Formats;
@@ -26,6 +27,13 @@ namespace Paradise.Core.Savegame
         public const string FileName = "DATA";
         const string Container = "PLAYERSAVE";
         const ulong NoSpot = 0xFFFFFFFFFFFFFFFFUL;
+        const int OutfitSlots = 11;
+        /// <summary>Reihenfolge der 11 Kleidungsplätze in AvatarSave.Config.ClotheIDArray (zweimal: normal, fahren) – Unity TDU2SaveGame.</summary>
+        static readonly ClothePart[] SlotParts =
+        {
+            ClothePart.Hair, ClothePart.Top, ClothePart.Bottom, ClothePart.Gloves, ClothePart.Shoes, ClothePart.Glasses,
+            ClothePart.Helmet, ClothePart.Dress, ClothePart.Beard, ClothePart.Accessories, ClothePart.Belt,
+        };
         /// <summary>Umgesetzte Story-Schritte (Unity TDU2StoryProgress.Implemented).</summary>
         public const int StoryImplemented = 11;
         static readonly object _lock = new object();
@@ -250,6 +258,7 @@ namespace Paradise.Core.Savegame
 
             // ---- Avatar
             string av = WriteAvatar(root, s.avatar);
+            WriteSurgery(root, s.surgery);
 
             // ---- Profil
             var lv = root["PlayerLevels"] as XObject;
@@ -281,7 +290,7 @@ namespace Paradise.Core.Savegame
                 SetVar(env, "U3D_Heading", s.heading.ToString("R", ic));
                 SetVar(env, "U3D_Interior", s.interior ?? "");
                 SetVar(env, "U3D_Car", s.currentCar ?? "");
-                SetVar(env, "U3D_Avatar", s.avatar ?? "");   // bis der Avatar-Port AvatarSave.Config schreibt
+                SetVar(env, "U3D_Avatar", s.avatar ?? "");   // vollständiger Code (AvatarSave.Config kennt nur DBClothe-Ids, keine Hashes)
                 if (s.radioVolume >= 0) SetVar(env, "U3D_Radio", s.radioStationName ?? "");   // Sendername (auch "aus" = Hashcode 0)
                 SetVar(env, "U3D_Options", s.options ?? "");
                 SetVar(env, "U3D_Keys", s.keys ?? "");
@@ -360,8 +369,137 @@ namespace Paradise.Core.Savegame
             }
         }
 
-        /// <summary>Avatar: bleibt wie in der Vorlage, bis AvatarConfig/AvatarLibrary portiert sind (Unity WriteAvatar).</summary>
-        static string WriteAvatar(XObject root, string code) => "Vorlage";
+        /// <summary>
+        /// Avatar in AvatarSave.Config wie das Original (Port Unity WriteAvatar): BodyID, Augen/Brauen, 2 x 11 Kleidungsplätze (DBClothe-Ids),
+        /// dazu das Gesicht der Schönheitsklinik: FaceParamArray (49 x i8), age, freckle, ScatteringCoeff (Tint, nur wenn gesetzt).
+        /// </summary>
+        static string WriteAvatar(XObject root, string code)
+        {
+            var cfg = AvatarConfig.Decode(code);
+            var conf = (root["AvatarSave"] as XObject)?["Config"] as XObject;
+            if (cfg == null || conf == null) return "Vorlage";
+            if (!HasClothes()) return "Vorlage (Kleidung nicht geladen)";
+            Set(conf, "BodyID", cfg.Ethnic * 2 + cfg.Sex);
+            if (cfg.EyeId >= 0) Set(conf, "EyeID", cfg.EyeId);
+            if (cfg.BrowId >= 0) Set(conf, "EyebrowsID", cfg.BrowId);
+            if (cfg.HasBrowColor)
+            {
+                Set(conf, "EyebrowsColor_R", (int)MathF.Round(System.Math.Clamp(cfg.BrowColor.X, 0f, 1f) * 255f));
+                Set(conf, "EyebrowsColor_G", (int)MathF.Round(System.Math.Clamp(cfg.BrowColor.Y, 0f, 1f) * 255f));
+                Set(conf, "EyebrowsColor_B", (int)MathF.Round(System.Math.Clamp(cfg.BrowColor.Z, 0f, 1f) * 255f));
+            }
+            // Gesicht (GMSurgery: FaceParamArray +0xA2, age +0xD4, freckle +0xD8, ScatteringCoeff +0x54)
+            if (conf["FaceParamArray"] is XArray fp)
+                for (int i = 0; i < fp.Items.Count && i < AvatarConfig.FaceParamCount; i++)
+                    if (fp.Items[i] is XPrim p) p.Value = (long)cfg.Face[i];
+            if (conf["age"] is XPrim) Set(conf, "age", cfg.Age);
+            if (conf["freckle"] is XPrim) Set(conf, "freckle", cfg.Freckle);
+            if (cfg.Tint >= 0f && conf["ScatteringCoeff"] is XPrim) Set(conf, "ScatteringCoeff", cfg.Tint);
+            var ids = conf["ClotheIDArray"] as XArray; var cols = conf["ColorIDArray"] as XArray;
+            if (ids == null || cols == null || ids.Items.Count < OutfitSlots * 2 || cols.Items.Count < OutfitSlots * 2) return "Vorlage (Feld fehlt)";
+            int dbSex = cfg.Sex == 1 ? 1 : 2;   // DBClothe._sex: 1 Frau, 2 Mann
+            int set = 0;
+            for (int slot = 0; slot < OutfitSlots; slot++)
+            {
+                var part = SlotParts[slot];
+                ClotheInfo item = null; int color = 0;
+                for (int i = 0; i < cfg.Items.Count; i++)
+                {
+                    var c = AvatarLibrary.Clothe(cfg.Items[i]);
+                    if (c != null && c.Part == part) { item = c; color = i < cfg.Colors.Count ? cfg.Colors[i] : 0; }
+                }
+                if (item == null) item = Nothing(part, dbSex);
+                else set++;
+                ulong id = item != null ? (ulong)(uint)item.IdNum : 65535UL;
+                // erste 11 = normale Kleidung, zweite 11 = beim Fahren (hier gleich)
+                ((XPrim)ids.Items[slot]).Value = id; ((XPrim)ids.Items[slot + OutfitSlots]).Value = id;
+                ((XPrim)cols.Items[slot]).Value = (long)color; ((XPrim)cols.Items[slot + OutfitSlots]).Value = (long)color;
+            }
+            return $"{(cfg.Sex == 1 ? "Frau" : "Mann")}, {set} Teile{(cfg.HasFace ? ", Gesicht" : "")}";
+        }
+
+        static bool HasClothes() { foreach (var _ in AvatarLibrary.AllClothes) return true; return false; }
+
+        static ClotheInfo Nothing(ClothePart part, int dbSex)
+        {
+            ClotheInfo any = null;
+            foreach (var c in AvatarLibrary.AllClothes)
+                if (c.Part == part && c.IsNothing)
+                {
+                    if (c.Sex == dbSex) return c;
+                    if (any == null && (c.Sex == 0 || c.Sex == 3)) any = c;
+                }
+            return any;
+        }
+
+        /// <summary>Feld im Baum suchen (erstes Objekt, das es hat) und setzen; fehlt es in der Vorlage, bleibt es aus.</summary>
+        static void SetDeep(XObject root, string key, object value)
+        {
+            var o = FindObject(root, x => x[key] is XPrim);
+            if (o != null) Set(o, key, value);
+        }
+
+        /// <summary>DBClothe-Id (u16) eines Teils, ohne Teil das "Nichts"-Teil des Platzes (das Original sichert immer ein getragenes Teil).</summary>
+        static int ClotheId(int hash, ClothePart part)
+        {
+            var c = hash != 0 ? AvatarLibrary.Clothe(hash) : null;
+            if (c == null) c = Nothing(part, 0);
+            return c != null ? c.IdNum : 65535;
+        }
+
+        /// <summary>
+        /// Schönheitsklinik in die Original-Felder (PlayerData/Driver, exe Profil +0xD8 / +0xF8…+0x110, StatisticsData._time_spent_in_surgery).
+        /// </summary>
+        static void WriteSurgery(XObject root, SurgeryData sg)
+        {
+            if (sg == null) return;
+            SetDeep(root, "NbSurgeries", sg.nbSurgeries);
+            SetDeep(root, "BeenInSurgeryShop", sg.beenInSurgeryShop);
+            SetDeep(root, "Bandage", sg.bandage);
+            SetDeep(root, "BandageTime", (ulong)System.Math.Max(0L, sg.bandageTime));
+            SetDeep(root, "NeedBandageNews", sg.needBandageNews);
+            SetDeep(root, "MultiChallengesWithBandages", sg.multiChallengesWithBandages);
+            SetDeep(root, "_time_spent_in_surgery", sg.timeSpentInSurgery);
+            if (!HasClothes()) return;
+            SetDeep(root, "HelmetBandage", ClotheId(sg.helmetBandage, ClothePart.Helmet));
+            SetDeep(root, "BikeHelmetBandage", ClotheId(sg.bikeHelmetBandage, ClothePart.Helmet));
+            SetDeep(root, "GlassesBandage", ClotheId(sg.glassesBandage, ClothePart.Glasses));
+            SetDeep(root, "BeardBandage", ClotheId(sg.beardBandage, ClothePart.Beard));
+            SetDeep(root, "HairBandage", ClotheId(sg.hairBandage, ClothePart.Hair));
+            SetDeep(root, "HelmetColorBandage", sg.helmetColorBandage);
+            SetDeep(root, "BikeHelmetColorBandage", sg.bikeHelmetColorBandage);
+            SetDeep(root, "GlassesColorBandage", sg.glassesColorBandage);
+            SetDeep(root, "BeardColorBandage", sg.beardColorBandage);
+            SetDeep(root, "HairColorBandage", sg.hairColorBandage);
+        }
+
+        /// <summary>Schönheitsklinik aus der DATA (Gegenstück zu <see cref="WriteSurgery"/>); Teile über ihre DBClothe-Id zurück zum Hash.</summary>
+        static SurgeryData ReadSurgery(XObject root)
+        {
+            var sg = new SurgeryData();
+            long L(string k) { var o = FindObject(root, x => x[k] is XPrim); return o != null ? Long(o, k) : 0; }
+            double D(string k) { var o = FindObject(root, x => x[k] is XPrim); return o != null ? Double(o, k) : 0; }
+            sg.nbSurgeries = (int)L("NbSurgeries");
+            sg.beenInSurgeryShop = L("BeenInSurgeryShop") != 0;
+            sg.bandage = L("Bandage") != 0;
+            sg.bandageTime = L("BandageTime");
+            sg.needBandageNews = L("NeedBandageNews") != 0;
+            sg.multiChallengesWithBandages = (int)L("MultiChallengesWithBandages");
+            double t = D("_time_spent_in_surgery");
+            sg.timeSpentInSurgery = double.IsFinite(t) && t > 0 ? (float)t : 0f;
+            if (HasClothes())
+            {
+                var byNum = new Dictionary<int, ClotheInfo>();
+                foreach (var c in AvatarLibrary.AllClothes) if (!byNum.ContainsKey(c.IdNum)) byNum[c.IdNum] = c;
+                int H(string k) { int n = (int)L(k); return byNum.TryGetValue(n, out var c) && !c.IsNothing ? c.Hash : 0; }
+                sg.helmetBandage = H("HelmetBandage"); sg.bikeHelmetBandage = H("BikeHelmetBandage"); sg.glassesBandage = H("GlassesBandage");
+                sg.beardBandage = H("BeardBandage"); sg.hairBandage = H("HairBandage");
+            }
+            sg.helmetColorBandage = (int)L("HelmetColorBandage"); sg.bikeHelmetColorBandage = (int)L("BikeHelmetColorBandage");
+            sg.glassesColorBandage = (int)L("GlassesColorBandage"); sg.beardColorBandage = (int)L("BeardColorBandage");
+            sg.hairColorBandage = (int)L("HairColorBandage");
+            return sg;
+        }
 
         // ------------------------------------------------------------------ Lesen (lokale DATA -> Spielstand)
 
@@ -559,10 +697,11 @@ namespace Paradise.Core.Savegame
             if (vars.TryGetValue("U3D_UploadedChallenges", out string vuc))
                 foreach (var f in vuc.Split(',')) if (int.TryParse(f, NumberStyles.Integer, ic, out int cid) && cid > 0) s.uploadedChallenges.Add(cid);
 
-            // Avatar
-            string av = ReadAvatar(root, out string avInfo);
-            if (av != null) s.avatar = av;
-            else if (vars.TryGetValue("U3D_Avatar", out string va)) s.avatar = va;
+            // Avatar: der eigene vollständige Code (U3D_Avatar, mit Hashes und Gesicht) zuerst; Original-Spielstände über AvatarSave.Config
+            string avInfo;
+            if (vars.TryGetValue("U3D_Avatar", out string va) && !string.IsNullOrEmpty(va)) { s.avatar = va; avInfo = "U3D_Avatar"; }
+            else { string av = ReadAvatar(root, out avInfo); if (av != null) s.avatar = av; }
+            s.surgery = ReadSurgery(root);
 
             // Profil
             var life = root["MyLife"] as XObject;
@@ -573,8 +712,37 @@ namespace Paradise.Core.Savegame
             return s;
         }
 
-        /// <summary>Avatar lesen: folgt mit dem Avatar-Port (Unity ReadAvatar); bis dahin der zuletzt gespeicherte Code.</summary>
-        static string ReadAvatar(XObject root, out string info) { info = "nicht gelesen"; return null; }
+        /// <summary>Avatar aus AvatarSave.Config (Port Unity ReadAvatar) samt Gesicht (FaceParamArray, age, freckle, ScatteringCoeff).</summary>
+        static string ReadAvatar(XObject root, out string info)
+        {
+            info = "-";
+            var conf = (root["AvatarSave"] as XObject)?["Config"] as XObject;
+            if (conf == null || !HasClothes()) { info = "nicht gelesen"; return null; }
+            var byNum = new Dictionary<int, ClotheInfo>();
+            foreach (var c in AvatarLibrary.AllClothes) if (!byNum.ContainsKey(c.IdNum)) byNum[c.IdNum] = c;
+            int body = (int)Long(conf, "BodyID");
+            var cfg = new AvatarConfig { Sex = body & 1, Ethnic = System.Math.Clamp(body >> 1, 0, 2) };
+            var ids = conf["ClotheIDArray"] as XArray; var cols = conf["ColorIDArray"] as XArray;
+            if (ids != null)
+                for (int i = 0; i < System.Math.Min(OutfitSlots, ids.Items.Count); i++)
+                {
+                    int num = (int)((ids.Items[i] as XPrim)?.AsLong() ?? 65535);
+                    if (num == 65535 || !byNum.TryGetValue(num, out var c) || c.IsNothing) continue;
+                    int col = cols != null && i < cols.Items.Count ? (int)((cols.Items[i] as XPrim)?.AsLong() ?? 0) : 0;
+                    cfg.Items.Add(c.Hash); cfg.Colors.Add(System.Math.Max(0, col));
+                }
+            cfg.EyeId = (int)Long(conf, "EyeID");
+            cfg.BrowId = (int)Long(conf, "EyebrowsID");
+            cfg.BrowColor = new System.Numerics.Vector4(Long(conf, "EyebrowsColor_R") / 255f, Long(conf, "EyebrowsColor_G") / 255f, Long(conf, "EyebrowsColor_B") / 255f, 1f);
+            if (conf["FaceParamArray"] is XArray fp)
+                for (int i = 0; i < fp.Items.Count && i < AvatarConfig.FaceParamCount; i++)
+                    cfg.Face[i] = unchecked((sbyte)((fp.Items[i] as XPrim)?.AsLong() ?? 0));
+            cfg.Age = (float)Double(conf, "age");
+            cfg.Freckle = (float)Double(conf, "freckle");
+            if (conf["ScatteringCoeff"] is XPrim) cfg.Tint = (float)Double(conf, "ScatteringCoeff");
+            info = $"{(cfg.Sex == 1 ? "Frau" : "Mann")}, {cfg.Items.Count} Teile";
+            return cfg.Encode();
+        }
 
         /// <summary>Übernimmt aus dem (leeren) Server-Spielstand, was die DATA nicht enthält (MyTDULife, Lieblings-Spots, Sticker, Kleidung …).</summary>
         public static void KeepServerOnly(SaveData local, SaveData server)
@@ -594,6 +762,7 @@ namespace Paradise.Core.Savegame
             if (server.ownedFurniture != null && server.ownedFurniture.Count > 0) local.ownedFurniture = server.ownedFurniture;
             if (server.ownedMaterials != null && server.ownedMaterials.Count > 0) local.ownedMaterials = server.ownedMaterials;
             if (string.IsNullOrEmpty(local.avatar)) local.avatar = server.avatar ?? "";
+            if (server.surgery != null && (local.surgery == null || (local.surgery.nbSurgeries == 0 && !local.surgery.bandage))) local.surgery = server.surgery;
             if (local.bookmarks.Count == 0 && server.bookmarks != null) local.bookmarks = server.bookmarks;
             if (local.foundWrecks.Count == 0 && server.foundWrecks != null) local.foundWrecks = server.foundWrecks;
             if (local.wreckEvents.Count == 0 && server.wreckEvents != null) local.wreckEvents = server.wreckEvents;
@@ -603,6 +772,9 @@ namespace Paradise.Core.Savegame
             if (local.cruisingRoadPoints == 0 && server.cruisingRoadPoints != 0) local.cruisingRoadPoints = server.cruisingRoadPoints;
             if (local.cruisingRoadEvents.Count == 0 && server.cruisingRoadEvents != null) local.cruisingRoadEvents = server.cruisingRoadEvents;
             if (local.roadDiscoveryVersion <= 0) local.roadDiscoveryVersion = server.roadDiscoveryVersion > 0 ? server.roadDiscoveryVersion : 1;
+            // CRC: hochgeladene Challenge-Ids vom Server uebernehmen, wenn die lokale DATA keine hat
+            if ((local.uploadedChallenges == null || local.uploadedChallenges.Count == 0) && server.uploadedChallenges != null && server.uploadedChallenges.Count > 0)
+                local.uploadedChallenges = server.uploadedChallenges;
         }
 
         // ------------------------------------------------------------------ Häuser / Spots

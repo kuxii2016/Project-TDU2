@@ -173,6 +173,8 @@ public sealed partial class AvatarModel : IDisposable
         public IGpuMaterial Mat = null!;
         public uint[] Indices = Array.Empty<uint>();
         public bool Head;
+        /// <summary>COEFFS / SPECPARM der 2DM (Haut): Vorgabe, wenn die Konfiguration keinen Wert setzt.</summary>
+        public Vector4 BaseCoeffs, BaseSpec;
     }
     readonly List<Piece> _pieces = new();
     readonly List<AvatarPartData> _parts = new();
@@ -263,6 +265,7 @@ public sealed partial class AvatarModel : IDisposable
         int nv = 0; foreach (var p in _pieces) nv = System.Math.Max(nv, p.Prim.Pos.Length);
         _verts = new ObjectVertex[nv];
         ApplyBrowColor();
+        ApplySkinParams();
         Ready = true;
         try { Built?.Invoke(this); } catch (Exception ex) { Log.Error("Avatar Build: " + ex.Message); }
     }
@@ -282,7 +285,7 @@ public sealed partial class AvatarModel : IDisposable
             ApplyLight(desc);
             var idx = new uint[pr.Tris.Length];
             for (int k = 0; k < idx.Length; k++) idx[k] = (uint)pr.Tris[k];
-            _pieces.Add(new Piece { Prim = pr, Desc = desc, Mat = _r.CreateMaterial(desc), Indices = idx, Head = head });
+            _pieces.Add(new Piece { Prim = pr, Desc = desc, Mat = _r.CreateMaterial(desc), Indices = idx, Head = head, BaseCoeffs = desc.AvCoeffs, BaseSpec = desc.AvSpec });
         }
     }
 
@@ -322,6 +325,59 @@ public sealed partial class AvatarModel : IDisposable
         }
     }
 
+    /// <summary>
+    /// Haut-Konstanten aus der AvatarConfiguration wie das Original (skin_zones_spec §3.3, exe 0x683E60 / 0x6834D0 / 0x6833B0):
+    /// TD_Skin2/TD_Skinface: COEFFS.y = freckle (Sommersprossen-Maske G.b), COEFFS.z = ScatteringCoeff (Tint, Zeile der Hautton-Rampe;
+    /// ohne Wert die der 2DM), SPECPARM.w = age (Falten-Normalmap N2 – im Avatar-Shader der Engine noch nicht ausgewertet, CHECKLIST).
+    /// </summary>
+    void ApplySkinParams()
+    {
+        foreach (var pc in _pieces)
+        {
+            var d = pc.Desc;
+            if (d.AvMode > 0.5f) continue;   // nur Haut (Modus 0)
+            var co = pc.BaseCoeffs;
+            co.Y = Config.Freckle;
+            if (Config.Tint >= 0f) co.Z = Config.Tint;
+            var sp = pc.BaseSpec;
+            sp.W = Config.Age;
+            if (co == d.AvCoeffs && sp == d.AvSpec) continue;
+            d.AvCoeffs = co; d.AvSpec = sp;
+            _r.UpdateMaterial(pc.Mat, d);
+        }
+    }
+
+    /// <summary>ScatteringCoeff (COEFFS.z) der Haut-2DM, -1 solange nicht gebaut – Vorgabe, wenn die Konfiguration keinen Tint setzt.</summary>
+    public float SkinScattering { get { foreach (var p in _pieces) if (p.Desc.AvMode < 0.5f) return p.BaseCoeffs.Z; return -1f; } }
+
+    FaceFxFace? _face;
+    bool _faceTried;
+
+    /// <summary>
+    /// Gesicht ohne Neuaufbau ändern (Schönheitsklinik: jeder Regler-Schritt): Gesichtsparameter, Alter, Sommersprossen, Tint, Augen, Brauen.
+    /// </summary>
+    public void SetFace(AvatarConfig cfg)
+    {
+        Config.CopyFace(cfg);
+        if (!Ready) return;
+        ApplyBrowColor();
+        ApplySkinParams();
+    }
+
+    /// <summary>Gesichtsform (FaceFX-Register aus Config.Face) auf die Arbeits-Pose legen – nach dem Körper-Clip, vor dem Häuten.</summary>
+    void ApplyFace()
+    {
+        if (Rig == null || !Config.HasFace) return;
+        if (_face == null)
+        {
+            if (_faceTried) return;
+            _faceTried = true;
+            _face = FaceFxFace.Create(Rig, Config.Sex);
+            if (_face == null) return;
+        }
+        _face.Apply(Rig, Config.Face);
+    }
+
     /// <summary>Fußraum-Schatten der Avatar-Shader (im Auto).</summary>
     public bool InCar { get => _inCar; set { if (_inCar == value) return; _inCar = value; Refresh(); } }
     /// <summary>Innenraum: Deckenlicht statt Sonne (Unity _TDU2AvatarIndoor, TDU2Interiors.SetAvatarIndoor).</summary>
@@ -354,6 +410,7 @@ public sealed partial class AvatarModel : IDisposable
         if (!Ready || !Visible || EditorHidden || Rig == null) return;
         EditorLastModel = model; EditorDrawnTick = System.Environment.TickCount64;   // Szenen-Editor: Lage/Markierung
         if (_lightVersion != AvatarLight.Version) { _lightVersion = AvatarLight.Version; Refresh(); }
+        ApplyFace();
         Rig.UpdateSkin();
         foreach (var p in _pieces)
         {

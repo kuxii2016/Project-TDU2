@@ -6,6 +6,7 @@ using Paradise.Core.Flash;
 using Paradise.Core.Online;
 using Paradise.Game.Screens;
 using System.Numerics;
+using static Paradise.Game.Racing.RaceCinematics;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -30,6 +31,9 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     const int StyleShort = 1, StyleLong = 2, StyleAfro = 4, StyleAttached = 9;
     const int BeardFull = 6, BeardMoustache = 7, BeardGoatee = 8;
 
+    static SpotCinematics? _cin, _ext; 
+    static bool _menuCin;
+
     static VmfPlayer? _hui;
     static bool _open;
     static float _startAt = -1f, _lastEsc = -10f, _clock;
@@ -50,6 +54,13 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
     {
         if (!AvatarLibrary.Ready) { Log.Info("Friseur: Avatar-Daten werden noch geladen …"); return false; }
         if (_t == null || _scene == null) return false;
+        // Original: Friseur gesperrt, solange der Verband der Schönheitsklinik sitzt (Text 7169, Karte /:hairdresser_locked 0xBD7364)
+        if (Paradise.Game.Utils.BandageUtils.Active) 
+        {
+            var msg = Lang(7169, "You cannot go to the hairdresser until you have your bandages removed.");
+            Paradise.Game.Utils.BandageUtils.Notify(Paradise.Game.Utils.BandageUtils.TextHairdresserLocked, msg); 
+            return false; 
+        }
         GameMode.Set(Gamemode.GAME_MODE_HAIRDRESSER);
         return true;
     }
@@ -128,7 +139,31 @@ public class GAME_MODE_HAIRDRESSER : InteriorUtils
         ui.SetValue("/:LockHairValid", false);
         ui.SetValue("/:Input", true);
         UpdatePrice();
-        if (!ui.CallClip("/", "openMenuHairDresser")) { ui.GotoLabel("/", "hairdresser_edit", false); ui.CallClip("/", "setSquareMenu"); }
+        OpenCinematics();
+        if (!ui.CallClip("/", "openMenuHairDresser")) 
+        { 
+            ui.GotoLabel("/", "hairdresser_edit", false); 
+            ui.CallClip("/", "setSquareMenu"); 
+        }
+    }
+
+    static void OpenCinematics()
+    {
+        EndCinematics();
+        if (_v?.Renderer == null) return;
+        _cin = SpotCinematics.Open(_v.Renderer, _pendingBank);
+        if (_cin == null) return;
+        _cin.Frame = _holder;
+        _cin.Indoor = true;
+        _cin.SetPlayer(_edit.Clone());
+    }
+
+    static void EndCinematics()
+    {
+        InteriorNpcs.Suppressed = null;
+        _menuCin = false;
+        _cin?.Dispose(); _cin = null;
+        _ext?.Dispose(); _ext = null;
     }
 
     // ================================================================== Auswahl

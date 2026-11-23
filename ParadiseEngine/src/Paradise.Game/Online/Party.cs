@@ -330,7 +330,7 @@ public static class Party
         if (General == null || _ctx == null || _ctx.Paused || RideWith != 0) return false;
         var m = GameMode.Current;
         // Original (exe 0x999c06…0x999cb6): nicht in Menüs/Läden, nicht während Ladebildschirm/Rennen
-        if (m is Gamemode.GAME_MODE_MAP or Gamemode.GAME_MODE_LOGIN or Gamemode.GAME_MODE_GOODIES or Gamemode.GAME_MODE_HAIRDRESSER
+        if (m is Gamemode.GAME_MODE_MAP or Gamemode.GAME_MODE_LOGIN or Gamemode.GAME_MODE_GOODIES or Gamemode.GAME_MODE_HAIRDRESSER or Gamemode.GAME_MODE_SURGERY
             or Gamemode.GAME_MODE_DRESSING or Gamemode.GAME_MODE_STICKERS or Gamemode.GAME_MODE_PAUSE) return false;
         if (LoadingScreen.Visible) return false;
         return true;

@@ -189,9 +189,6 @@ internal sealed class Wrecks : GameModule
         AlreadyFound
     }
 
-    // === DIALOG-STELLSCHRAUBEN ===
-    // Nur diese drei Konstanten anpassen - die Entscheidungen stehen in
-    // OnFoundDialog() und OnAlreadyFoundDialog().
     /// <summary>Neuer Fund: false = open_small (AlreadyFound=false, "1/28 (A)").</summary>
     public const bool Dialog_Found_Big = false;
     /// <summary>Bereits gefunden: true = open_big (AlreadyFound=true). Auf FALSE setzen, wenn auch hier der kleine Dialog kommen soll.</summary>
@@ -324,7 +321,7 @@ internal sealed class Wrecks : GameModule
             var p = _points[i];
             if (p.Found) continue;
             float dx = p.Position.X - car.X, dz = p.Position.Z - car.Z;
-            float d = MathF.Sqrt(dx * dx + dz * dz);   // wie im C++-Port: flacher Abstand
+            float d = MathF.Sqrt(dx * dx + dz * dz);
             // DevMenu-Entfernen: erst wieder foundbar, wenn man den Wrack-Radius verlassen hat.
             if (_refindBlocked.Count > 0 && d > _activation * 1.5f) _refindBlocked.Remove(p.Index);
             if (_refindBlocked.Contains(p.Index)) continue;
@@ -349,10 +346,8 @@ internal sealed class Wrecks : GameModule
             if (d < foundDist) { foundDist = d; nearFound = i; }
         }
         bool nearFoundNow = nearFound >= 0 && foundDist <= _activation * 1.5f;
-        Dbg($"nearFound index={nearFound} dist={foundDist:0.00} now={nearFoundNow} last={_nearFoundIndex} dialog={_foundDialogOpen} hold={_foundUiHold:0.00}");
         if (nearFoundNow && nearFound != _nearFoundIndex && !_foundDialogOpen && _foundUiHold <= 0f && !_disabled && DetectorUnlocked)
         {
-            Dbg($"SHOW already-found dialog for index={nearFound}");
             OnAlreadyFound(nearFound);
         }
         else if (foundDist > _activation * 2f) _nearFoundIndex = -1;
@@ -423,8 +418,6 @@ internal sealed class Wrecks : GameModule
         }
     }
 
-    // ---------------------------------------------------------------- Daten
-
     bool LoadIsland(string island, IslandIndex index)
     {
         _island = island;
@@ -487,13 +480,6 @@ internal sealed class Wrecks : GameModule
 
         ImportSave();
         SpawnModels(index);
-
-        Log.Info($"Wrecks: {island}: {_points.Count} Wracks, {_zones.Count} Cruising-Zonen, " +
-                 $"Detektor {_range:0} m, Aktivierung {_activation:0} m, Bips {_bipFar:0.00}/{_bipNear:0.00} s" +
-                 (_found.Count > 0 ? $", {_found.Count} schon gefunden" : ""));
-        if (_log)
-            foreach (var p in _points)
-                Log.Info($"Wrecks: #{p.Index} '{p.Name}' ID {p.Id} bei ({p.Position.X:0}, {p.Position.Y:0}, {p.Position.Z:0}) Area {p.Area}" + (p.Found ? " [found]" : ""));
         return true;
     }
 
@@ -572,8 +558,6 @@ internal sealed class Wrecks : GameModule
             p.Shine = shine;
             _wreckScenes.Add(shine);
         }
-        if (_log && log.Count > 0) Log.Info("Wrecks: Modelle: " + string.Join("; ", log));
-        Log.Info($"Wrecks: {_wreckScenes.Count} Wrack-Szenen aus {Path.GetFileName(path)} geladen");
     }
 
     MapStreamer.SceneHandle? BuildScene(MapStreamer st, ObjectSet set, Matrix4x4 transform)
@@ -768,31 +752,6 @@ internal sealed class Wrecks : GameModule
         return (total, found);
     }
 
-    /// <summary>Wrackpositionen einer Insel aus scenarics/wrecks/entities.xmb (ohne Modelle zu laden).</summary>
-    static List<Vector3> ReadWreckPositions(string islandDir)
-    {
-        var result = new List<Vector3>();
-        string path = Path.Combine(islandDir, "scenarics", "wrecks", "wrecks.bnk");
-        if (!GameFiles.Exists(path)) return result;
-        try
-        {
-            var bank = BnkArchive.Open(path);
-            var entry = bank.Find("entities.xmb");
-            if (entry == null) return result;
-            var root = XmbFile.Parse(bank.Read(entry));
-            var array = root.Get("ExportType_Entity")?.Get("ArrayOf_Entity__Wreck");
-            if (array == null) return result;
-            foreach (var e in array.Items)
-            {
-                var pos = e.Get("orient_pos_scale")?.Get("pos");
-                if (pos == null) continue;
-                result.Add(new Vector3(pos.F("X"), pos.F("Y"), pos.F("Z")));
-            }
-        }
-        catch (Exception ex) { Log.Warn($"Wrecks: {path}: {ex.Message}"); }
-        return result;
-    }
-
     /// <summary>Retail-Voraussetzung erfüllt? Standardmäßig durch den Test-Schalter umgangen.</summary>
     public bool DetectorUnlocked => TestBypassLevelMinimum || CurrentRacingLevel() >= RequiredRacingLevel;
 
@@ -819,8 +778,6 @@ internal sealed class Wrecks : GameModule
         p.Found = true;
         _found.Add(p.Index);
         string ev = WreckEvent(p);
-        Dbg($"FOUND index={p.Index} name='{p.Name}' area={p.Area} island='{_island}' foundCount={_found.Count}/{_points.Count}");
-        Log.Info($"Wrecks: '{p.Name}' gefunden ({_found.Count} von {_points.Count}), Event {ev} isFound: {_found}");
         _refindBlocked.Remove(p.Index);
         UpdateShine(p);
         _hudCountsDirty = true;
@@ -885,7 +842,6 @@ internal sealed class Wrecks : GameModule
         if (save == null) return;
         _saveImported = true;
         var entry = save.foundWrecks?.Find(f => string.Equals(f.island, _island, StringComparison.OrdinalIgnoreCase));
-        Dbg($"ImportSave island='{_island}' entry={(entry == null ? "none" : entry.island + "[" + string.Join(",", entry.indices) + "]")} points={_points.Count}");
         if (entry == null) return;
         foreach (int idx in entry.indices)
         {
@@ -943,7 +899,6 @@ internal sealed class Wrecks : GameModule
         UpdateShine(p);
         _found.Remove(p.Index);
         string ev = WreckEvent(p);
-        Log.Info($"Wrecks: '{p.Name}' Fund entfernt ({_found.Count}/{_points.Count}), Event {ev}");
 
         var save = TDU2Session.Save;
         if (save != null)
@@ -1018,10 +973,6 @@ internal sealed class Wrecks : GameModule
             });
         }
         info.Rows = rows.ToArray();
-
-        // Nur Wrack-Daten an das Pausemenü geben. Gebietszeilen (AreaRow) kommen ausschließlich
-        // aus Discovery und werden dort von gapr_fill_crui:road abgefragt – keine Vermischung.
-        Dbg($"PushPauseMenu rows={info.Rows.Length} current='{_island}' points={_points.Count} found={_found.Count}");
         menu.InsertWrecks(info);
     }
 
@@ -1110,7 +1061,6 @@ internal sealed class Wrecks : GameModule
         hud.SetValue("/HUD/wrck:AlreadyFound", big);
         hud.SetValue("/HUD/wrck:AllWrecksFound", _points.Count > 0 && _found.Count >= _points.Count);
         string openLabel = big ? "open_big" : "open_small";
-        Dbg($"ShowWreckDialog ev={ev} title='{title}' AlreadyFound={big} label={openLabel}");
         hud.SetVariable("/:title_wrck_box", title);
         hud.SetVariable("/:txt_wrck_box", text);
         var clip = hud.Find("/HUD/wrck");
@@ -1138,7 +1088,6 @@ internal sealed class Wrecks : GameModule
         if (hud == null) return;
         string closeLabel = _foundDialogBig ? "close_big" : "close_small";
         hud.GotoLabel("/HUD/wrck", closeLabel, true);
-        Dbg($"OnDialogClosed ev={_dialogEvent} label={closeLabel}");
         ResetWreckVars(hud);
         _foundDialogOpen = false;
         _foundDialogBig = false;
@@ -1171,8 +1120,6 @@ internal sealed class Wrecks : GameModule
         hud.SetValue("/:fake", on);
         hud.GotoLabel("/HUD/wrck", on ? "detect_on" : "detect_off", false);
     }
-
-    // ---------------------------------------------------------------- Minimap
 
     void UpdateMinimapBlips(float nearest)
     {

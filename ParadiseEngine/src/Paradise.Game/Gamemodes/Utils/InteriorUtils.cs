@@ -646,11 +646,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (cam != null) { eye = Vector3.Transform(cam.Position, _holder); look = Vector3.TransformNormal(cam.Forward, _holder); }
         else { eye = _holder.Translation + Vector3.UnitY * 1.7f; look = Vector3.TransformNormal(Vector3.UnitZ, _holder); }
         _fp!.Place(eye, look);
-        Log.Info($"Interieur Start: Kamera {(cam != null ? cam.Name : "-")} Auge {eye.Y:0.00}, Holder y {_holder.Translation.Y:0.00}, Spot y {_spot?.Position.Y ?? 0f:0.00}, Sicherheitsboden {_floorPoint.Y:0.00}");
         int tris = 0; foreach (var c in _colliders) tris += c.Triangles;
-        Log.Info($"Interieur aufgebaut: {Path.GetFileNameWithoutExtension(_pendingBank)} ({_kind}), {_scene.Objects.Count} Objekte, {tris} Kollisionsdreiecke, " +
-                 $"{data.Selectables.Count} Hotspots, {data.CarSlots.Count} Stellplätze, {data.HouseObjects.Count} Möbel, Exterior {_hiddenExterior.Count} Teile aus, " +
-                 $"Außenwelt {(st.HideWorld ? "aus" : "an")}, Welt-Kollision im Raum {(_clipValid && _kind != Kind.Living ? "aus" : "an")}");
         foreach (var s in data.Selectables)
         {
             // Mitte und Größe des Volumens (Kontrolle der Auswahl: zu große Volumen würden überall gewählt)
@@ -658,7 +654,6 @@ public abstract partial class InteriorUtils : GameModeHandler
             Vector3 ext = Vector3.Zero;
             if (Matrix4x4.Invert(s.Volume, out var w))
                 ext = new Vector3(new Vector3(w.M11, w.M12, w.M13).Length(), new Vector3(w.M21, w.M22, w.M23).Length(), new Vector3(w.M31, w.M32, w.M33).Length());
-            Log.Info($"  Hotspot {s.Name} Typ {s.Type} '{s.Str}' -> {Label(s)} – Mitte {c.X:0.00}/{c.Y:0.00}/{c.Z:0.00}, Größe {ext.X:0.00}x{ext.Y:0.00}x{ext.Z:0.00} m");
         }
         // Diagnose (wie Unity InteriorFx.LogInventory): Materialien mit Art, Haupttextur, Lightmap/Alpha
         var seen = new HashSet<IGpuMaterial>(ReferenceEqualityComparer.Instance);
@@ -666,8 +661,6 @@ public abstract partial class InteriorUtils : GameModeHandler
             foreach (var lod in o.Lods)
                 foreach (var pt in lod.Parts)
                     if (seen.Add(pt.Material) && MaterialFactory.TryGetInfo(pt.Material, out var mi))
-                        Log.Info($"  Material {mi.Def.Name} [{pt.Material.Kind}] Blend {mi.Blend} Haupt {mi.MainTexture ?? "-"} Detail {mi.DetailTexture ?? "-"} " +
-                                 $"NachtLM {(mi.Desc.NightLm != null ? "ja" : "nein")} Interieur-LM {mi.Desc.InteriorLm} Unlit {mi.Desc.Unlit} Alpha {mi.Desc.Color.W:0.00} Cutoff {mi.Desc.Cutoff:0.00} Spiegel {mi.Desc.ReflMix:0.00} DetailAlpha {mi.Desc.DetailAlpha}");
         // Unity _afterBuild: Schritt nach dem Aufbau (Garderobe öffnet ihren Modus, sobald idr_* steht)
         if (_afterBuild != null) { var a = _afterBuild; _afterBuild = null; a(); }
     }
@@ -983,10 +976,10 @@ public abstract partial class InteriorUtils : GameModeHandler
                 }
             }
         }
-        if (bins.Count == 0) { Log.Info("Bodenspiegelung: keine spiegelnden Flächen"); return; }
+        if (bins.Count == 0) { return; }
         int best = 0; float bw = 0f;
         foreach (var kv in bins) if (kv.Value > bw) { bw = kv.Value; best = kv.Key; }
-        if (bw < 4f) { Log.Info("Bodenspiegelung: keine waagerechte Fläche >= 4 m²"); return; }   // Unity: kein Boden
+        if (bw < 4f) {  return; }   // Unity: kein Boden
         // Unity FindFloorPlane: Boden = die UNTERSTE große waagerechte Ebene (Decken, Galerien, Dächer sind gleich groß oder größer)
         int lowest = best;
         foreach (var kv in bins) if (kv.Value >= bw * 0.3f && kv.Key < lowest) lowest = kv.Key;
@@ -1011,7 +1004,6 @@ public abstract partial class InteriorUtils : GameModeHandler
                             nRefl++;
                         }
             }
-        Log.Info($"Bodenspiegelung: Ebene y {_mirrorY:0.00} ({bw:0} m² waagerecht), {nRefl} Materialien auf Garagen-Mindestwert {minRefl:0.00}");
     }
 
     /// <summary>Unity PollFurniture: geladene Möbel unter ihren Ankern aufbauen (InteriorFx.Apply(null): nur Glas), Kollision.</summary>
@@ -1030,8 +1022,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             var col = PrepareStatic(h, false);
             GAME_MODE_LIVING.RegisterHouseObject(e, h, col);   // My House: Möbel tauschbar
         }
-        RenderFx.ProbeVersion++;   // Sonde mit den Möbeln neu
-        Log.Info($"Interieur: {t.Result.Count} Möbel aufgebaut");
+        RenderFx.ProbeVersion++;
     }
 
     /// <summary>
@@ -1236,7 +1227,6 @@ public abstract partial class InteriorUtils : GameModeHandler
                 _hiddenBoxes.Add((o.BoundsMin - new Vector3(0.05f), o.BoundsMax + new Vector3(0.05f)));
             }
         }
-        if (_hiddenExterior.Count > before) Log.Info($"Exterior {_spot.Code}: {_hiddenExterior.Count - before} Teil(e) ausgeblendet ({nodes.Count} Knoten)");
     }
 
     internal static void ClearScene()
@@ -1282,7 +1272,6 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (fwd.LengthSquared() < 1e-4f) fwd = Vector3.UnitZ;
         fwd = Vector3.Normalize(fwd);
         car ??= _lastCar ?? (vm != null ? vm.FindCar(vm.StartCar) ?? (vm.Available.Count > 0 ? vm.Available[0] : null) : null);
-        Log.Info($"Interieur verlassen {s.Code}, Auto: {car?.FileName ?? "-"}");
         LoadingScreen.Show("Welt (" + s.Code + ")", () => Inside || (vm?.Current != null), 1.0f, true);
         if (car != null && vm != null)
         {
@@ -1309,7 +1298,6 @@ public abstract partial class InteriorUtils : GameModeHandler
         Paradise.Core.Audio.SpotMusic.Exit();
         _v.Suspended = false;
         _nextScan = _time + 2f;
-        Log.Info($"Interieur verlassen {s?.Code} ({why}), eigenes Auto: {_lastCar?.FileName ?? "-"}");
     }
 
     // ------------------------------------------------------------------ Drinnen (Unity UpdateInside)
@@ -1515,6 +1503,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
             case 28 when _kind == Kind.StickerShop: GAME_MODE_STICKERS.OpenShop(null); break;   // Verkäuferin (StickersShop_area)
             case 29: GAME_MODE_HAIRDRESSER.Open(); break;
+            case 27: GAME_MODE_SURGERY.Open(); break;                           // Chirurg (Hostess_area) der Schönheitsklinik ESUR_*: shopsavatar.vmf "surgeon"
             case 20 when GAME_MODE_SCHOOL.OpenFromInstructor(): break;          // Instruktor der Rennschule (ERS_*): r_school.bnk + Prüfungsauswahl
             case 32 when _kind == Kind.Airport: GAME_MODE_AIRPORT.TalkToHostess(); break;   // Hostess: airport.vmf ItemType -> camn, "ai_open"                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
             default:
@@ -1547,6 +1536,7 @@ public abstract partial class InteriorUtils : GameModeHandler
             23 => Lang(483, "High-End-Tuner"),     // Tuner: Seller_area (npc_tuner) und Seller_area_01 (Hebebühne), m_AfterMarket
             28 => Lang(3288, "Autoaufklebergeschäft"),
             29 => Lang(3631, "Frisuren"),           // Hairdresser_area
+            27 => Lang(1832, "Klinik"),             // Hostess_area der Schönheitsklinik (Walk-Modus-Typ 27 "surgeon")
             32 => Lang(1866, "Flughafen"),
             _ => n,
         };

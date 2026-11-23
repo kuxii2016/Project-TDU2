@@ -836,7 +836,7 @@ internal sealed class Discovery : GameModule
     public void SaveNow()
     {
         WriteSave();
-        TDU2Session.SaveAsync();
+        //TDU2Session.SaveAsync();
         Log.Info("[Discovery] Spielstand geschrieben");
     }
 

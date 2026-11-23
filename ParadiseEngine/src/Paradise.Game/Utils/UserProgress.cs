@@ -31,7 +31,7 @@ namespace Paradise.Game.Utils
             public uint NbStickersOwned { get; set; } = 0;
             public uint NbHaircutsTried { get; set; } = 0;   // aus Avatar (DBClothe parttype Hair)
             public uint NbVehiclesOwned { get; set; } = 0;
-            public uint NbSurgeryTried { get; set; } = 0;    // kein Savegame-Feld
+            public uint NbSurgeryTried { get; set; } = 0;    // SaveData.surgery.nbSurgeries (Driver.NbSurgeries)
         }
 
         public class MyLifeCruising
@@ -205,6 +205,7 @@ namespace Paradise.Game.Utils
             col.NbFurnituresOwned = Count(Save.ownedFurniture);
             col.NbStickersOwned = Count(Save.stickerBoards);
             col.NbVehiclesOwned = Count(Save.ownedCars);
+            col.NbSurgeryTried = (uint)System.Math.Max(0, Save.surgery?.nbSurgeries ?? 0);
 
             // ---- Cruising: Straßenpunkte + Wrackpunkte, beides aus dem Savegame -------------
             var cru = getMyLifeCruising;

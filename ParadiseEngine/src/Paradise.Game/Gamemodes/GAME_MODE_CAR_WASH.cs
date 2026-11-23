@@ -70,13 +70,7 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
         return true;
     }
 
-    static string? ExteriorBank(Spot s)
-    {
-        var dir = InteriorUtils._t.Streamer?.Index?.ExteriorDir;
-        if (dir == null || string.IsNullOrEmpty(s.Code)) return null;
-        var f = Path.Combine(dir, s.Code.ToLowerInvariant() + ".bnk");
-        return Paradise.Core.Files.GameFiles.Exists(f) ? f : null;
-    }
+    static string? ExteriorBank(Spot s) => SpotCinematics.ExteriorBank(InteriorUtils._t.Streamer, s);
 
     /// <summary>DBEnvironnement.WashingPrice (exe: Spielwert "WashingPrice", 0xBFC2E2).</summary>
     static long WashingPrice(VehicleManager vm)

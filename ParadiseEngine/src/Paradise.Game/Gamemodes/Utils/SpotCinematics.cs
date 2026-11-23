@@ -135,6 +135,29 @@ internal sealed class SpotCinematics : IDisposable
         catch (Exception ex) { Log.Error("Cinematics " + bankPath + ": " + ex.Message); return null; }
     }
 
+    /// <summary>Exterior-Bank eines Spots (islands/&lt;insel&gt;/exterior/&lt;code&gt;.bnk), null wenn nicht vorhanden.</summary>
+    public static string? ExteriorBank(MapStreamer? streamer, Spot s)
+    {
+        var dir = streamer?.Index?.ExteriorDir;
+        if (dir == null || string.IsNullOrEmpty(s.Code)) return null;
+        var f = Path.Combine(dir, s.Code.ToLowerInvariant() + ".bnk");
+        return Paradise.Core.Files.GameFiles.Exists(f) ? f : null;
+    }
+
+    /// <summary>
+    /// Cinematics der Exterior-Bank eines Spots (Rahmen wie das gestreamte Exterior: Drehung um Y = Value1, Position = Spot.Position),
+    /// mit Requisiten (z.B. CF_Plane) – gemeinsam für Flughafen (C_TAKE_OFF, C_LANDED) und Schönheitsklinik (C_NEW_FACE_E).
+    /// </summary>
+    public static SpotCinematics? OpenExterior(IRenderer r, MapStreamer? streamer, Spot s)
+    {
+        string? ext = ExteriorBank(streamer, s);
+        var c = Open(r, ext);
+        if (c == null) return null;
+        c.Frame = Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Vector3.UnitY, s.Value1)) * Matrix4x4.CreateTranslation(s.Position);
+        if (streamer != null && ext != null) c.AttachProps(streamer, ext, s.Code);
+        return c;
+    }
+
     // ================================================================== Laden
     void Load()
     {
@@ -250,7 +273,25 @@ internal sealed class SpotCinematics : IDisposable
         return true;
     }
 
-    public void StopMain() { StopVoices(_main); _main = null; }
+    public void StopMain() { StopVoices(_main); _main = null; MainHold = null; }
+
+    /// <summary>
+    /// Haupt-Cinematic an einer festen Zeit halten statt abspielen (GAME_MODE_SURGERY: C_360 wird mit dem rechten Stick gescrubbt,
+    /// exe 0xBF0FD4 / 0xBEDBE0: Zeit = Anteil x Länge); null = läuft normal.
+    /// </summary>
+    public float? MainHold;
+    /// <summary>Länge der Haupt-Cinematic (s), 0 ohne.</summary>
+    public float MainDuration => _main?.Def.Cin.Duration ?? 0f;
+
+    /// <summary>ScatteringCoeff der Haut des Spieler-Darstellers (-1 solange nicht gebaut).</summary>
+    public float PlayerSkinScattering => _player != null && _player.Ready ? _player.SkinScattering : -1f;
+
+    /// <summary>Gesicht des Spieler-Darstellers ohne Neuaufbau ändern (Schönheitsklinik).</summary>
+    public void UpdatePlayerFace(AvatarConfig cfg)
+    {
+        if (_playerCfg != null) _playerCfg.CopyFace(cfg); else _playerCfg = cfg.Clone();
+        _player?.SetFace(cfg);
+    }
     public void StopBackground() { foreach (var b in _background) StopVoices(b); _background.Clear(); }
     public void StopBackground(string name)
     {
@@ -348,7 +389,8 @@ internal sealed class SpotCinematics : IDisposable
         _background.RemoveAll(b => b.Ended);
         if (_main != null)
         {
-            Advance(_main, dt);
+            if (MainHold.HasValue) _main.Time = _main.Prev = System.Math.Clamp(MainHold.Value, 0f, MathF.Max(0f, _main.Def.Cin.Duration - 0.001f));
+            else Advance(_main, dt);
             if (_main.Ended) _main = null;
         }
         foreach (var b in _background) Pose(b);

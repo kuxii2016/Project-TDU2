@@ -108,9 +108,10 @@ public sealed class LightingConfig
     /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,5/0,47/0,43).</summary>
     public float[] AvatarIndoorLight { get; set; } = { 1f, 0.694f, 0.635f };
     public float[] AvatarIndoorDir { get; set; } = { 0.25f, 1f, 0.35f };
-    /// <summary>Abgestimmt im Spiel (F1-Regler 0,70; Unity-Vorgabe 0,46/0,44/0,41).</summary>
-    public float[] AvatarIndoorAmbTop { get; set; } = { 1f, 0.696f, 0.653f };
-    public float[] AvatarIndoorAmbBottom { get; set; } = { 0.2f, 0.19f, 0.18f };
+    /// <summary>Abgestimmt im Spiel (F1-Regler "Indoor: ambient top" 1,00 -> 1/0,96/0,9; Unity-Vorgabe 0,46/0,44/0,41).</summary>
+    public float[] AvatarIndoorAmbTop { get; set; } = { 1f, 0.96f, 0.9f };
+    /// <summary>Abgestimmt im Spiel (F1-Regler "Indoor: ambient bottom" 0,55 -> 0,55/0,5225/0,495; Unity-Vorgabe 0,2/0,19/0,18).</summary>
+    public float[] AvatarIndoorAmbBottom { get; set; } = { 0.55f, 0.5225f, 0.495f };
     /// <summary>Hautton-Rampe + Verstärkung, Zeile der Rampe (0 = COEFFS.z), Umgebung auf der Lichtseite, zusätzliches Umgebungslicht, Haarglanz.</summary>
     public float AvatarRampAdd { get; set; } = 0f;
     public float AvatarRampRow { get; set; } = 0f;

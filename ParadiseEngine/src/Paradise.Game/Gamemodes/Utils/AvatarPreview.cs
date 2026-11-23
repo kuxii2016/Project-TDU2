@@ -14,7 +14,7 @@ internal sealed class AvatarPreview : IDisposable
 {
     readonly IRenderer _r;
     AvatarModel? _shown, _pending;
-    string? _code;
+    string? _code, _look;
     /// <summary>Lage im Szenenrahmen der Interieur-Szene.</summary>
     public Matrix4x4 Pose = Matrix4x4.Identity;
     public AnmClip? Clip;
@@ -31,7 +31,16 @@ internal sealed class AvatarPreview : IDisposable
     {
         string code = cfg.Encode();
         if (!force && code == _code) return;
-        _code = code;
+        // Nur das Gesicht anders (Schönheitsklinik: Regler, Augen, Brauen, Haut): Modell behalten, Gesicht/Materialien direkt setzen
+        string look = cfg.EncodeLook();
+        if (!force && look == _look && (_shown != null || _pending != null))
+        {
+            _code = code;
+            _shown?.SetFace(cfg);
+            _pending?.SetFace(cfg);
+            return;
+        }
+        _code = code; _look = look;
         _pending?.Dispose();
         _pending = AvatarModel.Create(_r, cfg.Clone());
         _pending.Indoor = true;
@@ -84,6 +93,6 @@ internal sealed class AvatarPreview : IDisposable
     public void Dispose()
     {
         _shown?.Dispose(); _pending?.Dispose();
-        _shown = _pending = null; _code = null;
+        _shown = _pending = null; _code = null; _look = null;
     }
 }

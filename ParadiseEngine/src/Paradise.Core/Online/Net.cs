@@ -249,6 +249,7 @@ namespace Paradise.Core.Online
             s.recentPlayers ??= new List<RecentEntry>();
             s.friendNews ??= new List<FriendNewsEntry>();
             s.storyAvatar ??= "";
+            s.surgery ??= new SurgeryData();
             s.island ??= ""; s.currentCar ??= ""; s.avatar ??= ""; s.interior ??= ""; s.savedAt ??= "";
         }
 

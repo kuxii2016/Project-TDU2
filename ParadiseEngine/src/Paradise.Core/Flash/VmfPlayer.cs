@@ -681,26 +681,36 @@ namespace Paradise.Core.Flash
             frame = Mathf.Clamp(frame, 0, Mathf.Max(0, tl.FrameCount - 1));
             if (frame == inst.Frame) return;
             int start;
+            // Sprung über mehrere Bilder (wie Flash): neu angelegte Clips erst am Ziel initialisieren, und nur die, die dort noch stehen.
+            // Sonst liefen die ersten Bilder von Clips, die unterwegs wieder entfernt werden, trotzdem – deren Funktionen landen unter
+            // demselben Pfad (z.B. "/menu_sq" des Friseurs) und überschrieben die des Clips am Ziel (Schönheitsklinik: menu_sq blieb
+            // nach dem Rücksprung "surgeon_block" -> "surgeon_edit" unsichtbar, initSquares/InitLoop liefen am entfernten Clip).
+            List<DisplayObject> defer = null;
             if (frame < inst.Frame || inst.Frame < 0)
             {
                 // zurück: neu aufbauen (bestehende Objekte mit gleicher Tiefe/Charakter bleiben erhalten -> Sprites behalten Zustand)
                 var keep = new Dictionary<int, DisplayObject>(inst.List);
                 inst.List.Clear();
                 start = 0;
-                for (int f = 0; f <= frame; f++) ApplyFrame(inst, f, keep);
+                if (frame > 0) defer = new List<DisplayObject>();
+                for (int f = 0; f <= frame; f++) ApplyFrame(inst, f, keep, defer);
             }
             else
             {
                 start = inst.Frame + 1;
-                for (int f = start; f <= frame; f++) ApplyFrame(inst, f, null);
+                if (frame > start) defer = new List<DisplayObject>();
+                for (int f = start; f <= frame; f++) ApplyFrame(inst, f, null, defer);
             }
+            if (defer != null)
+                foreach (var o in defer)
+                    if (o.Sprite != null && inst.List.TryGetValue(o.Depth, out var cur) && ReferenceEquals(cur, o)) GotoFrame(o.Sprite, 0, true);
             inst.Frame = frame;
             if (runActions)
                 foreach (var op in tl.Frames[frame])
                     if (op.Kind == VmfMovie.OpKind.Action) QueueOrRun(inst, op.Actions);
         }
 
-        void ApplyFrame(Instance inst, int f, Dictionary<int, DisplayObject> reuse)
+        void ApplyFrame(Instance inst, int f, Dictionary<int, DisplayObject> reuse, List<DisplayObject> defer = null)
         {
             foreach (var op in inst.Timeline.Frames[f])
             {
@@ -741,7 +751,7 @@ namespace Paradise.Core.Flash
                 if (op.HasRatio) d.Ratio = op.Ratio;
                 if (op.HasName) d.Name = op.Name;
                 if (op.HasClip) d.ClipDepth = op.ClipDepth;
-                if (pendingInit != null) GotoFrame(pendingInit.Sprite, 0, true);
+                if (pendingInit != null) { if (defer != null) defer.Add(pendingInit); else GotoFrame(pendingInit.Sprite, 0, true); }
             }
         }
 

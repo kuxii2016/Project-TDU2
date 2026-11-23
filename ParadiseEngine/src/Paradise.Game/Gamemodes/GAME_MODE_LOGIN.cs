@@ -702,6 +702,9 @@ public class GAME_MODE_LOGIN : GameModeHandler
                     if ((sv.cruisingRoadEvents == null || sv.cruisingRoadEvents.Count == 0) && localWrecks.cruisingRoadEvents != null && localWrecks.cruisingRoadEvents.Count > 0)
                         sv.cruisingRoadEvents = localWrecks.cruisingRoadEvents;
                     if (sv.roadDiscoveryVersion <= 0) sv.roadDiscoveryVersion = localWrecks.roadDiscoveryVersion > 0 ? localWrecks.roadDiscoveryVersion : 1;
+                    // CRC: fehlen die hochgeladenen Challenge-Ids auf dem Server, aus der lokalen DATA uebernehmen
+                    if ((sv.uploadedChallenges == null || sv.uploadedChallenges.Count == 0) && localWrecks.uploadedChallenges != null && localWrecks.uploadedChallenges.Count > 0)
+                        sv.uploadedChallenges = localWrecks.uploadedChallenges;
                 }
                 TDU2SaveGame.WriteAsync(r.nick, sv, db, exists ? "lokale DATA mit dem Server-Spielstand aktualisiert" : "lokale DATA fehlte – aus dem Server-Spielstand gebaut"); return;
             }

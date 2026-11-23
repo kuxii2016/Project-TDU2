@@ -88,7 +88,36 @@ namespace Paradise.Core.Online
         public List<FriendNewsEntry> friendNews = new List<FriendNewsEntry>();
         /// <summary>Community Racing Center: vom Race-Editor hochgeladene Challenges (Server-Ids, "Meine Challenges").</summary>
         public List<int> uploadedChallenges = new List<int>();
+        /// <summary>Schönheitsklinik (GAME_MODE_SURGERY): Operationen, Verband, gesicherte Kopf-Teile – Original PlayerData/Driver.</summary>
+        public SurgeryData surgery = new SurgeryData();
         public string savedAt = "";
+    }
+
+    /// <summary>
+    /// Schönheitsklinik, Felder wie im Original-Spielstand (PlayerData/Driver: NbSurgeries, Bandage, BandageTime, NeedBandageNews,
+    /// Helmet/BikeHelmet/Glasses/Beard/HairBandage + *ColorBandage, BeenInSurgeryShop, MultiChallengesWithBandages;
+    /// StatisticsData._time_spent_in_surgery). Die gesicherten Teile sind DBClothe-Hashcodes (0 = nichts getragen), die DATA bekommt
+    /// ihre DBClothe-Ids (TDU2SaveGame).
+    /// </summary>
+    [Serializable]
+    public sealed class SurgeryData
+    {
+        /// <summary>Gekaufte Operationen (Driver.NbSurgeries, exe Profil +0xD8).</summary>
+        public int nbSurgeries;
+        /// <summary>Klinik schon betreten (Driver.BeenInSurgeryShop).</summary>
+        public bool beenInSurgeryShop;
+        /// <summary>Verband an (Driver.Bandage, Profil +0x10F) und Ablauf als Unix-Zeit in s (Driver.BandageTime u64, Profil +0xF8).</summary>
+        public bool bandage;
+        public long bandageTime;
+        /// <summary>Meldung "Ihre Verbände wurden entfernt!" steht aus (Driver.NeedBandageNews, Profil +0x110).</summary>
+        public bool needBandageNews;
+        /// <summary>Vor dem Verband getragene Teile und Farben (Profil +0x100…+0x10E), beim Abnehmen zurückgesetzt.</summary>
+        public int helmetBandage, bikeHelmetBandage, glassesBandage, beardBandage, hairBandage;
+        public int helmetColorBandage, bikeHelmetColorBandage, glassesColorBandage, beardColorBandage, hairColorBandage;
+        /// <summary>Multiplayer-Herausforderungen mit Verband (Driver.MultiChallengesWithBandages).</summary>
+        public int multiChallengesWithBandages;
+        /// <summary>Zeit in der Klinik in s (StatisticsData._time_spent_in_surgery).</summary>
+        public float timeSpentInSurgery;
     }
 
     /// <summary>Gefundene Wracks einer Insel – Indizes sind die 0-basierten Array-Indizes aus wrecks.bnk.</summary>

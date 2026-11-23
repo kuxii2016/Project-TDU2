@@ -125,8 +125,6 @@ internal sealed class Social : GameModule
             }
         }
         int totalPoints = RowsByKind.Values.Sum(list => list.Sum(r => r.Found));
-        Log.Info($"Social: Listen gebaut – Freunde={RowsByKind[ListKind.Friends].Count} " +
-                 $"Club={RowsByKind[ListKind.Club].Count} Coop={RowsByKind[ListKind.Coop].Count} Punkte={totalPoints}");
     }
 
     static string Goal(Reward rw)

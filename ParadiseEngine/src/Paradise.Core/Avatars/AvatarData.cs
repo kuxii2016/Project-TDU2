@@ -28,7 +28,7 @@ public sealed class ClotheInfo
 
 /// <summary>
 /// Avatar appearance: gender, origin (skin/head), and a DBClothe hash code with color for each part.
-/// Can be encoded compactly as text (game state, server player list): “a1;Gender;Origin;Hash:Color,Hash:Color,…[;eEye,Eyebrow[,r,g,b]]”.
+/// Can be encoded compactly as text (game state, server player list): “a1;Gender;Origin;Hash:Color,Hash:Color,…[;eEye,Eyebrow[,r,g,b]][;fFaceHex,age,freckle,tint]”.
 /// </summary>
 public sealed class AvatarConfig
 {
@@ -42,7 +42,31 @@ public sealed class AvatarConfig
     public Vector4 BrowColor = new(0f, 0f, 0f, -1f);
     public bool HasBrowColor => BrowColor.W >= 0f;
 
-    public string Encode()
+    /// <summary>Anzahl der Gesichtsparameter (FaceParamArray, 49 × i8, Reihenfolge <see cref="FaceFxLibrary.CustomNodes"/>).</summary>
+    public const int FaceParamCount = 49;
+    /// <summary>
+    /// Gesicht aus der AvatarConfiguration (Schönheitsklinik, GMSurgery): FaceParamArray (.avt 9d93, +0xA2, Wert = FaceFX-Register × 100),
+    /// age (8d6d, +0xD4: SPECPARM.w), freckle (3f89, +0xD8: COEFFS.y), Tint = ScatteringCoeff (e9ce.y, +0x54: COEFFS.z, Zeile der Hautton-Rampe;
+    /// &lt; 0 = Vorgabe der 2DM). Kodiert als ";f&lt;98 Hex&gt;,age,freckle,tint".
+    /// </summary>
+    public sbyte[] Face = new sbyte[FaceParamCount];
+    public float Age, Freckle, Tint = -1f;
+    public bool HasFace
+    {
+        get
+        {
+            if (Age != 0f || Freckle != 0f || Tint >= 0f) return true;
+            foreach (var f in Face) if (f != 0) return true;
+            return false;
+        }
+    }
+
+    /// <summary>Aussehen ohne Gesicht (Körper, Kleidung, Augen/Brauen) – ändert sich das nicht, muss das Modell nicht neu gebaut werden.</summary>
+    public string EncodeLook() => Encode(false);
+
+    public string Encode() => Encode(true);
+
+    string Encode(bool face)
     {
         var ic = CultureInfo.InvariantCulture;
         var sb = new StringBuilder("a1;");
@@ -57,7 +81,21 @@ public sealed class AvatarConfig
             sb.Append(";e").Append(EyeId.ToString(ic)).Append(',').Append(BrowId.ToString(ic));
             if (HasBrowColor) sb.Append(',').Append(BrowColor.X.ToString("0.###", ic)).Append(',').Append(BrowColor.Y.ToString("0.###", ic)).Append(',').Append(BrowColor.Z.ToString("0.###", ic));
         }
+        if (face && HasFace)
+        {
+            sb.Append(";f");
+            for (int i = 0; i < FaceParamCount; i++) sb.Append(((byte)(i < Face.Length ? Face[i] : (sbyte)0)).ToString("x2", ic));
+            sb.Append(',').Append(Age.ToString("0.####", ic)).Append(',').Append(Freckle.ToString("0.####", ic)).Append(',').Append(Tint.ToString("0.####", ic));
+        }
         return sb.ToString();
+    }
+
+    /// <summary>Gesicht (Parameter, Alter, Sommersprossen, Tint, Augen, Brauen) von <paramref name="src"/> übernehmen.</summary>
+    public void CopyFace(AvatarConfig src)
+    {
+        Array.Copy(src.Face, Face, System.Math.Min(src.Face.Length, Face.Length));
+        Age = src.Age; Freckle = src.Freckle; Tint = src.Tint;
+        EyeId = src.EyeId; BrowId = src.BrowId; BrowColor = src.BrowColor;
     }
 
     public static AvatarConfig? Decode(string? s)
@@ -79,14 +117,27 @@ public sealed class AvatarConfig
                 if (kv.Length > 1) int.TryParse(kv[1], NumberStyles.Integer, ic, out col);
                 c.Items.Add(h); c.Colors.Add(col);
             }
-        if (parts.Length > 4 && parts[4].StartsWith("e", StringComparison.Ordinal))
+        for (int k = 4; k < parts.Length; k++)
         {
-            var f = parts[4].Substring(1).Split(',');
-            if (f.Length > 0) int.TryParse(f[0], NumberStyles.Integer, ic, out c.EyeId);
-            if (f.Length > 1) int.TryParse(f[1], NumberStyles.Integer, ic, out c.BrowId);
-            if (f.Length > 4 && float.TryParse(f[2], NumberStyles.Float, ic, out float r) && float.TryParse(f[3], NumberStyles.Float, ic, out float g)
-                && float.TryParse(f[4], NumberStyles.Float, ic, out float b))
-                c.BrowColor = new Vector4(r, g, b, 1f);
+            if (parts[k].StartsWith("e", StringComparison.Ordinal))
+            {
+                var f = parts[k].Substring(1).Split(',');
+                if (f.Length > 0) int.TryParse(f[0], NumberStyles.Integer, ic, out c.EyeId);
+                if (f.Length > 1) int.TryParse(f[1], NumberStyles.Integer, ic, out c.BrowId);
+                if (f.Length > 4 && float.TryParse(f[2], NumberStyles.Float, ic, out float r) && float.TryParse(f[3], NumberStyles.Float, ic, out float g)
+                    && float.TryParse(f[4], NumberStyles.Float, ic, out float b))
+                    c.BrowColor = new Vector4(r, g, b, 1f);
+            }
+            else if (parts[k].StartsWith("f", StringComparison.Ordinal))
+            {
+                var f = parts[k].Substring(1).Split(',');
+                string hex = f[0];
+                for (int i = 0; i < FaceParamCount && 2 * i + 1 < hex.Length; i++)
+                    if (byte.TryParse(hex.AsSpan(2 * i, 2), NumberStyles.HexNumber, ic, out byte v)) c.Face[i] = (sbyte)v;
+                if (f.Length > 1) float.TryParse(f[1], NumberStyles.Float, ic, out c.Age);
+                if (f.Length > 2) float.TryParse(f[2], NumberStyles.Float, ic, out c.Freckle);
+                if (f.Length > 3 && !float.TryParse(f[3], NumberStyles.Float, ic, out c.Tint)) c.Tint = -1f;
+            }
         }
         return c;
     }

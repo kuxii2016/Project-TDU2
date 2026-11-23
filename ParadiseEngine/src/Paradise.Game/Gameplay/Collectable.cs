@@ -16,7 +16,7 @@ namespace Paradise.Game.Gameplay;
 ///  - db_data.cpr / DBRewardXP: Zieltexte (goaltext_hc), echte Punkte (collectionpoints), Meilensteine.
 ///  - SaveData: autos/ownedCars, houses, ownedFurniture, ownedClothes, stickerBoards.
 ///  - Avatar: echte Kleidungs-/Frisuren-Hashes, falls ownedClothes leer ist (DATA liefert die Liste nicht).
-/// Operationen haben kein Savegame-Feld -> 0 statt erfundener Werte.
+/// Operationen: SaveData.surgery.nbSurgeries (Driver.NbSurgeries, Schönheitsklinik).
 /// </summary>
 internal sealed class Collectable : GameModule
 {
@@ -160,7 +160,7 @@ internal sealed class Collectable : GameModule
             (ListKind.Haircuts, "COLLECTION_HAIRCUTS_", haircuts),
             (ListKind.Houses, "COLLECTION_HOUSES_", houses),
             (ListKind.Houses, "COLLECTION_FURNITURES_", furniture),
-            (ListKind.Surgery, "COLLECTION_SURGERY", 0),         // kein Savegame-Feld
+            (ListKind.Surgery, "COLLECTION_SURGERY", sv?.surgery?.nbSurgeries ?? 0),   // Driver.NbSurgeries (GAME_MODE_SURGERY)
             (ListKind.Clothes, "COLLECTION_CLOTHES_", clothes),
             (ListKind.Stickers, "COLLECTION_STICKERS_", stickers),
         };
@@ -198,10 +198,6 @@ internal sealed class Collectable : GameModule
             foreach (var m in _milestones)
                 if (m.Kind == kind) m.Row.Percent = Math.Clamp(m.Current * 100 / max, 0, 100);
         }
-        int totalPoints = RowsByKind.Values.Sum(list => list.Sum(r => r.Found));
-        Log.Info($"Collectable: Listen gebaut – Fahrzeuge={RowsByKind[ListKind.Vehicles].Count} " +
-                 $"Häuser/Möbel={RowsByKind[ListKind.Houses].Count} Kleidung={RowsByKind[ListKind.Clothes].Count} " +
-                 $"Punkte={totalPoints}");
     }
 
     static string Goal(Reward rw, int have)

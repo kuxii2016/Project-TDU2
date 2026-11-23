@@ -7,7 +7,6 @@ using Paradise.Core.Racing;
 using Paradise.Game.Racing;
 using Paradise.Game.Screens;
 using System.Globalization;
-using System.Linq;
 
 namespace Paradise.Game.Gamemodes;
 
