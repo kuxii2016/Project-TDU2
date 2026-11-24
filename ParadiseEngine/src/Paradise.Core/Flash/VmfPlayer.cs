@@ -37,6 +37,9 @@ namespace Paradise.Core.Flash
             public Instance Sprite;
             /// <summary>Custom texture for all shapes in this clip (such as logos/images loaded by the game via “lure”); null = original.</summary>
             public Texture DynTex;
+            /// <summary>Bild des Spiels über die ganze Fläche des Clips, darüber die Clip-Inhalte (Rahmen) – wie die Bild-Rückrufe der exe
+            /// (z.B. Makler realtor_menus/buy_menu/outward 0xAEEF90: Rechteck des Clips, UV 0..1); null = keins.</summary>
+            public Texture FillTex;
             public Instance Parent;
             public bool Visible = true;
             public float? Rotation;      // vom Spiel gesetzt (Grad, zusätzlich zur Zeitleisten-Matrix)
@@ -370,6 +373,43 @@ namespace Paradise.Core.Flash
             // gemerkt: legt die Zeitleiste den Clip neu an (Animation "extend" …), bekommt er die Textur wieder (ApplyClipTextures)
             if (tex != null) _clipTex[path] = tex; else _clipTex.Remove(path);
             var d = Find(path); if (d == null) return false; d.DynTex = tex; return true;
+        }
+
+        readonly Dictionary<string, Texture> _clipImg = new Dictionary<string, Texture>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Bild über die ganze Fläche eines Clips legen (unter seinen Inhalten, z.B. einem Bilderrahmen aus Rand-Formen) – anders als
+        /// <see cref="SetClipTexture"/>, das jede Form des Clips mit dem Bild füllt. null entfernt das Bild.
+        /// </summary>
+        public bool SetClipImage(string path, Texture tex)
+        {
+            if (tex != null) _clipImg[path] = tex; else _clipImg.Remove(path);
+            var d = Find(path); if (d == null) return false; d.FillTex = tex; return true;
+        }
+
+        void ApplyClipImages()
+        {
+            if (_clipImg.Count == 0 || Root == null) return;
+            foreach (var kv in _clipImg)
+            {
+                var d = Find(kv.Key);
+                if (d != null && !ReferenceEquals(d.FillTex, kv.Value)) d.FillTex = kv.Value;
+            }
+        }
+
+        /// <summary>Fläche aller sichtbaren Inhalte eines Clips in seinen eigenen Koordinaten.</summary>
+        Rect? ContentBounds(Instance inst)
+        {
+            Rect? acc = null;
+            foreach (var c in inst.List.Values)
+            {
+                if (!c.Visible || c.ClipDepth > 0) continue;
+                var r = LocalBounds(c);
+                if (!r.HasValue) continue;
+                acc = acc.HasValue ? Rect.MinMaxRect(Mathf.Min(acc.Value.xMin, r.Value.xMin), Mathf.Min(acc.Value.yMin, r.Value.yMin),
+                                                    Mathf.Max(acc.Value.xMax, r.Value.xMax), Mathf.Max(acc.Value.yMax, r.Value.yMax)) : r;
+            }
+            return acc;
         }
 
         /// <summary>Screen rectangle (GUI pixels, y-axis down) of a clip based on the bounds of its shapes; null if invisible or missing.</summary>
@@ -844,6 +884,7 @@ namespace Paradise.Core.Flash
             var swD = Stopwatch.StartNew();
             LastDrawCalls = 0; LastShapeDraws = 0; LastTextDraws = 0; LastQuadBatches = 0;
             ApplyClipTextures();
+            ApplyClipImages();
             float sc = Screen.width / VmfMovie.StageWidth;
             float offY = (VmfMovie.StageHeight * sc - Screen.height) * 0.5f;
             var stage = new Matrix2D { A = sc, D = sc, Ty = -offY };
@@ -969,6 +1010,11 @@ namespace Paradise.Core.Flash
                     case VmfMovie.Timeline _:
                         string dyn = d.Name != null && _dynamic.ContainsKey(d.Name) ? d.Name : dynamicClip;
                         if (!_probe && !RevealReady(d, mw, cw, dyn, d.DynTex ?? clipTex)) break;   // Not yet fully rasterized
+                        if (d.FillTex != null && d.Sprite != null && !_probe)
+                        {
+                            var fr = ContentBounds(d.Sprite);
+                            if (fr.HasValue) DrawTexture(d.FillTex, fr.Value, mw, cw, true);   // .2db-Rohdaten: oberste Zeile bei v = 0
+                        }
                         // Clip with in-game image (e.g., preview camera window_buy/lure): Draw over the film last—in the game,
                         // the engine inserts the image itself; otherwise, background areas at greater depths would cover it up
                         if (d.DynTex != null && !_probe && _dynTop != null && _topTextures.Contains(d.DynTex)) { _dynTop.Add((d, mw, cw)); break; }

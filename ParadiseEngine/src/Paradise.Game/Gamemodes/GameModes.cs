@@ -39,6 +39,7 @@ public static class GameModes
         Gamemode.GAME_MODE_GOODIES => new GAME_MODE_GOODIES(),
         Gamemode.GAME_MODE_HAIRDRESSER => new GAME_MODE_HAIRDRESSER(),
         Gamemode.GAME_MODE_SURGERY => new GAME_MODE_SURGERY(),
+        Gamemode.GAME_MODE_ESTATES => new GAME_MODE_ESTATES(),
         Gamemode.GAME_MODE_DRESSING => new GAME_MODE_DRESSING(),
         Gamemode.GAME_MODE_PAUSE => new GAME_MODE_PAUSE(),
         Gamemode.GAME_MODE_SCHOOL => new GAME_MODE_SCHOOL(),

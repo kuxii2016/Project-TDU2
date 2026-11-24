@@ -485,7 +485,8 @@ public class GAME_MODE_MAP : GameModeHandler
             if (spots != null)
                 foreach (var s in spots.Spots)
                 {
-                    string? label = Minimap.SpotLabel(s.Code);
+                    // Häuser: "home" nur für die eigenen, sonst "forsale" (Spots.cpp, Kategorie 0 über den Besitz 0x402261)
+                    string? label = HouseUtils.MapLabel(Minimap.SpotLabel(s.Code), s);
                     if (label == null) continue;
                     if (!SpotUnlocked(label, s)) continue;   // Haus/Händler/Laden erst nach aufgedeckter Straße
                     _spots.Add(new MapSpot { spot = s, label = label, cup = cupByCode.TryGetValue(s.Code, out int ci) ? ci : -1 });
@@ -827,6 +828,12 @@ public class GAME_MODE_MAP : GameModeHandler
         // Tuner nur mit einem Auto seiner Marken: gesperrt -> SetMenu "spot_locked", Eintreten gesperrt, Text m_SpotLockedTuner_
         var cur = _ctx.Vehicles?.Manager?.Current?.Car;
         ui.SetValue("/:IsSpotLocked", ms.label == "tuning" && cur != null && !GAME_MODE_TUNER.Accepts(ms.spot, cur, db, IslandName()));
+        // Haus zu verkaufen: nicht betretbar (Einfahrt/Teleport hinein gesperrt), Hinweis auf das Immobilienbüro (Text 2266)
+        if (ms.label == "forsale")
+        {
+            ui.SetValue("/:IsSpotLocked", true);
+            ui.SetVariable("/:SpotLockedText", HouseUtils.ForSaleText());
+        }
         if (ms.label == "tuning")
         {
             // Tooltip des Tuners (infos.setTuner): Anzahl Marken (Seiten zu 8) und beste freie Tuningstufe (txt.upg level0..5)
@@ -852,6 +859,28 @@ public class GAME_MODE_MAP : GameModeHandler
                     if (id != 0 && db.ById.TryGetValue(id, out var c))
                         foreach (var oc in save.ownedCars) if (string.Equals(oc, c.FileName, StringComparison.OrdinalIgnoreCase)) { owned++; break; }
             ui.SetVariable("/:nb_cars_bought", owned.ToString());
+        }
+        else if (ms.label == "estates")
+        {
+            // Immobilienbüro (exe 0xB1D4D2): Häuser des Büros je Zeile /:House%d_name, _gCapacity, _price, _level (Stufe + 1), _state (im
+            // Besitz), dazu /:NbHousesBought (davon im Besitz), /:NbHouses (Angebot) und /:NbPages (2 Häuser je Seite)
+            var offer = db != null ? db.HousesForRealtor(ms.spot, IslandName()) : new List<Paradise.Core.Vehicles.HouseInfo>();
+            int bought = 0;
+            for (int i = 0; i < offer.Count; i++)
+            {
+                var h = offer[i];
+                bool own = Paradise.Core.Savegame.TDU2Garage.Owns(TDU2Session.Save, h.SpotName);
+                if (own) bought++;
+                ui.SetVariable("/:House" + i + "_name", HouseUtils.HouseLabel(h));
+                ui.SetValue("/:House" + i + "_gCapacity", h.CarSlots);
+                ui.SetVariable("/:House" + i + "_price", HouseUtils.Money(h.BuyPrice));
+                ui.SetValue("/:House" + i + "_level", h.Level + 1);
+                ui.SetValue("/:House" + i + "_state", own);
+            }
+            ui.SetValue("/:NbHousesBought", bought);
+            ui.SetValue("/:NbHouses", offer.Count);
+            ui.SetValue("/:NbPages", (offer.Count + offer.Count % 2) / 2);
+            Log.Info($"Karte: Immobilienbüro {ms.spot.Code} -> {offer.Count} Häuser, {bought} im Besitz");
         }
         else if (ms.label == "home")
         {

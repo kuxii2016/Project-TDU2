@@ -18,7 +18,7 @@ namespace Paradise.Game.Gamemodes;
 ///  * Fahrzeugliste (home.vmf garage/vehicule_list, native Liste ASFlashList "garage_vehicle_list"): über "list" im Menü bzw. das
 ///    Plakat (Auswahlpunkt Typ 12/14), Zeile wählen -> Dialog confirm_change_vehicule -> seca, garage_quit, gofr -> mit dem Auto hinaus.
 ///    Im Unity-Projekt nur angedeutet (IMGUI-Menü) – hier nach dem Original-Film gebaut.
-/// Stellplätze tauschen (chpl:, Liste der Häuser) gibt es im Unity-Projekt nicht – noch offen.
+/// Stellplätze tauschen (chpl:, Liste der Häuser): nur die Häuser, die der Spieler besitzt (TDU2Garage.Houses, Kauf beim Makler GAME_MODE_ESTATES).
 /// </summary>
 public class GAME_MODE_GARAGE : InteriorUtils
 {
@@ -177,36 +177,11 @@ public class GAME_MODE_GARAGE : InteriorUtils
         return db != null && s != null ? db.HouseForSpot(s, _t.Streamer?.Index?.IslandName ?? "") : null;
     }
 
-    /// <summary>Name eines Hauses (DBHouse._housename_hc, Original /:CurHouseName).</summary>
-    static string HouseLabel(HouseInfo? h) => h == null ? "" : Lang(h.NameHash, h.SpotName ?? "");
+    /// <summary>Name eines Hauses (DBHouse._housename_hc, Original /:CurHouseName) – HouseUtils.</summary>
+    static string HouseLabel(HouseInfo? h) => HouseUtils.HouseLabel(h);
 
-    static readonly Dictionary<string, Spot?> _houseSpots = new(StringComparer.OrdinalIgnoreCase);
-    static object? _houseSpotsFor;
-
-    /// <summary>Spot eines Hauses auf der aktuellen Insel (null = andere Insel/unbekannt).</summary>
-    static Spot? HouseSpot(HouseInfo h)
-    {
-        var spots = _t.Streamer?.Spots; var db = Vm?.Database;
-        if (spots == null || db == null) return null;
-        if (!ReferenceEquals(_houseSpotsFor, spots)) { _houseSpots.Clear(); _houseSpotsFor = spots; }
-        if (_houseSpots.TryGetValue(h.SpotName, out var hit)) return hit;
-        string island = _t.Streamer?.Index?.IslandName ?? "";
-        Spot? found = null;
-        foreach (var s in spots.Spots)
-            if (s.Code != null && h.SpotName.StartsWith(s.Code, StringComparison.OrdinalIgnoreCase) && db.HouseForSpot(s, island) == h) { found = s; break; }
-        _houseSpots[h.SpotName] = found;
-        return found;
-    }
-
-    /// <summary>Gebiet eines Hauses (Flash-Label h1..h4 / i1..i2; Original /:CurHouseArea): Gebiet am Spot des Hauses, auf der anderen
-    /// Insel nur die Insel ("h" bzw. "i" – beides gibt es als Label in content/area).</summary>
-    static string HouseArea(HouseInfo? h)
-    {
-        if (h == null) return "";
-        var s = HouseSpot(h);
-        string? a = s != null ? ((GAME_MODE_PAUSE)GameModes.Get(Gamemode.GAME_MODE_PAUSE)).Menu?.AreaAt(s.Position.X, s.Position.Z) : null;
-        return a ?? (h.SpotName.EndsWith("I", StringComparison.OrdinalIgnoreCase) ? "i" : "h");
-    }
+    /// <summary>Gebiet eines Hauses (h1..h4 / i1..i2) – HouseUtils.</summary>
+    static string HouseArea(HouseInfo? h) => HouseUtils.HouseArea(h);
 
     /// <summary>Gruppe/Tuningstufe/Gebiet je sichtbarer Zeile (macht im Spiel die native Liste).</summary>
     static void ApplyListLineClips()
@@ -324,7 +299,6 @@ public class GAME_MODE_GARAGE : InteriorUtils
     static List<HouseInfo>? _cpHouses;
     static int _cpHouse;                     // Index in _cpHouses (Original this+0x434)
     static int _cpSrcHouse = -1, _cpSrc = -1;   // gewählte Quelle (Original 0x444/0x448, gültig wenn 0x440)
-    static readonly Dictionary<string, (Texture2D? gar, Texture2D? ext)> _housePics = new(StringComparer.OrdinalIgnoreCase);
 
     static bool OnChangePlaceCommand(string cmd)
     {
@@ -427,37 +401,14 @@ public class GAME_MODE_GARAGE : InteriorUtils
         FillChangePlacePictures(h);
     }
 
-    /// <summary>Original 0xAC3550: Lage des Hauses auf der Minikarte (location/circle relativ zu location/lure, wie die Pausenkarte).</summary>
-    static void FillChangePlaceMap(HouseInfo h)
-    {
-        const string loc = ChangePlacePath + "/infos/mini_map/location";
-        var s = HouseSpot(h);
-        var lure = _ui!.Find(loc + "/lure");
-        if (s == null || lure == null) return;
-        var r = _ui.LocalBounds(lure);
-        if (!r.HasValue) return;
-        bool hawaii = (_t.Streamer?.Index?.IslandName ?? "").StartsWith("h", StringComparison.OrdinalIgnoreCase);
-        float ax = (hawaii ? 11 : 7) * 6144f, az = (hawaii ? 9 : 6) * 6144f;
-        _ui.SetPosition(loc + "/circle", new Vector2(r.Value.width * s.Position.X / ax, r.Value.height * s.Position.Z / az));
-    }
+    /// <summary>Original 0xAC3550: Lage des Hauses auf der Minikarte (location/circle relativ zu location/lure) – HouseUtils.</summary>
+    static void FillChangePlaceMap(HouseInfo h) => HouseUtils.PlaceOnMiniMap(_ui!, ChangePlacePath + "/infos/mini_map/location", h);
 
     /// <summary>Original 0xAC3620: Bilder Garage/Außenansicht (lure_garage / lure_exterior) aus FrontEnd/AllRes/RealtorScr/&lt;haus&gt;.bnk.</summary>
     static void FillChangePlacePictures(HouseInfo h)
     {
-        if (!_housePics.TryGetValue(h.SpotName, out var p))
-        {
-            try
-            {
-                string? f = string.IsNullOrEmpty(FlashHost.BnkDir) ? null
-                    : CarDatabase.FindFile(Path.Combine(FlashHost.BnkDir, "frontend", "AllRes", "RealtorScr"), h.SpotName.ToLowerInvariant() + ".bnk");
-                if (f != null) p = (FlashTextures.TextureNamed(f, "IMG_GAR"), FlashTextures.TextureNamed(f, "IMG_EXT"));
-                else Log.Warn("Platz wechseln: kein Bild RealtorScr/" + h.SpotName.ToLowerInvariant() + ".bnk");
-            }
-            catch (Exception ex) { Log.Warn("Platz wechseln: Bilder " + h.SpotName + ": " + ex.Message); }
-            _housePics[h.SpotName] = p;
-        }
-        _ui!.SetClipTexture(ChangePlacePath + "/infos/lures/lure_garage", p.gar!);
-        _ui.SetClipTexture(ChangePlacePath + "/infos/lures/lure_exterior", p.ext!);
+        _ui!.SetClipTexture(ChangePlacePath + "/infos/lures/lure_garage", HouseUtils.Picture(h, "IMG_GAR")!);
+        _ui.SetClipTexture(ChangePlacePath + "/infos/lures/lure_exterior", HouseUtils.Picture(h, "IMG_EXT")!);
     }
 
     // ================================================================== Fahrzeugmenü öffnen / schließen

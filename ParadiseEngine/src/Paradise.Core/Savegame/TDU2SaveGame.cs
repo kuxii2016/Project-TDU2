@@ -139,13 +139,12 @@ namespace Paradise.Core.Savegame
             var ic = CultureInfo.InvariantCulture;
             string island = IslandKey(s.island);
 
-            // ---- Häuser: aktuell gehören alle (Kaufen kommt später); Club-Häuser (ECH_*) nicht
-            var houses = new List<HouseInfo>();
-            foreach (var h in db.Houses)
-                if (h.SpotName != null && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase) && h.CarSlots > 0) houses.Add(h);
+            // ---- Häuser: die besessenen (Original: nur deren Plätze stehen in Garage[]; Kauf/Verkauf GM_Estates 0xAED200/0xAED080)
+            var houses = TDU2Garage.Houses(db, s);
 
             string[] ip = (s.interior ?? "").Split('|');
             string inHouse = ip.Length > 2 && IsHouse(db, ip[2]) ? ip[2] : (ip[0].Length > 0 ? UniqueHouseOfCode(db, ip[0]) : null);
+            if (inHouse != null && !TDU2Garage.Owns(s, inHouse)) inHouse = null;   // fremdes Haus (Besichtigung) ist kein Wohnsitz
             string home = inHouse ?? DefaultHouse(houses, island);
             // Garage des aktuellen Hauses zuerst, dann die übrigen wie in DBHouse
             houses.Sort((a, b) => (Same(a.SpotName, home) ? 0 : 1).CompareTo(Same(b.SpotName, home) ? 0 : 1));
@@ -198,7 +197,8 @@ namespace Paradise.Core.Savegame
             foreach (var o in s.odometers ?? new List<OdoEntry>()) km += System.Math.Max(0, o.meters) / 1000.0;
             Set(drv, "OdometerKms", km);
             Set(drv, "CurrentCar", current >= 0 ? current : 0);
-            Set(drv, "CurrentHouse", home != null ? HouseHash(home) : 0UL);
+            string residence = !string.IsNullOrEmpty(s.homeHouse) && TDU2Garage.Owns(s, s.homeHouse) ? s.homeHouse : home;
+            Set(drv, "CurrentHouse", residence != null ? HouseHash(residence) : 0UL);
             Set(drv, "LastSpotWorld", inHouse != null ? HouseHash(inHouse) : NoSpot);
             int step = System.Math.Clamp(s.story, 0, StoryImplemented);
             Set(drv, "BeginGameState", step);
@@ -231,6 +231,7 @@ namespace Paradise.Core.Savegame
             my["House"] = hArr;
             var stats = root["StatisticsData"] as XObject;
             if (stats != null) Set(stats, "NbHouseBought", houses.Count);
+            if (stats != null && s.housesSold > 0) Set(stats, "NbHouseSold", s.housesSold);
 
             // ---- Lesezeichen je Insel
             var bm = (XObject)root["Bookmarks"];
@@ -313,6 +314,7 @@ namespace Paradise.Core.Savegame
                 SetVar(env, "U3D_FriendNews", Join(s.friendNews, e => new[] { e.kind.ToString(ic), e.nick, e.date, e.read ? "1" : "0" }));
                 // Community Racing Center: vom Editor hochgeladene Challenge-Ids ("Meine Challenges")
                 SetVar(env, "U3D_UploadedChallenges", string.Join(",", s.uploadedChallenges ?? new List<int>()));
+                SetVar(env, "U3D_HousesVersion", "1");   // ab hier: Garage[] = nur besessene Häuser (ältere Dateien: alle)
                 SetVar(env, "U3D_Saved", DateTime.UtcNow.ToString("o", ic));
             }
 
@@ -631,6 +633,8 @@ namespace Paradise.Core.Savegame
                         if (level > 0.001f) (s.carDirt ??= new List<DirtEntry>()).Add(new DirtEntry { car = car.FileName, level = level });
                     }
                 }
+            if (root["StatisticsData"] is XObject stR) s.housesSold = (int)Long(stR, "NbHouseSold");
+            ReadHouses(db, garage, vars, curHouseName, s);
             if (vars.TryGetValue("U3D_Car", out string vc) && s.ownedCars.Exists(f => string.Equals(f, vc, StringComparison.OrdinalIgnoreCase))) s.currentCar = vc;
             if (string.IsNullOrEmpty(s.currentCar) && s.ownedCars.Count > 0) s.currentCar = s.ownedCars[0];
             s.starterChosen = s.ownedCars.Count > 0;
@@ -843,6 +847,46 @@ namespace Paradise.Core.Savegame
             ulong k = 0;
             for (int b = 0; b < 8; b++) k |= (ulong)(byte)sum[b] << (8 * b);
             return k;
+        }
+
+        /// <summary>
+        /// Besessene Häuser und Stellplätze aus Garage[] (Original: die Häuser, deren Plätze dort stehen; Platz k = k-ter Eintrag des
+        /// Hauses). Dateien des Ports (U3D_Saved) vor U3D_HousesVersion schrieben alle Häuser: dort gelten nur Häuser mit Autos, der Wohnsitz
+        /// und das Starthaus als besessen.
+        /// </summary>
+        static void ReadHouses(CarDatabase db, XArray garage, Dictionary<string, string> vars, string curHouseName, SaveData s)
+        {
+            var inGarage = new List<string>();
+            var withCars = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var counter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var slots = new List<GarageSlotEntry>();
+            if (garage != null)
+                foreach (var it in garage.Items)
+                {
+                    if (it is not XObject e) continue;
+                    string hn = HouseName(db, ULong(e, "House"));
+                    if (hn == null) continue;
+                    if (!inGarage.Exists(x => Same(x, hn))) inGarage.Add(hn);
+                    counter.TryGetValue(hn, out int k); counter[hn] = k + 1;
+                    var c = e["Car"] as XObject;
+                    if (c == null || Long(c, "Status") != 0 || !db.ById.TryGetValue((int)Long(c, "Archetype"), out var car) || string.IsNullOrEmpty(car.FileName)) continue;
+                    withCars.Add(hn);
+                    if (!slots.Exists(x => Same(x.car, car.FileName))) slots.Add(new GarageSlotEntry { house = hn, slot = k, car = car.FileName });
+                }
+            int allHouses = 0;
+            foreach (var h in db.Houses) if (h.SpotName != null && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase) && h.CarSlots > 0) allHouses++;
+            bool legacy = vars.ContainsKey("U3D_Saved") && !vars.ContainsKey("U3D_HousesVersion") && inGarage.Count >= allHouses && allHouses > 1;   // nur Dateien des Ports (Original-Spielstände haben keine U3D_-Variablen)
+            s.ownedHouses = new List<string>();
+            if (legacy)
+            {
+                s.ownedHouses.Add(TDU2Garage.StarterHouse);
+                if (curHouseName != null && !s.ownedHouses.Exists(x => Same(x, curHouseName))) s.ownedHouses.Add(curHouseName);
+                foreach (var hn in inGarage) if (withCars.Contains(hn) && !s.ownedHouses.Exists(x => Same(x, hn))) s.ownedHouses.Add(hn);
+                Log.Info("[TDU2] Savegame: alte Datei (alle Häuser) -> besessen: " + string.Join(", ", s.ownedHouses));
+            }
+            else s.ownedHouses.AddRange(inGarage);
+            s.homeHouse = curHouseName != null && s.ownedHouses.Exists(x => Same(x, curHouseName)) ? curHouseName : null;
+            s.garage = slots;
         }
 
         static string HouseName(CarDatabase db, ulong hc)

@@ -277,7 +277,10 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Tuner: nur mit einem Auto seiner Marken (sonst Einfahrt gesperrt, "Falsches Fahrzeug/Marke")
         string? lockText = _nearSpot != null && _nearBanks?.Kind == Kind.Tuner && vm.Current != null && !GAME_MODE_TUNER.Accepts(_nearSpot, vm.Current.Car)
             ? GAME_MODE_TUNER.LockedText() : null;
-        Vm?.Minimap?.ShowEnter(_nearSpot != null && vm.Current != null ? _nearSpot.Code : null, lockText);
+        // Haus, das dem Spieler nicht gehört: Symbol "forsale", Einfahrt gesperrt (Text 2266: das Immobilienbüro verkauft es)
+        string? enterLabel = _nearSpot != null ? HouseUtils.MapLabel(Minimap.SpotLabel(_nearSpot.Code), _nearSpot) : null;
+        if (lockText == null && enterLabel == "forsale") lockText = HouseUtils.ForSaleText();
+        Vm?.Minimap?.ShowEnter(_nearSpot != null && vm.Current != null ? _nearSpot.Code : null, lockText, enterLabel);
         if (_nearSpot != null && _nearBanks != null && lockText == null && TDU2Controls.ConfirmPressed())
         {
             Vm?.Minimap?.ShowEnter(null);
@@ -383,6 +386,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (!b.Valid) { Log.Info($"Karte: Spot {s.Code} hat kein Interieur"); return false; }
         if (b.TravelTo != null) { Log.Info($"Karte: {s.Code} ({b.Name}) noch nicht portiert"); return false; }
         if (b.Kind == Kind.Tuner && Vm?.Current != null && !GAME_MODE_TUNER.Accepts(s, Vm.Current.Car)) { Log.Info($"Karte: Tuner {s.Code} – falsche Marke"); return false; }
+        if (!HouseUtils.Owned(s)) { Log.Info($"Karte: Haus {s.Code} gehört dem Spieler nicht (zu verkaufen)"); return false; }
         if (Inside) ExitInterior();
         Vm?.Minimap?.ShowEnter(null);
         EnterInterior(s, b, Ladingscreen);
@@ -1247,10 +1251,10 @@ public abstract partial class InteriorUtils : GameModeHandler
         _uiAim = null;
     }
 
-    /// <summary>Unity ExitInterior: Szene weg, Auto an Position2/Richtung2 des Spots.</summary>
-    internal static void ExitInterior(CarPhysics? car = null)
+    /// <summary>Unity ExitInterior: Szene weg, Auto an Position2/Richtung2 des Spots (bzw. von <paramref name="at"/>, z.B. dem gekauften Haus).</summary>
+    internal static void ExitInterior(CarPhysics? car = null, Spot? at = null)
     {
-        var s = _spot;
+        var s = at ?? _spot;
         ClearScene();
         _fp = null;
         _t.Input.CursorLocked = false;
@@ -1500,7 +1504,8 @@ public abstract partial class InteriorUtils : GameModeHandler
             case 10: GAME_MODE_DRESSING.Open(); break;                          // Garderobe: Interieur idr_* + home.vmf dressing_in
             case 28 when _kind == Kind.StickerShop: GAME_MODE_STICKERS.OpenShop(null); break;   // Verkäuferin (StickersShop_area)
             case 29: GAME_MODE_HAIRDRESSER.Open(); break;
-            case 27: GAME_MODE_SURGERY.Open(); break;                           // Chirurg (Hostess_area) der Schönheitsklinik ESUR_*: shopsavatar.vmf "surgeon"
+            case 27: GAME_MODE_SURGERY.Open(); break;
+            case 7 when GAME_MODE_ESTATES.Open(): break;                          // Makler (Realtor_area, Walk-Modus-Typ 7 "realtor") im Immobilienbüro ERE_*                           // Chirurg (Hostess_area) der Schönheitsklinik ESUR_*: shopsavatar.vmf "surgeon"
             case 20 when GAME_MODE_SCHOOL.OpenFromInstructor(): break;          // Instruktor der Rennschule (ERS_*): r_school.bnk + Prüfungsauswahl
             case 32 when _kind == Kind.Airport: GAME_MODE_AIRPORT.TalkToHostess(); break;   // Hostess: airport.vmf ItemType -> camn, "ai_open"                       // Friseur (Hairdresser_area): shopsavatar.vmf "hairdresser"
             default:
@@ -1533,7 +1538,8 @@ public abstract partial class InteriorUtils : GameModeHandler
             23 => Lang(483, "High-End-Tuner"),     // Tuner: Seller_area (npc_tuner) und Seller_area_01 (Hebebühne), m_AfterMarket
             28 => Lang(3288, "Autoaufklebergeschäft"),
             29 => Lang(3631, "Frisuren"),           // Hairdresser_area
-            27 => Lang(1832, "Klinik"),             // Hostess_area der Schönheitsklinik (Walk-Modus-Typ 27 "surgeon")
+            27 => Lang(1832, "Klinik"),
+            7 => Lang(274, "Immobilien"),           // Realtor_area des Immobilienbüros (ERE_*)             // Hostess_area der Schönheitsklinik (Walk-Modus-Typ 27 "surgeon")
             32 => Lang(1866, "Flughafen"),
             _ => n,
         };
@@ -1620,10 +1626,14 @@ public abstract partial class InteriorUtils : GameModeHandler
             var dbName = shop != null ? FlashLocalization.Text(FlashHost.BnkDir, FlashHost.Language, shop.NameHash) : null;
             Log.Info("Ladenname: Spot " + _spot.Code + " -> DBCarShop " + (shop?.SpotName ?? "-") + ", _libelle_hc " + (shop?.NameHash ?? 0) + " = '" + (dbName ?? "-") + "'");
             if (!string.IsNullOrEmpty(dbName)) return dbName;
-            // Friseure stehen nicht in DBCarShop: Text der Flash-Lokalisierung wie die große Karte (SpotLocKeys "hair")
-            if ((_spot.Code ?? "").StartsWith("EHD", StringComparison.OrdinalIgnoreCase)
-                && FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language).TryGetValue("m_HairDresser", out var hd) && !string.IsNullOrEmpty(hd))
-                return hd;
+            // Friseur, Immobilienbüro und Schönheitsklinik stehen nicht in DBCarShop: Text der Flash-Lokalisierung (wie die große Karte,
+            // SpotLocKeys: hair -> m_HairDresser, estates -> m_Estates, surgery -> m_Surgery_) statt "Spot"
+            string code = (_spot.Code ?? "").ToUpperInvariant();
+            string? key = code.StartsWith("EHD") ? "m_HairDresser" : code.StartsWith("ERE") ? "m_Estates" : code.StartsWith("ESUR") ? "m_Surgery_" : null;
+            var texts = key != null ? FlashLocalization.Load(FlashHost.BnkDir, FlashHost.Language) : null;
+            if (texts != null && texts.TryGetValue(key!, out var lt) && !string.IsNullOrEmpty(lt)) return lt;
+            if (code.StartsWith("ERE")) return Lang(274, "Immobilien");
+            if (code.StartsWith("ESUR")) return Lang(1832, "Klinik");
         }
         return _spotBanks?.Name ?? "";
     }

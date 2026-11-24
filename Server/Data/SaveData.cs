@@ -48,7 +48,22 @@ public sealed class SaveData
     public List<SavedRecent> recentPlayers = new(); // zuletzt gesehene Spieler
     public List<FriendNewsEntry> friendNews = new();// Meldungen der Freunde
     public List<int> uploadedChallenges = new();     // CRC: vom Race-Editor hochgeladene Challenge-Ids ("Meine Challenges")
+    public SurgeryData surgery = new();             // Schönheitsklinik: Operationen, Verband, gesicherte Kopf-Teile (Client SurgeryData)
     public string savedAt = "";
+}
+
+/// <summary>Schönheitsklinik (Client SurgeryData; Original PlayerData/Driver-Felder). Teile = DBClothe-Hashcodes, 0 = nichts.</summary>
+public sealed class SurgeryData
+{
+    public int nbSurgeries;
+    public bool beenInSurgeryShop;
+    public bool bandage;
+    public long bandageTime;                        // Ablauf des Verbands, Unix-Zeit in s
+    public bool needBandageNews;
+    public int helmetBandage, bikeHelmetBandage, glassesBandage, beardBandage, hairBandage;
+    public int helmetColorBandage, bikeHelmetColorBandage, glassesColorBandage, beardColorBandage, hairColorBandage;
+    public int multiChallengesWithBandages;
+    public float timeSpentInSurgery;
 }
 
 /// <summary>Aufgedeckte Straßen einer Insel (Client RoadDiscoveryEntry).</summary>

@@ -51,6 +51,13 @@ namespace Paradise.Core.Online
         /// <summary>Welches Auto auf welchem Stellplatz welcher Garage steht (Garage -> Fahrzeugliste, Platz wechseln). Leer bzw. unvollständig:
         /// TDU2Garage.Normalize verteilt die übrigen Autos wie der Savegame-Export (Haus des Spielers zuerst).</summary>
         public List<GarageSlotEntry> garage = new List<GarageSlotEntry>();
+        /// <summary>Besessene Häuser (DBHouse._spotname) in Kaufreihenfolge – Original: die Häuser mit Plätzen in Garage[] (GM_Estates
+        /// buyh/selh). Leer = neues Spiel (Starthaus EPH_L0C_1254I, TDU2Garage.OwnedNames).</summary>
+        public List<string> ownedHouses = new List<string>();
+        /// <summary>Wohnsitz (Driver.CurrentHouse): Ziel von "Nach Hause"; null = erstes besessenes Haus.</summary>
+        public string homeHouse;
+        /// <summary>Verkaufte Häuser (StatisticsData.NbHouseSold).</summary>
+        public int housesSold;
         /// <summary>Gekaufte Möbel (DBFurniture._hashcode) und Böden/Tapeten (DBMaterial._hashcode).</summary>
         public List<int> ownedFurniture = new List<int>();
         public List<int> ownedMaterials = new List<int>();

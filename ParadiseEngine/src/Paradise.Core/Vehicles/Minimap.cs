@@ -1364,6 +1364,7 @@ namespace Paradise.Core.Vehicles
             if (c.StartsWith("ECDC")) return "carDealer";
             if (c.StartsWith("ECD")) return "carDealer";
             if (c.StartsWith("EBD")) return "bikeDealer";
+            if (c.StartsWith("EPHOT")) return "photograph";   // vor EPH (Haus): sonst wurde das Fotostudio zum Haus
             if (c.StartsWith("EPH")) return "home";
             if (c.StartsWith("ECH")) return "club";
             if (c.StartsWith("ETUN")) return "tuning";
@@ -1381,13 +1382,13 @@ namespace Paradise.Core.Vehicles
             if (c.StartsWith("EAIR")) return "airport";
             if (c.StartsWith("ECAS")) return "casino";
             if (c.StartsWith("EUC")) return "auctionHall";
-            if (c.StartsWith("EPHOT")) return "photograph";
             return null;
         }
 
         /// <summary>Original-Einfahrtsanzeige (/HUD/enter) mit Spot-Icon; null = ausblenden.</summary>
         /// <param name="lockedText">gesperrt (z.B. Tuner mit falscher Marke): Text unter dem Schloss (/:SpotLockedText), Einfahrt nicht möglich</param>
-        public void ShowEnter(string? spotCode, string? lockedText = null)
+        /// <param name="labelOverride">Symbol statt <see cref="SpotLabel"/> (z.B. "forsale" für ein Haus, das dem Spieler nicht gehört)</param>
+        public void ShowEnter(string? spotCode, string? lockedText = null, string? labelOverride = null)
         {
             if (_hud == null) return;
             if (spotCode == null && ExtraEnterCode != null) { spotCode = ExtraEnterCode; lockedText = ExtraEnterLockedText; }
@@ -1396,7 +1397,7 @@ namespace Paradise.Core.Vehicles
                 if (_enterShown) { _hud.GotoLabel("/HUD/enter", "out", true); _enterShown = false; _enterLabel = null; }
                 return;
             }
-            string label = SpotLabel(spotCode) ?? "default";
+            string label = labelOverride ?? SpotLabel(spotCode) ?? "default";
             bool locked = lockedText != null;
             if (!_enterShown || _enterLabel != label || _enterLocked != locked)
             {

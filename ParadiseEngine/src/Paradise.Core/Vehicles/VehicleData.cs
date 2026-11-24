@@ -269,6 +269,10 @@ namespace Paradise.Core.Vehicles
     public sealed class HouseInfo
     {
         public string SpotName; public int CarSlots, Level, BuyPrice;
+        /// <summary>Verkaufspreis (_sellprice): Erlös beim Verkauf und Anrechnung beim Tausch (GM_Estates 0xAEBAB0/0xAED080).</summary>
+        public int SellPrice;
+        /// <summary>Makler (_realtor): voller spots.bin-Name des Immobilienbüros, z.B. "ERE_B_3336I"; "ERE_CLUBS" = Klubhäuser.</summary>
+        public string Realtor;
         /// <summary>Name in der Sprachdatenbank (_housename_hc, z.B. "Salines-Villa").</summary>
         public int NameHash { get; set; }
         public string Code => SpotName != null && SpotName.LastIndexOf('_') > 0 ? SpotName.Substring(0, SpotName.LastIndexOf('_')) : SpotName;
@@ -400,7 +404,7 @@ namespace Paradise.Core.Vehicles
             var houses = root.Get("DBHouse");
             if (houses != null)
                 foreach (var r in houses.Items)
-                    db.Houses.Add(new HouseInfo { SpotName = r.S("_spotname", ""), CarSlots = r.I("_nbcarslots", 2), Level = r.I("_level"), BuyPrice = r.I("_buyprice"), NameHash = r.I("_housename_hc") });
+                    db.Houses.Add(new HouseInfo { SpotName = r.S("_spotname", ""), CarSlots = r.I("_nbcarslots", 2), Level = r.I("_level"), BuyPrice = r.I("_buyprice"), SellPrice = r.I("_sellprice"), Realtor = r.S("_realtor", ""), NameHash = r.I("_housename_hc") });
 
             var tp = root.Get("DBTiresPhysics");
             if (tp != null) foreach (var r in tp.Items) db.TirePhysics[r.I("_hashcode")] = r.S("_tires_physics", "");
@@ -479,6 +483,25 @@ namespace Paradise.Core.Vehicles
                 if (score > bestScore) { bestScore = score; best = it; }
             }
             return best;
+        }
+
+        /// <summary>
+        /// Angebot eines Immobilienbüros (GM_Estates 0xAEF220): alle Häuser, deren _realtor dieses Büro ist (Büro wie Häuser/Händler über
+        /// Code + Gebiet/Sektor + Insel bestimmt), sortiert nach Stufe, dann Preis.
+        /// </summary>
+        public List<HouseInfo> HousesForRealtor(Spot s, string islandName)
+        {
+            var r = new List<HouseInfo>();
+            if (s == null) return r;
+            var names = new List<string>();
+            foreach (var h in Houses)
+                if (!string.IsNullOrEmpty(h.Realtor) && !names.Exists(n => string.Equals(n, h.Realtor, StringComparison.OrdinalIgnoreCase))) names.Add(h.Realtor);
+            string realtor = BestBySpotName(names, x => x, s.Code, SpotDigits(s), IsIbiza(islandName));
+            if (realtor == null) return r;
+            foreach (var h in Houses)
+                if (string.Equals(h.Realtor, realtor, StringComparison.OrdinalIgnoreCase) && h.SpotName != null && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase)) r.Add(h);
+            r.Sort((a, b) => a.Level != b.Level ? a.Level.CompareTo(b.Level) : a.BuyPrice.CompareTo(b.BuyPrice));
+            return r;
         }
 
         public HouseInfo HouseFor(string spotCode)

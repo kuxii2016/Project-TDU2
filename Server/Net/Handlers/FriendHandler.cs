@@ -12,6 +12,7 @@ namespace TDU2Server.Net.Handlers;
 ///   {"op":"friend","session":..,"kind":"request","nick":name}   -> friendResult; Empfänger bekommt "friendreq:&lt;name&gt;"
 ///   {"op":"friend","session":..,"kind":"accept"|"decline","nick":name} -> Absender bekommt "friendok:" bzw. "frienddecl:"
 ///   {"op":"friend","session":..,"kind":"remove","nick":name}    -> Freundschaft beenden / eigene Anfrage zurückziehen ("friendrm:")
+///   {"op":"friend","session":..,"kind":"house"}                 -> Luxushaus gekauft: Freunde bekommen "friendhouse:&lt;name&gt;"
 /// Jede Antwort enthält die aktuelle Liste. Anfragen an Spieler, die gerade nicht online sind, warten bis zu ihrer Antwort.
 /// </summary>
 public sealed class FriendHandler : RequestHandler
@@ -26,6 +27,13 @@ public sealed class FriendHandler : RequestHandler
         if (me == null) return Fail("not_logged_in");
         string kind = (r.kind ?? "list").ToLowerInvariant();
         if (kind == "list") return Fill(me, new NetResponse { ok = true, online = Online });
+        if (kind == "house")
+        {
+            // Luxushaus gekauft (GM_Estates buyh): allen Freunden melden, die gerade online sind
+            foreach (var f in Ctx.Friends.Get(me.Nick).friends) NoticeTo(f, "friendhouse:" + me.Nick);
+            Log.Info($"{me.Nick} hat ein Luxushaus gekauft – Freunde benachrichtigt");
+            return Fill(me, new NetResponse { ok = true, online = Online });
+        }
 
         // Name wie im Konto gespeichert (Groß-/Kleinschreibung)
         var acc = Ctx.Accounts.Load(r.nick ?? "");

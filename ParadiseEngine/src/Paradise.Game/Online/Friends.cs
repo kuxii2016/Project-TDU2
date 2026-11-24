@@ -91,6 +91,16 @@ public static class Friends
     public static void Remove(string nick, Action<NetResponse?>? done) => Send("remove", nick, done);
     public static void Answer(string nick, bool accept) => Send(accept ? "accept" : "decline", nick, null);
 
+    /// <summary>
+    /// Kauf eines der beiden Luxushäuser (EPH_L5Y_0362I / EPH_L5Y_6360) allen Freunden melden – wie GM_Estates "buyh" (0xAED241: Meldung
+    /// 5164 "Ihr Freund §FRIENDNAME§ hat eine Yacht gekauft!" / 5628). Server: op "friend", kind "house" -> "friendhouse:&lt;nick&gt;".
+    /// </summary>
+    public static void AnnounceHouse()
+    {
+        if (!TDU2Session.LoggedIn || TDU2Session.Offline || TDU2Session.Client == null) return;
+        _ = TDU2Session.Client.Send(new NetRequest { op = "friend", session = TDU2Session.SessionId, kind = "house" });
+    }
+
     static void Send(string kind, string nick, Action<NetResponse?>? done)
     {
         if (!TDU2Session.LoggedIn || TDU2Session.Offline || TDU2Session.Client == null || string.IsNullOrEmpty(nick)) { done?.Invoke(null); return; }
@@ -113,6 +123,7 @@ public static class Friends
             switch (what)
             {
                 case "friendok": AddNews(NewsAccepted, nick); break;                                   // meine Anfrage wurde angenommen
+                case "friendhouse": AddNews(NewsHouse, nick); refresh = false; break;                  // Freund hat ein Luxushaus gekauft (exe 0xAED241)
                 case "frienddecl": Say(nick + " hat die Freundschaftsanfrage abgelehnt"); break;       // im Spiel ohne Meldung
                 case "friendrm": Say(nick + " hat die Freundschaft beendet"); break;                  // im Spiel ohne Meldung
                 case "friendreq": _shownAt.Remove(nick); break;   // neue Anfrage -> sofort zeigen (Meldung beim Eintreffen in der Liste)
@@ -239,7 +250,9 @@ public static class Friends
     public const int TxtAccepted = 7520;          // "§FRIENDNAME§ hat deine Freundschaftsanfrage angenommen."
     public const int TxtNewFriend = 3399;         // "Neuer Freund"
 
-    const int NewsIncoming = 0, NewsSent = 1, NewsAccepted = 2, NewsNewFriend = 3;
+    const int NewsIncoming = 0, NewsSent = 1, NewsAccepted = 2, NewsNewFriend = 3, NewsHouse = 4;
+    public const int TxtFriendHouse = 5164;       // "Ihr Freund §FRIENDNAME§ hat eine Yacht gekauft!" (exe 0x142C)
+    public const int TxtFriendHouseText = 5628;   // "Der hat Klasse! Hoffentlich werden Sie mal eingeladen!" (exe 0x15FC)
 
 
     static string Loc(int hash, string fallback) => FlashLocalization.Text(FlashHost.BnkDir, FlashHost.Language, hash) ?? fallback;
@@ -254,6 +267,7 @@ public static class Friends
             case NewsSent: title = T(TxtFriendRequest, "Friend request"); text = T(TxtRequestSent, "Friend request sent to §PLAYERNAME§."); break;
             case NewsAccepted: title = T(TxtNewFriendName, "New friend: §FRIENDNAME§"); text = T(TxtAccepted, "§FRIENDNAME§ has accepted your friend request."); break;
             case NewsNewFriend: title = T(TxtNewFriend, "New friend"); text = T(TxtNewFriendName, "New friend: §FRIENDNAME§"); break;
+            case NewsHouse: title = T(TxtFriendHouse, "Your friend §FRIENDNAME§ bought a yacht!"); text = T(TxtFriendHouseText, "Classy! Hopefully you'll get invited!"); break;
             default: title = T(TxtFriendRequest, "Friend request"); text = T(TxtWantsFriend, "§PLAYER§ wants to be your friend"); break;
         }
     }

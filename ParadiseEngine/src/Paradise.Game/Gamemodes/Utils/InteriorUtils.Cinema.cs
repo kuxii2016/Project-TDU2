@@ -5,7 +5,8 @@ namespace Paradise.Game.Gamemodes;
 
 /// <summary>
 /// Kinos des Raums beim Betreten (exe 0xA7E200–0xA7E4C0, Interieur-Start): Eingangs-Kino als Haupt-Kino mit Kamera – der Reihe nach
-/// C_REMOVAL_I (Umzug), C_INTRO_I, C_INTRO_I_1, C_INTRO_I_2, C_INTRO (das erste, das die Bank hat) –, danach Laufen; jede Definition
+/// C_REMOVAL_I (Umzug, nur nach einem Hauskauf: 0x1722952 = <see cref="RemovalPending"/>), C_INTRO_I, C_INTRO_I_1, C_INTRO_I_2, C_INTRO
+/// (das erste, das die Bank hat) –, danach Laufen; jede Definition
 /// "C_LIFE" der Bank läuft als Hintergrund (Verkäufer, Friseurin, Ärztin …) ab der Startzeit des Raums. Die Modi der Läden
 /// (Friseur, Kleidung, Klinik) haben eigene Kinos; dort wird das des Raums nicht gezeichnet.
 /// </summary>
@@ -13,6 +14,10 @@ public abstract partial class InteriorUtils
 {
     static SpotCinematics? _roomCin;
     static bool _roomIntro;
+
+    /// <summary>Umzug nach einem Hauskauf (exe 0x1722952, gesetzt mit dem Exterior-Kino C_REMOVAL): das nächste Interieur mit C_REMOVAL_I
+    /// spielt dieses als Eingangs-Kino.</summary>
+    internal static bool RemovalPending;
 
     /// <summary>Nach dem Aufbau des Interieurs: Bank-Kinos öffnen, Eingangs-Kino und C_LIFE starten.</summary>
     static void StartRoomCinematics()
@@ -24,8 +29,10 @@ public abstract partial class InteriorUtils
         _roomCin.Frame = _holder;
         _roomCin.Indoor = true;
         _roomCin.SetPlayer(AvatarConfigs.Local.Clone());
-        foreach (var n in new[] { "C_INTRO_I", "C_INTRO_I_1", "C_INTRO_I_2", "C_INTRO" })
-            if (_roomCin.Find(n) != null && _roomCin.PlayMain(n)) { _roomIntro = true; break; }
+        if (RemovalPending && _roomCin.Find("C_REMOVAL_I") != null && _roomCin.PlayMain("C_REMOVAL_I")) { _roomIntro = true; RemovalPending = false; }
+        if (!_roomIntro)
+            foreach (var n in new[] { "C_INTRO_I", "C_INTRO_I_1", "C_INTRO_I_2", "C_INTRO" })
+                if (_roomCin.Find(n) != null && _roomCin.PlayMain(n)) { _roomIntro = true; break; }
         if (_roomCin.Find("C_LIFE") != null) _roomCin.PlayBackground("C_LIFE", true);
     }
 

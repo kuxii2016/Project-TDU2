@@ -11,15 +11,93 @@ namespace Paradise.Core.Savegame
     /// </summary>
     public static class TDU2Garage
     {
-        /// <summary>Häuser des Spielers mit Garage – wie im Savegame-Export: alle EPH_-Häuser mit Stellplätzen (Kaufen kommt später).</summary>
-        public static List<HouseInfo> Houses(CarDatabase db)
+        /// <summary>Haus eines neuen Spiels (Vorlage: Garage[] mit 2 Plätzen des Wohnwagens auf Ibiza).</summary>
+        public const string StarterHouse = "EPH_L0C_1254I";
+
+        /// <summary>
+        /// Häuser des Spielers in Kaufreihenfolge (Original: die Häuser, deren Stellplätze in Garage[] stehen; GM_Estates "buyh"
+        /// 0xAED200 fügt hinzu, "selh" 0xAED080 entfernt). Nur EPH_-Häuser aus DBHouse.
+        /// </summary>
+        public static List<HouseInfo> Houses(CarDatabase db) => Houses(db, TDU2Session.Save);
+
+        public static List<HouseInfo> Houses(CarDatabase db, SaveData s)
         {
             var r = new List<HouseInfo>();
             if (db == null) return r;
-            foreach (var h in db.Houses)
-                if (h.SpotName != null && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase) && h.CarSlots > 0) r.Add(h);
+            foreach (var name in OwnedNames(s))
+                foreach (var h in db.Houses)
+                    if (Same(h.SpotName, name) && h.SpotName.StartsWith("EPH_", StringComparison.OrdinalIgnoreCase) && !r.Contains(h)) { r.Add(h); break; }
             return r;
         }
+
+        /// <summary>
+        /// Besessene Häuser (Spotnamen). Leer = Stand ohne Hausliste (neues Spiel bzw. Server-Stand von vor dem Hauskauf): das Starthaus
+        /// und die Häuser, in deren Garagen schon Autos stehen (SaveData.garage) – damit kein Auto seinen Platz verliert.
+        /// </summary>
+        public static List<string> OwnedNames(SaveData s)
+        {
+            if (s == null) return new List<string> { StarterHouse };
+            s.ownedHouses ??= new List<string>();
+            if (s.ownedHouses.Count == 0)
+            {
+                s.ownedHouses.Add(StarterHouse);
+                if (s.garage != null)
+                    foreach (var e in s.garage)
+                        if (e != null && !string.IsNullOrEmpty(e.house) && !string.IsNullOrEmpty(e.car) && !s.ownedHouses.Exists(n => Same(n, e.house)))
+                            s.ownedHouses.Add(e.house);
+            }
+            return s.ownedHouses;
+        }
+
+        /// <summary>Gehört das Haus dem Spieler (Original 0x402261 auf dem Profil)?</summary>
+        public static bool Owns(SaveData s, string house)
+        {
+            if (string.IsNullOrEmpty(house)) return false;
+            foreach (var n in OwnedNames(s)) if (Same(n, house)) return true;
+            return false;
+        }
+
+        /// <summary>Haus kaufen (Original 0x43BED0): ans Ende der Liste.</summary>
+        public static bool AddHouse(SaveData s, string house)
+        {
+            if (s == null || string.IsNullOrEmpty(house) || Owns(s, house)) return false;
+            s.ownedHouses.Add(house);
+            return true;
+        }
+
+        /// <summary>
+        /// Haus abgeben (Verkauf/Tausch, Original 0x4268AF): aus der Liste, seine Autos auf freie Plätze der übrigen Häuser
+        /// (die Prüfung "seho"/"buho" stellt vorher sicher, dass genug Plätze frei sind). Das letzte Haus wird nie abgegeben.
+        /// </summary>
+        public static bool RemoveHouse(SaveData s, CarDatabase db, string house)
+        {
+            if (s == null || !Owns(s, house) || OwnedNames(s).Count <= 1) return false;
+            s.ownedHouses.RemoveAll(n => Same(n, house));
+            s.garage ??= new List<GarageSlotEntry>();
+            foreach (var e in s.garage) if (Same(e.house, house)) e.house = null;   // ohne Platz: Normalize verteilt neu
+            s.garage.RemoveAll(e => e.house == null);
+            Normalize(s, db, s.ownedHouses[0]);
+            return true;
+        }
+
+        /// <summary>Stellplätze aller besessenen Häuser (Original 0x407086).</summary>
+        public static int TotalSlots(SaveData s, CarDatabase db)
+        {
+            int n = 0;
+            foreach (var h in Houses(db, s)) n += h.CarSlots;
+            return n;
+        }
+
+        /// <summary>Autos des Spielers, die einen Platz brauchen (Original 0x42C16F).</summary>
+        public static int CarCount(SaveData s)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (s?.ownedCars != null) foreach (var c in s.ownedCars) if (!string.IsNullOrEmpty(c)) set.Add(c);
+            return set.Count;
+        }
+
+        /// <summary>Freie Stellplätze über alle Häuser (Händler: "Garage voll"-Warnung).</summary>
+        public static int FreeSlots(SaveData s, CarDatabase db) => TotalSlots(s, db) - CarCount(s);
 
         /// <summary>
         /// Einträge bereinigen (Auto nicht mehr im Besitz, Haus unbekannt, Platz außerhalb, doppelt) und Autos ohne Platz auf freie Plätze
@@ -29,7 +107,7 @@ namespace Paradise.Core.Savegame
         {
             if (s == null || db == null) return;
             s.garage ??= new List<GarageSlotEntry>();
-            var houses = Houses(db);
+            var houses = Houses(db, s);
             var slots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var h in houses) slots[h.SpotName] = h.CarSlots;
             var owned = new HashSet<string>(s.ownedCars ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
@@ -97,7 +175,7 @@ namespace Paradise.Core.Savegame
         {
             if (s == null || string.IsNullOrEmpty(car) || string.IsNullOrEmpty(house)) return false;
             int n = 0;
-            foreach (var h in Houses(db)) if (Same(h.SpotName, house)) n = h.CarSlots;
+            foreach (var h in Houses(db, s)) if (Same(h.SpotName, house)) n = h.CarSlots;
             for (int k = 0; k < n; k++)
                 if (CarAt(s, house, k) == null)
                 {

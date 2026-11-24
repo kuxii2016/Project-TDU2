@@ -146,7 +146,7 @@ internal sealed class Collectable : GameModule
         if (sv != null)
         {
             cars = sv.ownedCars?.Count ?? 0;
-            houses = sv.houses?.Count ?? 0;
+            houses = Paradise.Core.Savegame.TDU2Garage.OwnedNames(sv).Count;   // besessene Häuser (COLLECTION_HOUSES_%d)
             furniture = sv.ownedFurniture?.Count ?? 0;
             stickers = sv.stickerBoards?.Count ?? 0;
         }

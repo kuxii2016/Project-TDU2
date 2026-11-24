@@ -199,7 +199,7 @@ namespace Paradise.Game.Utils
             // Collectable wertet ownedClothes UND den Avatar aus (die DATA speichert die
             // gekauften Kleidungsstücke nicht) – dieselbe Quelle wie die Collection-Liste.
             var col = getMyLifeCollector;
-            col.NbHouseOwned = Count(Save.houses);
+            col.NbHouseOwned = (uint)Paradise.Core.Savegame.TDU2Garage.OwnedNames(Save).Count;
             col.NbClothesOwned = (uint)Paradise.Game.Gameplay.Collectable.ClothesCount;
             col.NbHaircutsTried = (uint)Paradise.Game.Gameplay.Collectable.HaircutCount;
             col.NbFurnituresOwned = Count(Save.ownedFurniture);

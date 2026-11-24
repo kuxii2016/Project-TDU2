@@ -16,6 +16,12 @@ public static class SaveSanitizer
         sv.favoriteColors = (sv.favoriteColors ?? new List<int>()).Take(16).ToList();
         sv.ownedClothes = (sv.ownedClothes ?? new List<int>()).Take(2000).ToList();
         sv.avatar = Cut(sv.avatar, 2048);
+        // Schönheitsklinik: Zähler nicht negativ, Zeit endlich
+        sv.surgery ??= new SurgeryData();
+        if (sv.surgery.nbSurgeries < 0) sv.surgery.nbSurgeries = 0;
+        if (sv.surgery.multiChallengesWithBandages < 0) sv.surgery.multiChallengesWithBandages = 0;
+        if (!float.IsFinite(sv.surgery.timeSpentInSurgery) || sv.surgery.timeSpentInSurgery < 0f) sv.surgery.timeSpentInSurgery = 0f;
+        if (sv.surgery.bandageTime < 0) sv.surgery.bandageTime = 0;
         // CRC: nur positive, eindeutige Challenge-Ids (vom Editor hochgeladen)
         sv.uploadedChallenges = (sv.uploadedChallenges ?? new List<int>()).Where(id => id > 0).Distinct().Take(64).ToList();
 

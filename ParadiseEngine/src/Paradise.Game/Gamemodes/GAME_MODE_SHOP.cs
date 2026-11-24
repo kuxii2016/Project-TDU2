@@ -361,9 +361,27 @@ public partial class GAME_MODE_SHOP : InteriorUtils
         _ui.SetVariable("/:current_price", Money(total));
         _ui.SetVariable("/:money", Money(MyMoney));
         _ui.SetVariable("/:MyMoneyStr", Money(MyMoney));
-        _ui.SetValue("/:EnoughMoney", !HasMoney || MyMoney >= total ? 1 : 3);
+        _ui.SetValue("/:EnoughMoney", EnoughMoney(total));
         for (int i = 1; i <= 3; i++)
             _ui.SetVariable(BuyWin + "/op_price_" + i + ":op_price", Money(i == 1 ? RimPrice : i == 2 ? PaintPrice : InteriorPrice));
+    }
+
+    /// <summary>
+    /// /:EnoughMoney für "eval" (TestMoney) wie das Original (0xB8DF20): 1 Kauf möglich (freier Garagenplatz und genug Geld), 4 kein Auto
+    /// zum Verkaufen, 2 Garagen voll aber genug Geld (Dialog em_2 "Nicht genug Garagenplatz" mit Angebot, Autos zu verkaufen), 0 nicht genug
+    /// Geld (em_0, Verkaufen anbieten), 3 nicht genug Geld ohne Verkaufsmöglichkeit (em_3).
+    /// </summary>
+    static int EnoughMoney(long total)
+    {
+        var sv = Paradise.Core.Online.TDU2Session.Save; var db = Vm?.Database;
+        if (!HasMoney || sv == null || db == null) return 1;
+        bool slot = Paradise.Core.Savegame.TDU2Garage.FreeSlots(sv, db) > 0;
+        bool money = MyMoney >= total;
+        int cars = Paradise.Core.Savegame.TDU2Garage.CarCount(sv);
+        if (slot && money) return 1;
+        if (cars <= 0) return 4;
+        if (!slot) return money ? 2 : 0;
+        return cars > 1 ? 0 : 3;
     }
 
     /// <summary>Seite num_option (1 Felgen, 2 Lack, 3 Innenraum) in die Film-Variablen.</summary>

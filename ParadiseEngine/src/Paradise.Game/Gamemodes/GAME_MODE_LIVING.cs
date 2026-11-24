@@ -320,7 +320,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         int cars = sv?.ownedCars?.Count ?? 0;
         _ui.SetVariable("/:Money", (sv != null ? sv.money : 0).ToString("N0", de) + " $");
         _ui.SetVariable("/:NbCars", cars.ToString());
-        _ui.SetVariable("/:NbHouses", Math.Max(1, sv?.houses?.Count ?? 0).ToString());
+        _ui.SetVariable("/:NbHouses", Paradise.Core.Savegame.TDU2Garage.OwnedNames(sv).Count.ToString());
         foreach (var g in new[] { "Racing", "Social", "Cruising", "Collection" })
         {
             _ui.SetValue("/:" + g + "Points", 0);
@@ -347,7 +347,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         _ui.SetVariable("/:NbFurnituresBought", (sv?.ownedFurniture?.Count ?? 0).ToString());
         _ui.SetVariable("/:NbStickersBought", (sv?.stickerBoards?.Count ?? 0).ToString());
         _ui.SetVariable("/:EdCarSticked", (sv?.liveries?.Count ?? 0).ToString());
-        _ui.SetVariable("/:NbHousesTotal", Math.Max(1, sv?.houses?.Count ?? 0).ToString());
+        _ui.SetVariable("/:NbHousesTotal", Paradise.Core.Savegame.TDU2Garage.OwnedNames(sv).Count.ToString());
         foreach (var z in new[] { "NbCarUpgraded", "NbEventsWon", "NbPhotosIDone", "NbPhotosHDone", "NbFriends", "NbFriendsInvited",
                                   "NbInstantWon", "NbInstantTotal", "NbMultiWon", "NbMultiTotal", "NbCoopPlayed", "NbChasePlayed", "NbSurgeriesBought" })
             _ui.SetVariable("/:" + z, "0");
