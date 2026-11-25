@@ -65,7 +65,6 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
         InteriorUtils._v.Suspended = true;
         _phase = Phase.Loading;
         LoadingScreen.Show("Waschanlage " + s.Code, () => _phase != Phase.Loading, 0.5f, false);
-        Log.Info($"Waschanlage {s.Code}: Auto {_car.FileName}, Schmutz {CarDirt.GetSaved(_car):0.00}, Preis {_price} $");
         GameMode.Set(Gamemode.GAME_MODE_CAR_WASH);
         return true;
     }
@@ -188,7 +187,6 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
         ui.GotoLabel("/", "car_wash", true);
         ui.MouseEnabled = true;
         InteriorUtils._t.Input.CursorLocked = false;
-        Log.Info($"Waschanlage: Menü, Preis {_price} $, Geld {TDU2Session.Save?.money ?? -1}");
     }
 
     static void SetMenuValues()
@@ -245,7 +243,6 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
             _ui?.SetVariable("/:MyMoneyStr", GAME_MODE_SHOP.Money(sv.money));
             SessionAutosave.Schedule(2f);
         }
-        Log.Info($"Waschanlage: bezahlt {_price} $");
     }
 
     /// <summary>cwok: Fahrzeug mit DBCarPhysicsData._islightcarwashable -> C_OUTRO_FERRARI, sonst C_WASHING.</summary>
@@ -332,7 +329,6 @@ public class GAME_MODE_CAR_WASH : GameModeHandler
         var fwd = new Vector3(MathF.Sin(s.Heading2), 0f, MathF.Cos(s.Heading2));
         if (fwd.LengthSquared() < 1e-4f) fwd = Vector3.UnitZ;
         vm?.SpawnCar(car.FileName, gp, Vector3.Normalize(fwd));
-        Log.Info($"Waschanlage {s.Code} verlassen ({(_paid ? "gewaschen" : "ohne Wäsche")})");
         GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
     }
 }

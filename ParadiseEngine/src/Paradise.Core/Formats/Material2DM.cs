@@ -6,8 +6,10 @@ public struct MaterialLayer
 {
     public ulong Semantic;   // 8 Byte, z.B. "COLOR", "SHADOW", "NORMAL", "DETAIL1" (teils komprimiert)
     public ulong TextureKey; // Key einer .2db (BMAP) Textur
-    public byte AddressU;    // 1 = Wrap, 2 = Clamp, 3 = Mirror (beobachtet)
+    public byte AddressU;    // D3DTEXTUREADDRESS: 1 = Wrap, 2 = Mirror, 3 = Clamp, 4 = Border (TextureDef.WrapFromEden)
     public byte AddressV;
+    /// <summary>Slot-Nummer im Material (= Sampler sN des Original-Shaders).</summary>
+    public int Slot;
     public string SemanticName => Bin.KeyToString(Semantic);
 }
 
@@ -22,8 +24,13 @@ public sealed class MaterialDef
     public bool IsPoolWater => ShaderSet == ShaderWater;
     /// <summary>Shader set from the original (MAT.+0x310), e.g., TD_Road / TD_Ground / TD_Building.</summary>
     public ulong ShaderSet;
+    /// <summary>48 Shader-Schalter (S_NBTEXTURES … S_USERTYPE16) hinter der Satz-GUID (OpenTDU2 eden_shader_system.h: MAT.+0x310
+    /// relativ zum Chunk-Inhalt = hier +0x320, die GUID liegt hier entsprechend bei +0x310). Für den Original-Renderer.</summary>
+    public byte[]? Spec;
     /// <summary>Diffuse color from the color block (MAT.+0xC0 ambient/diffuse/specular/emissive).</summary>
     public Vector4 Diffuse = Vector4.One;
+    /// <summary>D3DMATERIAL9-Farben nach Diffuse (MAT. +0xD0/+0xE0/+0xF0, OpenTDU2 2dm.cpp): für die Original-Shader-Konstanten.</summary>
+    public Vector4 Ambient = Vector4.One, Specular = new(0, 0, 0, 1), Emissive = new(0, 0, 0, 1);
     public const ulong ShaderRoad = 0xc8ad93c95455291bUL, ShaderGround = 0xb0f1234b0f123473UL;
     public readonly List<MaterialLayer> Layers = new();
     /// <summary>Shader parameter (Key = 8-byte name, e.g., “RAMPCLR1”) -> float4.</summary>
@@ -106,7 +113,14 @@ public sealed class Material2DM
         Array.Copy(d, o + 0x40, def.Flags, 0, 16);
         if (o + 0xD0 <= m.End)
             def.Diffuse = new Vector4(Bin.F32(d, o + 0xC0), Bin.F32(d, o + 0xC4), Bin.F32(d, o + 0xC8), Bin.F32(d, o + 0xCC));
+        if (o + 0x100 <= m.End)
+        {
+            def.Ambient = new Vector4(Bin.F32(d, o + 0xD0), Bin.F32(d, o + 0xD4), Bin.F32(d, o + 0xD8), Bin.F32(d, o + 0xDC));
+            def.Specular = new Vector4(Bin.F32(d, o + 0xE0), Bin.F32(d, o + 0xE4), Bin.F32(d, o + 0xE8), Bin.F32(d, o + 0xEC));
+            def.Emissive = new Vector4(Bin.F32(d, o + 0xF0), Bin.F32(d, o + 0xF4), Bin.F32(d, o + 0xF8), Bin.F32(d, o + 0xFC));
+        }
         if (o + 0x318 <= m.End) def.ShaderSet = Bin.U64(d, o + 0x310);
+        if (o + 0x320 + 48 <= m.End) { def.Spec = new byte[48]; Array.Copy(d, o + 0x320, def.Spec, 0, 48); }
         int n = Bin.U16(d, o + 0x10C);
         if (n > 16) n = 16;
         for (int i = 0; i < n; i++)
@@ -119,6 +133,7 @@ public sealed class Material2DM
                 TextureKey = Bin.U64(d, p + 8),
                 AddressU = d[p + 24],
                 AddressV = d[p + 25],
+                Slot = i,
             };
             if (l.Semantic == 0 && l.TextureKey == 0) continue;
             def.Layers.Add(l);

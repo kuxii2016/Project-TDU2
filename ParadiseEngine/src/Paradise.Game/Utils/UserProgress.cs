@@ -8,7 +8,9 @@ namespace Paradise.Game.Utils
     public class UserProgress
     {
         /// <summary>Gebiets-Maxima aus dem Original (Reihenfolge H1..H4, I1..I2); nur Info, kein Level.</summary>
-        long[] maxRoads = { 467, 924, 309, 1144, 426, 998 };
+        static readonly long[] maxRoads = { 467, 924, 309, 1144, 426, 998 };
+        /// <summary>Alle Straßenstücke beider Inseln (Summe der Gebiets-Maxima) – für "Unlocked roads" in Prozent.</summary>
+        public static long TotalRoads => maxRoads.Sum();
         long[] maxCruising = { 2080, 2080, 2425, 2640, 2550, 2725 };
 
         /// <summary>DBRacingLevel / DBCollectionLevel / DBSocialLevel, Stufen 0..15.</summary>
@@ -69,7 +71,7 @@ namespace Paradise.Game.Utils
             public uint CurrentSLP { get; set; } = 0;   // Social-Punkte
             public uint AchievementPoints { get; set; } = 0;
             public int Money { get; set; } = 0;
-            public string PersonalQuote { get; set; } = "Testdrive Highlife";
+            public string PersonalQuote { get; set; } = "Testdrive 2";
             public uint MoodId { get; set; } = 0;       // mood ist ein Label, keine Zahl
             public uint NbHouses { get; set; } = 0;
             public uint NbCars { get; set; } = 0;

@@ -428,6 +428,23 @@ void main() {
         //   Farbe = COLOR x DETAIL x lerp(night.rgb, Licht, nightlmap.x) + night.rgb x night.a x nightlmap.y  (ohne Detail-Verstärkung)
         // nightlmap (0.44, 1) gilt nachts; tagsüber (_TDU2NightK = 0) nur Echtzeitlicht, gebackene Lampen aus.
         vec4 nl = texture(shadowTex, uvM);
+        if (m.p7.x > 1.5)
+        {
+            // TD_Furnitures (TD_Furnitures.sob ps_3_0, Slots s0 gOcclusionTexSampler, s1 gDetailTexSampler, s7 gNightLightMapSampler):
+            //   Licht = lerp(Ambient x (0,5 + 0,5 N.L), Sonne, N.L x Schatten) – im Haus wie bisher fest 0,25 [vermutet]
+            //   Farbe = DETAIL x baseColor x lerp(night.rgb, OCCLUSION x Licht, nightlmap.x) + night.rgb x night.a x nightlmap.y
+            // OCCLUSION wirkt nur auf den Licht-Anteil, nicht auf die Nacht-Lightmap; keine Vertexfarbe (vs ohne COLOR-Eingang).
+            vec3 occ = texture(mainTex, uvM).rgb;
+            vec3 fdet = vec3(1.0);
+            if (m.p1.x > 0.5)
+            {
+                fdet = texture(detailTex, m.p1.y > 0.5 ? uvD2 : uvD1).rgb;
+                if (m.p2.x > 0.5) fdet = fdet.rrr * 1.8;
+            }
+            vec3 fcol = fdet * m.color.rgb * mix(nl.rgb, occ * vec3(0.25), m.p7.y) * m.p3.y + nl.rgb * nl.a * m.p7.z;
+            outColor = vec4(TDU2Fog(TDU2Planar(fcol, vWorld), vWorld), glowA);
+            return;
+        }
         if (m.p7.x > 0.5)
         {
             // Interieur (Unity TDU2Object _NightMode mit InteriorFx): Licht ist eingebacken, keine Sonne/Ambient
@@ -807,7 +824,7 @@ vec3 OceanTD() {
     vec3 nn = normalize(n);
     vec3 N = normalize(nn + flatK * (vec3(0.0, 1.0, 0.0) - nn));
     vec3 R;
-    if (fr.oceanParam2.y > 0.5) {
+    if (fr.oceanParam2.y > 0.5 && m.p6.z >= 0.0) {          // Pools (OceanLevel -1): keine Spiegelung der Meeresebene
         vec2 suv = gl_FragCoord.xy * fr.planar.zw;
         suv.x += exp(-fr.oceanParam.z) * fr.oceanMisc.z * N.x;   // Verzerrung nur waagrecht
         R = texture(planarRefl, clamp(suv, 0.0, 1.0)).rgb;

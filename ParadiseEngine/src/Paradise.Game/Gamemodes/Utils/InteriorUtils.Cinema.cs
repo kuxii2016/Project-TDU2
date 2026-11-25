@@ -1,5 +1,4 @@
 ﻿using Paradise.Core.Avatars;
-using Paradise.Game.Input;
 
 namespace Paradise.Game.Gamemodes;
 

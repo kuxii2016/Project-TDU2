@@ -1,7 +1,6 @@
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Engine;
 using Paradise.Core.Flash;
-using Paradise.Core.Formats;
 using Paradise.Core.Vehicles;
 using Paradise.Game.Input;
 using Paradise.Game.Screens;

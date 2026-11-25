@@ -64,7 +64,6 @@ public sealed class TerrainModule : GameModule
     private bool _f10Was;
     private List<string> _pick = new();
 
-    // wie im Unity-Projekt (Camera: far 60000, near 1)
     private const float Near = 1f, Far = 5000f, FovDeg = 60f;
 
     public TerrainModule(IRenderer renderer, WorldModule world, IGameWindow window, DebugOverlay? overlay = null)
@@ -82,14 +81,12 @@ public sealed class TerrainModule : GameModule
             Log.Warn("TerrainModule: No game folder found.");
             return;
         }
-        _light = new LightingConfig();   // Werte: Game/Config/LightingConfig.cs
+        _light = new LightingConfig(); 
         _light.ApplyAvatars();
         _globals = _light.ToFrameGlobals();
-        // Kollision der Welt (Unity: GenerateColliders) – vor Initialize, damit schon die ersten Sektoren eingetragen werden
         _physics = new PhysicsWorld();
         if (!BuildIsland("ibiza")) return;
         var s = _streamer!;
-        // Abschnitte lesen immer den aktuellen Streamer (Inselwechsel baut ihn neu)
         _overlay?.AddSection("Welt", () => _streamer?.DebugLines() ?? Array.Empty<string>());
         if (_weather != null)
             _overlay?.AddSection("Tag/Wetter", () => new[]
@@ -131,7 +128,7 @@ public sealed class TerrainModule : GameModule
             }
             catch (Exception ex)
             {
-                Log.Warn("Vögel konnten nicht geladen werden: " + ex.Message);
+                Log.Error("Failed load Birds: " + ex.Message);
                 birds.Dispose();
             }
         }
@@ -151,16 +148,14 @@ public sealed class TerrainModule : GameModule
         _streamer = null; _weather = null; _birds = null;
         oldBirds?.Dispose();
         oldWeather?.Dispose();
-        oldStreamer?.Dispose();   // entlädt alle Kacheln und trägt ihre Kollider aus der Physikwelt aus
+        oldStreamer?.Dispose();
         _pick = new List<string>();
         bool ok = BuildIsland(island);
         if (!ok && previous != null) BuildIsland(previous);
         if (_streamer != null && _cam != null) { _cam.Override = null; _cam.Position = _streamer.StartPosition; }
-        Log.Info(ok ? "TerrainModule: Insel " + island + " geladen" : "TerrainModule: Insel " + island + " nicht ladbar");
         return ok;
     }
 
-    // Profiler (F1 > Performance > Open Profiler)
     static readonly ProfilerMarker s_mStreamer = new("MapStreamer.Update", ProfilerCategory.Streaming);
     static readonly ProfilerMarker s_mWeather = new("WorldWeather.Update", ProfilerCategory.Scripts);
     static readonly ProfilerMarker s_mBirds = new("Birds.Tick", ProfilerCategory.Animation);
@@ -173,7 +168,7 @@ public sealed class TerrainModule : GameModule
     {
         if (_cam == null || _streamer == null) return;
         if (FlyCameraEnabled) { _cam.Override = null; _cam.Update(time.DeltaTime, _window.Input); FieldOfView = FovDeg; NearClip = Near; }
-        // Floating Origin (Unity: FloatingOrigin): Render-Ursprung zur Kamera, sonst wackelt bei großen Koordinaten alles
+
         var focus = StreamFocus ?? _cam.Position;
         if (_streamer.ShiftRenderOrigin(focus, out var shift))
         {
@@ -185,25 +180,21 @@ public sealed class TerrainModule : GameModule
         using (s_mStreamer.Auto())
             _streamer.Update(focus, time.DeltaTime);
 
-        // Tag/Nacht + Wetter (Serverzeit -> für alle gleich)
         if (_weather != null && _weather.Loaded)
         {
             double now = TrafficLights.Clock();
             tp = System.Diagnostics.Stopwatch.GetTimestamp();
-            // Blitz (World/Lightning): Ort vor der Kamera in waagrechter Blickrichtung, Fußpunkt auf dem Boden
             _weather.CameraForward = _cam.Override?.forward ?? _cam.Forward;
             var strm = _streamer;
             _weather.GroundHeight ??= (lx, lz) => strm.TryGetMapGroundHeight(lx, lz, out float lh) ? lh : null;
             using (s_mWeather.Auto())
                 _weather.Update(now, time.TotalTime, time.DeltaTime, _streamer.ViewerGame, _streamer.RootOffset, _streamer.FindPlacementInstances);
             var g = _weather.Globals;
-            g.ShadowDistance = GraphicsSettings.ShadowDistance > 0f ? GraphicsSettings.ShadowDistance : _light.ShadowDistance;   // Effektqualität (Optionen)
+            g.ShadowDistance = GraphicsSettings.ShadowDistance > 0f ? GraphicsSettings.ShadowDistance : _light.ShadowDistance;
             g.ShadowStrength *= _light.ShadowStrength > 0f ? 1f : 0f;
             _globals = g;
         }
 
-        // Vögel: Schwärme in Spielkoordinaten, Bodenabfrage über die grobe Inselhöhe.
-        // Regen (> 0.55 = starker Regen laut Spec) lässt sie verschwinden; sun = 1 - NightK.
         if (_birds != null)
         {
             var strm = _streamer;
@@ -212,7 +203,7 @@ public sealed class TerrainModule : GameModule
                     (float x, float z, float y, out float h) => strm.TryGetMapGroundHeight(x, z, out h));
         }
 
-        // Physik-Test: Boden unter der Kamera per Raycast (wie die Radkontakte der Fahrzeuge)
+
         var camGame = _streamer.ViewerGame;
         tp = System.Diagnostics.Stopwatch.GetTimestamp();
         bool ground;
@@ -223,11 +214,12 @@ public sealed class TerrainModule : GameModule
             ? $"Boden unter Kamera: y {gy:0.00}  (Abstand {camGame.Y - gy:0.0} m)"
             : "Boden unter Kamera: kein Kollider";
 
-        // F10: Objekt in der Bildmitte mit Materialdaten anzeigen/loggen (Debug)
+        #if DEBUG
         bool f10 = _window.Input.IsKeyDown(0x79);
         if (f10 && !_f10Was) _pick = _streamer.Pick(_cam.Position, _cam.Forward);
         _f10Was = f10;
         _nextStats -= time.DeltaTime;
+        #endif
     }
 
     public override void Render(in GameTime time)
@@ -242,14 +234,12 @@ public sealed class TerrainModule : GameModule
         {
             g.FogEnd = g.FogStart; g.ShadowStrength = 0f;
             g.NoSky = true; g.BackgroundColor = MapSeaColor;
-            if (MapTerrainShown) { using (s_mMapTerrain.Auto()) _streamer.RenderMapTerrain(_cam.Position, g); return; }   // nur die Kartenkacheln
+            if (MapTerrainShown) { using (s_mMapTerrain.Auto()) _streamer.RenderMapTerrain(_cam.Position, g); return; }
         }
         using (s_mStreamerRender.Auto())
             _streamer.Render(_cam.Position, view * proj, g);
         using (s_mWeatherFx.Auto())
         {
-            // Vögel werden im selben (transparenten) Szenenpass wie Regen gezeichnet; Position + RootOffset
-            // erfolgt in Birds.Draw, die Kameraposition muss deshalb in Spielkoordinaten übergeben werden.
             if (!MapView) _birds?.Draw(_renderer, _streamer.RenderToGame(_cam.Position), _streamer.RootOffset, view, 1f - g.NightK);
             if (!MapView) _weather?.DrawRain(_renderer, new Vector3(view.M11, view.M21, view.M31));
             if (!MapView) _weather?.DrawLightning(_renderer, _streamer.RootOffset, _cam.Override?.forward ?? _cam.Forward);

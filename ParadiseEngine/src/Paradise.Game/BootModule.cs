@@ -3,10 +3,6 @@ using Paradise.Core.Platform;
 
 namespace Paradise.Game;
 
-/// <summary>
-/// Erstes, minimales Spiel-Modul. Zeigt, wo die Startparameter ankommen und
-/// dient als Platzhalter, bis World-Streaming, Fahrzeuge und Online folgen.
-/// </summary>
 public sealed class BootModule : GameModule
 {
     private readonly LaunchOptions _opts;

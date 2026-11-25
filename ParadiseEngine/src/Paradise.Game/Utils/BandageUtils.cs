@@ -7,18 +7,6 @@ using Paradise.Game.Screens;
 
 namespace Paradise.Game.Utils;
 
-/// <summary>
-/// Verband nach einer Operation in der Schönheitsklinik (Port aus der Original-exe, gemeinsam für GAME_MODE_SURGERY, den Friseur und
-/// den Moduswechsel):
-///   - Sichern (GMSurgery "surg:cine:intr", 0xBF1568): getragener Helm (Satz normal/fahren), Brille, Frisur, Bart + Farben in die
-///     *Bandage-Felder des Spielstands (exe Profil +0x100…+0x10E).
-///   - Anlegen (0xBF07C0): Helm-Platz = M_/W_HE_BANDAGE, Brille/Frisur/Bart = M_/W_NO_*; Bandage = 1, BandageTime = time() + 3600 s
-///     (0xE10; 600 s nur mit dem Schalter 0x1AE973F, der im Spiel nie gesetzt wird).
-///   - Abgelaufen (0x672C90): Bandage und (BandageTime &lt;= jetzt oder BandageTime &gt; jetzt + 3600).
-///   - Abnehmen (0x672D30, aufgerufen beim Start jedes Spielmodus 0xA7EA2A): gesicherte Teile zurück, NeedBandageNews = 1.
-///   - Sperren: Klinik (Text 4405) und Friseur (7169) solange der Verband sitzt (Karte: /:surgery_locked, /:hairdresser_locked).
-/// Meldung "Ihre Verbände wurden entfernt!" = Text 7472 (pop_news von general.bnk).
-/// </summary>
 public static class BandageUtils
 {
     /// <summary>Tragedauer des Verbands in Sekunden Echtzeit (exe 0xBF0A2B: 0xE10).</summary>
@@ -51,7 +39,6 @@ public static class BandageUtils
     {
         string t = Text(textId, fallback);
         GeneralOverlay.SendNews(t);
-        Log.Info("Verband: " + t);
     }
 
     /// <summary>
@@ -88,11 +75,10 @@ public static class BandageUtils
         cfg.Remove(ClothePart.Hair);
         cfg.Remove(ClothePart.Beard);
         if (bandage != null) cfg.Set(bandage, 0);
-        else Log.Warn("Verband: DBClothe " + (cfg.Sex == 1 ? "W_HE_BANDAGE" : "M_HE_BANDAGE") + " fehlt");
+        else Log.Warn("DBClothe " + (cfg.Sex == 1 ? "W_HE_BANDAGE" : "M_HE_BANDAGE") + " missing");
         if (d == null) return;
         d.bandage = true;
         d.bandageTime = Now + DurationSeconds;
-        Log.Info("Verband angelegt bis " + DateTimeOffset.FromUnixTimeSeconds(d.bandageTime).ToLocalTime().ToString("HH:mm:ss"));
     }
 
     /// <summary>
@@ -114,8 +100,7 @@ public static class BandageUtils
         Restore(cfg, d.hairBandage, d.hairColorBandage);
         cfg.Remove(ClothePart.Beard);
         Restore(cfg, d.beardBandage, d.beardColorBandage);
-        AvatarConfigs.SetLocal(cfg);   // speichert (Server + DATA) und meldet das Aussehen an die Mitspieler
-        Log.Info("Verband abgenommen");
+        AvatarConfigs.SetLocal(cfg);
         return true;
     }
 
@@ -141,6 +126,6 @@ public static class BandageUtils
                 if (TDU2Session.LoggedIn) TDU2Session.SaveAsync();
             }
         }
-        catch (Exception ex) { Log.Warn("Verband: " + ex.Message); }
+        catch (Exception ex) { Log.Error("Bandage: " + ex.Message); }
     }
 }

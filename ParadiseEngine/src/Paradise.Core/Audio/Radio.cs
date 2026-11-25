@@ -254,7 +254,7 @@ public sealed class Radio
         try { result = mciSendString(command, null, 0, IntPtr.Zero); }
         catch (Exception ex)
         {
-            Log.Warn("Radio: MCI not available: " + ex.Message);
+            Log.Error("Radio: MCI not available: " + ex.Message);
             return -1;
         }
         if (result != 0)
@@ -329,8 +329,6 @@ public sealed class Radio
             _radioData = t.Result;
             if (!string.IsNullOrEmpty(_radioData.Error))
                 Log.Warn("Radio: " + _radioData.Error);
-            else
-                Log.Info($"Radio: {_radioData.Stations.Count} Sender, {_radioData.Messages.Count} Messages, {_radioData.BankPaths.Count} Banks.");
         }
         if (_pendingHash != 0 && _radioData != null)
         {

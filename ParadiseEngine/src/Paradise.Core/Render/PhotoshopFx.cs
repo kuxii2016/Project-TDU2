@@ -39,7 +39,7 @@ public static class PhotoshopFx
     /// <summary>
     /// "Gamma" der Tabelle (§2.6): 0.8 bei Helligkeitsoption 0.5 (Grundwert). Bereich im Original [0.4, 1.6].
     /// </summary>
-    public static float Gamma = 0.8f;
+    public static float Gamma = .85f;
 
     /// <summary>"Blurred Lumincance Factor" (§2.1): Anteil der Unschärfe an der Tabellenzeile, fest 0.6 (Bereich [0, 4]).</summary>
     public static float BlurredLumFactor = 0.6f;

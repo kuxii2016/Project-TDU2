@@ -16,11 +16,9 @@ public static class TextureInfo
     /// <summary>Create a texture from a TextureDef (like TextureDef.CreateTexture) and store the information. Main thread.</summary>
     public static IGpuTexture? Create(IRenderer r, TextureDef def, TextureWrap u, TextureWrap v, bool linear = false)
     {
-        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var up = def.ToUpload(u, v);
         if (up == null) return null;
         up.Linear = linear;
-        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
         IGpuTexture tex;
         try
         {
@@ -28,16 +26,11 @@ public static class TextureInfo
         }
         catch (Exception ex)
         {
-            Diagnostics.Log.Warn($"Textur {def.Name}: {ex.Message}");
+            Diagnostics.Log.Error($"Textur {def.Name}: {ex.Message}");
             return null;
         }
-        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
         _info.AddOrUpdate(tex, new Info { Packed = def.LooksPacked(), MeanLum = def.MeanLum() });
-        long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
         double k = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        Diagnostics.PerfLog.Add("Textur: Umwandeln (je Textur)", (t1 - t0) * k);
-        Diagnostics.PerfLog.Add("Textur: GPU anlegen (je Textur)", (t2 - t1) * k);
-        Diagnostics.PerfLog.Add("Textur: Helligkeit/Packung (je Textur)", (t3 - t2) * k);
         return tex;
     }
 
@@ -135,7 +128,7 @@ public sealed class GlobalTextureCache
         }
         catch (Exception ex)
         {
-            Diagnostics.Log.Warn($"Texturindex {path}: {ex.Message}");
+            Diagnostics.Log.Error($"Textureindex {path}: {ex.Message}");
         }
     }
 
@@ -149,9 +142,7 @@ public sealed class GlobalTextureCache
         if (_loaded.TryGetValue(key, out var t)) return t;
         (BnkArchive bank, BnkEntry entry) src;
         lock (_index) { if (!_index.TryGetValue(key, out src)) return null; }
-        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var def = TextureDef.Parse(src.bank.Read(src.entry), src.entry.Name);
-        Diagnostics.PerfLog.Add("Textur: Bank lesen (je globale Textur)", System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
         t = def != null ? TextureInfo.Create(_renderer, def, u, v) : null;
         _loaded[key] = t;
         return t;

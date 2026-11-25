@@ -37,7 +37,8 @@ public struct ObjectVertex
 }
 
 /// <summary>GPU-Texturformate. BC1/BC3 werden direkt hochgeladen, Rgba8 z. B. für CPU-dekodiertes DXT3.</summary>
-public enum GpuTextureFormat { Bc1, Bc3, Rgba8 }
+/// <remarks>Bc2 (DXT3, s310): .2db mit Format 0x88 und D3D-Formatbyte 0x35 (BMAP +0x2C) – arrows.2db, r_m_00.2db.</remarks>
+public enum GpuTextureFormat { Bc1, Bc3, Rgba8, Bc2 }
 
 /// <summary>Adressmodus (entspricht Unity TextureWrapMode).</summary>
 public enum TextureWrap { Repeat, Clamp, Mirror }
@@ -140,6 +141,12 @@ public sealed class MaterialDesc
     /// (Spot-Hologramme, transparente TD_Gouraud-Symbole im Interieur).
     /// </summary>
     public bool Glow;
+    /// <summary>Original-Renderer (GraphicsSettings.RenderUseOriginal): übersetzte Original-Shader statt der eigenen Shader.</summary>
+    public Paradise.Core.Render.Original.OriginalMaterial? Original;
+    /// <summary>Laufzeit-Textur für einen Slot des Original-Materials (z. B. Foto im Bilderrahmen, gDetailTexSampler); setzt der
+    /// Renderer bei jedem Schreiben des Original-Sets, damit sie auch ein neu aufgebautes OriginalMaterial übersteht. −1 = keine.</summary>
+    public int OriginalOverrideSlot = -1;
+    public IGpuTexture? OriginalOverrideTex;
 
     // gemeinsam
     public IGpuTexture? Main;                      // _MainTex (Objekt: COLOR, Terrain: Colormap)
@@ -182,6 +189,9 @@ public sealed class MaterialDesc
     public float NightLmDayBoost = 1f;             // Tageshelligkeit (Game/Config)
     /// <summary>Interieur (Unity InteriorFx _NightMode, _NightLitScale 0, _NightAmbient 0.9): immer die Nacht-Lightmap, keine Sonne.</summary>
     public bool InteriorLm;
+    /// <summary>TD_Furnitures-Formel (TD_Furnitures.sob ps): DETAIL x baseColor x lerp(night.rgb, OCCLUSION x Licht, nightlmap.x)
+    /// + night.rgb x night.a x nightlmap.y – COLOR (Slot 0 = gOcclusionTexSampler) nur im Tageslicht-Anteil, keine Vertexfarbe.</summary>
+    public bool FurnitureLm;
     /// <summary>Unity TDU2Object _ReflMix: Anteil der Bodenspiegelung (TD_Furnitures: 1 - baseColor.a bzw. biasCoeff x 0,8).</summary>
     public float ReflMix;
     // TDU2/MapTerrain
@@ -310,6 +320,28 @@ public struct LampLight
     public Vector3 Direction;
 }
 
+/// <summary>
+/// Scheinwerfer-Projektor des Originals (ein Spot je Auto, exe-Manager 0xd1b140, Konstanten 0xd1cc80, Shader
+/// edrender_pfx_lightness PS1/PS2), Render-Raum. Geht nur in den Lichtpuffer s15 (y/z) der Original-Shader.
+/// </summary>
+public struct HeadlightProjector
+{
+    /// <summary>Spot_PositionDropOffNear.xyz.</summary>
+    public Vector3 Position;
+    /// <summary>Spot_PositionDropOffNear.w: Einblendung über |P − Pos| von Near − 0,5 bis Near.</summary>
+    public float Near;
+    /// <summary>Spot_Direction (normiert, Leuchtrichtung = z der Projektor-Ansicht).</summary>
+    public Vector3 Direction;
+    /// <summary>vars.z = Intensität · Reichweite · Einschaltgrad² · Kamera-Abblendung (exe 0xd1d380).</summary>
+    public float Strength;
+    /// <summary>Oben-Vektor der Projektor-Ansicht (LookAt 0xdaf220, y).</summary>
+    public Vector3 Up;
+    /// <summary>1 / tan(Außenwinkel / 2) der Cookie-Projektion (Sichtfeld = E+0x88 in Grad für Breite und Höhe).</summary>
+    public float Cot;
+    /// <summary>Spot_Attenuation: x Reichweite·y, y 1/(Reichweite − DropOff), z −cos(außen/2)·w, w 1/(cos(innen/2) − cos(außen/2)).</summary>
+    public Vector4 Attenuation;
+}
+
 /// <summary>Zähler des letzten Frames + Gerätedaten (Debug-UI).</summary>
 public sealed class RenderStats
 {
@@ -336,6 +368,22 @@ public interface IGpuMesh : IDisposable
 }
 
 /// <summary>Globale Frame-Werte (in Unity: Shader.SetGlobal* + RenderSettings/Licht). Vom Streamer/Wetter gesetzt.</summary>
+/// <summary>
+/// Wetterwerte für die Original-Shader (OpenTDU2 eden_scene_view: sun_diffuse, sun_specular, sun_ambient, fog_*,
+/// outside_street_lightmap, building_nightwindow_frequency, building_shop_front_back_lighting) – ohne DiffuseScale/AmbientScale/FogStrength.
+/// </summary>
+public struct OriginalLightGlobals
+{
+    public bool Set;
+    public Vector3 SunDiffuse, SunSpecular, Ambient, FogColor;
+    /// <summary>(fog_start, fog_end, fog_max, 1 / (end - start)); fog_max 0 = kein Nebel.</summary>
+    public Vector4 FogConfig;
+    public float Street, NightWindows;
+    public Vector2 Shop;
+    /// <summary>spot_exterior_lightmap_day_night.xy (s309): NIGHTLMAP der Spot-Exterior-Gebäude (exe 0xc61320 -> 0xc60dc0).</summary>
+    public Vector2 SpotExteriorDayNight;
+}
+
 public struct FrameGlobals
 {
     public Vector3 CameraPosition;
@@ -368,12 +416,23 @@ public struct FrameGlobals
     /// <summary>Straßenlampen (Unity: Spot-Lights an den nächsten Masten, nachts). Render-Raum.</summary>
     public LampLight[]? Lamps;
     public int LampCount;
+    /// <summary>Davon die ersten n = Fahrzeuglampen der Engine (MapStreamer.ExtraLamps, Unity-Spots). Der Lichtpuffer s15 der
+    /// Original-Shader nutzt sie nicht mehr, sondern <see cref="Projectors"/> (s311).</summary>
+    public int VehicleLampCount;
+    /// <summary>Scheinwerfer-Projektoren des Originals (einer je Auto) für den Lichtpuffer s15 (MapStreamer.HeadlightProjectors).</summary>
+    public HeadlightProjector[]? Projectors;
+    public int ProjectorCount;
     public float ShadowStrength;        // Light.shadowStrength (0 = keine Schatten)
     public float ShadowDistance;        // QualitySettings.shadowDistance (m)
     public Vector2 Origin;              // _TDU2Origin.xz: Render-Position des Spielursprungs (Wasserwellen)
     public float Time;                  // _Time.y (Sekunden, Wind/Animation) – setzt der Renderer, wenn 0
     /// <summary>Licht der Autos wie im Original (World/TDU2CarLighting, GS_CarDisplay). On = false -> Autos nutzen Sonne/Ambient oben.</summary>
     public CarLightGlobals CarLight;
+    /// <summary>Instrumentenbeleuchtung TD_DashBoard „HeadlightsIntensity“.x je Bild (exe 0x717ee0 -> 0x70eaf0): Wetterwert
+    /// car_headlights_intensity (im Tunnel ab Zustand 5 tunnel_car_headlights_intensity, noch nicht portiert).</summary>
+    public float DashHeadlights;
+    /// <summary>Original-Renderer (Render/Original): Wetterwerte unverändert wie im Original (Gamma-Raum, ohne Engine-Skalierung).</summary>
+    public OriginalLightGlobals OrigLight;
     /// <summary>Original-Himmel td_dome (World/TDU2SkyDome). On = false -> Ersatzhimmel.</summary>
     public SkyDomeGlobals Sky;
     /// <summary>TD_CloudMesh (Gamma-Raum): Instance_Color = clouds_cloud3dcolor, ColorDown = clouds_cloud3dcolor2,

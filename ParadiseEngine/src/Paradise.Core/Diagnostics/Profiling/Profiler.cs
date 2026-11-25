@@ -297,6 +297,9 @@ public static class Profiler
         }
         f.CategoryMs[(int)ProfilerCategory.Other] += System.Math.Max(0, f.Ms - sum);
 
+        // Netzwerk zuerst abfragen (Provider liefert kumulative Zähler, Sample rechnet Differenzen je Bild)
+        f.Network = ProfilerNetwork.Sample();
+
         var counters = ProfilerCounter.All;
         f.Counters = new double[counters.Length];
         for (int i = 0; i < counters.Length; i++) f.Counters[i] = counters[i].Sample();
@@ -323,6 +326,7 @@ public static class Profiler
     {
         lock (s_framesLock) s_frames.Clear();
         s_gc?.Clear();
+        ProfilerNetwork.Reset();
     }
 
     /// <summary>GC-Pausen im Zeitraum (Stopwatch-Ticks).</summary>

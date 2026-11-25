@@ -203,12 +203,12 @@ namespace Paradise.Core.Vehicles
                 {
                     var sf = CarDatabase.FindFile(System.IO.Path.Combine(bnkDir, "scenarics", "stickers"), sticker + ".2db");
                     if (sf != null) { a.Sticker = TextureDef.Parse(GameFiles.ReadAllBytes(sf), sticker); a.StickerName = sticker; }
-                    else a.Log.Add("Beklebung " + sticker + ".2db nicht gefunden (scenarics/stickers)");
+                    else a.Log.Add("" + sticker + ".2db not found (scenarics/stickers)");
                 }
                 catch (Exception ex) { a.Log.Add("Beklebung " + sticker + ": " + ex.Message); }
             }
 
-            var carBankPath = CarDatabase.CarBank(bnkDir, car) ?? throw new System.IO.FileNotFoundException("Fahrzeugbank fehlt: vehicules/high/" + car.FileName + ".bnk");
+            var carBankPath = CarDatabase.CarBank(bnkDir, car) ?? throw new System.IO.FileNotFoundException("Vehicle bank missing: vehicules/high/" + car.FileName + ".bnk");
             var carBank = BnkArchive.Open(carBankPath);
             a.Body = CarScene.Load(carBank, car.FileName);
             a.AddTextures(carBank);
@@ -615,6 +615,10 @@ namespace Paradise.Core.Vehicles
                 else if (metal > 0.8f) m.Desc.ClearCoat = 0.35f;
             }
             m.Name = string.IsNullOrEmpty(def.Name) ? "Car" : def.Name;
+            // Original-Renderer: Shader des Karosserie-Materials, Parameter des Lacks (colorSrc) vorrangig
+            m.Desc.Original = Paradise.Core.Render.Original.OriginalMaterial.For(def, getTex, colorSrc, interior);
+            // Licht-Instanz des Autos (exe 0x744990 GS_CarDisplay: car+0x79a0) statt der Sonne
+            if (m.Desc.Original != null) m.Desc.Original.Car = true;
 
             return m;
         }
@@ -1147,13 +1151,13 @@ namespace Paradise.Core.Vehicles
                 if (m != null && m.IsCarShader && IsPaintName(m.Name) && !PaintMaterials.Contains(m))
                     PaintMaterials.Add(m);
             }
-            if (PaintMaterials.Count == 0) { if (a.Sticker != null) Log.Warn("Beklebung " + a.StickerName + ": kein Lack-Material (\"Paint\") gefunden"); return; }
+            if (PaintMaterials.Count == 0) { if (a.Sticker != null) Log.Warn("Sticker " + a.StickerName + ": No paint material (“Paint”) found"); return; }
 
             IGpuTexture? sticker = null, dirt = null;
             if (a.Sticker != null)
             {
                 sticker = TextureInfo.Create(_r, a.Sticker, TextureWrap.Clamp, TextureWrap.Clamp);
-                if (sticker == null) Log.Warn("Beklebung " + a.StickerName + ": Texturformat nicht unterstützt");
+                if (sticker == null) Log.Warn("Sticker " + a.StickerName + ": Texture format not supported");
                 else Owned.Add(sticker);
             }
             if (a.DirtMap != null)

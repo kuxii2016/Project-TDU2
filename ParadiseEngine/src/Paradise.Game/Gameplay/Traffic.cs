@@ -1496,6 +1496,21 @@ public sealed partial class Traffic : IDisposable
         }
     }
 
+    /// <summary>
+    /// Scheinwerfer-Projektoren der Verkehrsautos (Original Art 1, exe-Autoschleife 0x764399 meldet jedes aktive Auto an, höchstens
+    /// 26 Slots; ab 400 m Kameraabstand abgeblendet, ab 650 m aus – das macht HeadlightProjectors.Add).
+    /// </summary>
+    public void CollectProjectors(VehicleManager vm, List<HeadlightProjector> output, Matrix4x4 gameToRender, Vector3 cameraRender)
+    {
+        var u2r = vm.UnityToRender(gameToRender);
+        foreach (var (c, d) in _near)
+        {
+            if (output.Count >= HeadlightProjectors.MaxSlots) break;
+            if (c.Lights == null || c.Model == null || !c.Visible) continue;
+            c.Lights.CollectProjector(output, PoseUnity(vm, c), u2r, false, cameraRender);
+        }
+    }
+
     /// <summary>Dargestellte Lage: zwischen Lage vor und nach dem letzten Physikschritt (Alpha) – sonst ruckelt das Auto gegenüber
     /// dem eigenen (interpolierten) Auto, weil die KI im festen Takt rechnet.</summary>
     Vector3 VisPos(Car c)

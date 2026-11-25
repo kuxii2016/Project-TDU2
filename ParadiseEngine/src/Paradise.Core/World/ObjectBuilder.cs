@@ -165,6 +165,7 @@ public static class ObjectBuilder
             var (v, idx) = ToObjectVertices(md, i, ref min, ref max);
             if (idx.Length == 0) continue;
             var mesh = r.CreateMesh(v, idx);
+            if (i < md.SubMeshUvSets.Count && md.SubMeshUvSets[i] >= 4) r.SetFourUvSets(mesh);   // Original-Renderer: TEXCOORD2/3 = Satz 2/3 (MeshData: Uv2 = letzter Satz)
             res.Owned.Add(mesh);
             parts.Add(new RenderPart { Mesh = mesh, Material = mat });
             collParts.Add((v, idx));
@@ -362,7 +363,6 @@ public static class ObjectBuilder
             var local = m;
             if (zeroLocalPosition != null && zeroLocalPosition(name) && local.Translation != Vector3.Zero)
             {
-                Diagnostics.Log.Info($"Fixe Objektposition: {name} | Alt: {local.Translation}");
                 local.Translation = Vector3.Zero;
             }
             var world = local * parent;

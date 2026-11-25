@@ -116,7 +116,6 @@ public sealed class GAME_MODE_CINE : GameModeHandler
         {
             _st = St.Driving; _timer = 90f;
             GameMode.Push(Gamemode.GAME_MODE_MISSION);   // Story-Schritt, keine freie Fahrt (keine Mitspieler)
-            Log.Info("Geschichte: erste freie Fahrt (" + _timer + " s bis Meeting Tess)");
         }
 
         void CleanupScene()
@@ -260,7 +259,6 @@ public sealed class GAME_MODE_CINE : GameModeHandler
             StoryProgress.SetGaveStoryCar(Story.Nick, false);
             if (TDU2Session.LoggedIn) TDU2Session.SaveAsync();
             SessionAutosave.Schedule(3f);
-            Log.Info("Geschichte: Tess nimmt den California zurück");
         }
 
         public override void Exit() { _scene?.Dispose(); _scene = null; }

@@ -5,7 +5,8 @@ namespace Paradise.ProfilerUI;
 
 /// <summary>
 /// Hauptfenster wie der Unity-Profiler: oben Toolbar (Record, Clear, Bild vor/zurück, Current, Export),
-/// darunter die Module (CPU, GPU, Rendering, Memory, Physics) als Graphen, unten Hierarchy oder Timeline des gewählten Bildes.
+/// darunter die Module (CPU, GPU, Rendering, Memory, Physics, Network) als Graphen,
+/// unten Hierarchy, Timeline oder Network-Tree des gewählten Bildes.
 /// </summary>
 internal sealed class ProfilerForm : Form
 {
@@ -25,13 +26,14 @@ internal sealed class ProfilerForm : Form
     readonly ToolStripButton _record, _clear, _prev, _next, _current, _export, _openFolder;
     readonly ToolStripLabel _frameLabel, _status;
     readonly List<ChartView> _charts = new();
-    readonly ChartView _cpu, _gpu, _rendering, _memory, _physics, _flash;
+    readonly ChartView _cpu, _gpu, _rendering, _memory, _physics, _flash, _network, _networkPlayers;
     readonly ComboBox _view, _thread;
     readonly CheckBox _allFrames;
     readonly TextBox _search;
     readonly Label _summary;
     readonly HierarchyView _hierarchy = new() { Dock = DockStyle.Fill };
     readonly TimelineView _timeline = new() { Dock = DockStyle.Fill, Visible = false };
+    readonly NetworkView _networkView = new() { Dock = DockStyle.Fill, Visible = false };
     readonly SplitContainer _split;
     string? _lastExport;
 
@@ -99,7 +101,11 @@ internal sealed class ProfilerForm : Form
         _flash = CounterChart("Flash (UI)", ProfilerCounters.Flash);
         foreach (var s in _flash.Series)
             if (s.Name is "Movies loaded" or "Flash draw calls") s.Visible = false;   // per Klick auf die Legende einblendbar
-        _charts.AddRange(new[] { _cpu, _gpu, _rendering, _memory, _physics, _flash });
+
+        // Netzwerk: echter Traffic (Server-TCP/UDP, P2P direkt, Relay) und Mitspieler je Bild
+        _network = NetworkTrafficChart();
+        _networkPlayers = NetworkPlayersChart();
+        _charts.AddRange(new[] { _cpu, _gpu, _rendering, _memory, _physics, _flash, _network, _networkPlayers });
 
         var chartPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = ProfilerTheme.Graph };
         for (int i = _charts.Count - 1; i >= 0; i--)   // Dock=Top: zuletzt hinzugefügt liegt oben
@@ -113,7 +119,7 @@ internal sealed class ProfilerForm : Form
         // ---------------------------------------------------------------- unten: Hierarchy / Timeline
         var detailBar = new Panel { Dock = DockStyle.Top, Height = 28, BackColor = ProfilerTheme.PanelDark };
         _view = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 4, Top = 3, Width = 110, BackColor = ProfilerTheme.Panel, ForeColor = ProfilerTheme.Text, FlatStyle = FlatStyle.Flat };
-        _view.Items.AddRange(new object[] { "Hierarchy", "Timeline" });
+        _view.Items.AddRange(new object[] { "Hierarchy", "Timeline", "Network" });
         _view.SelectedIndex = 0;
         _thread = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 120, Top = 3, Width = 200, BackColor = ProfilerTheme.Panel, ForeColor = ProfilerTheme.Text, FlatStyle = FlatStyle.Flat };
         _thread.Items.Add("Main Thread");
@@ -127,22 +133,28 @@ internal sealed class ProfilerForm : Form
 
         _view.SelectedIndexChanged += (_, _) =>
         {
-            bool tl = _view.SelectedIndex == 1;
+            bool tl = _view.SelectedIndex == 1, nw = _view.SelectedIndex == 2;
             _timeline.Visible = tl;
-            _hierarchy.Visible = !tl;
-            _thread.Enabled = _allFrames.Enabled = _search.Enabled = expand.Enabled = collapse.Enabled = !tl;
+            _networkView.Visible = nw;
+            _hierarchy.Visible = !tl && !nw;
+            _thread.Enabled = !tl && !nw;
+            _allFrames.Enabled = !tl;
+            _search.Enabled = !tl;
+            expand.Enabled = collapse.Enabled = !tl;
+            _search.PlaceholderText = nw ? "Search network…" : "Search marker…";
             _shownFrame = -2;
             RefreshData();
         };
         _thread.SelectedIndexChanged += (_, _) => { _shownFrame = -2; RefreshData(); };
         _allFrames.CheckedChanged += (_, _) => { _shownFrame = -2; RefreshData(); };
-        _search.TextChanged += (_, _) => _hierarchy.SetFilter(_search.Text);
+        _search.TextChanged += (_, _) => { _hierarchy.SetFilter(_search.Text); _networkView.SetFilter(_search.Text); };
         expand.Click += (_, _) => _hierarchy.ExpandAll(true);
         collapse.Click += (_, _) => _hierarchy.ExpandAll(false);
 
         var detail = new Panel { Dock = DockStyle.Fill, BackColor = ProfilerTheme.Panel };
         detail.Controls.Add(_hierarchy);
         detail.Controls.Add(_timeline);
+        detail.Controls.Add(_networkView);
         detail.Controls.Add(detailBar);
 
         _split = new SplitContainer
@@ -190,6 +202,55 @@ internal sealed class ProfilerForm : Form
         return ch;
     }
 
+    /// <summary>Bytes/s je Richtung und Transportweg (Werte kommen aus dem Netzwerk-Snapshot je Bild).</summary>
+    ChartView NetworkTrafficChart()
+    {
+        var ch = new ChartView { Title = "Network Traffic" };
+        int i = 0;
+        void Add(string name, string group, bool incoming)
+        {
+            ch.Series.Add(new ChartSeries
+            {
+                Name = name,
+                Color = ProfilerTheme.Series(i++),
+                Value = f => f.Network.GroupBytes(group, incoming) * 1000.0 / Math.Max(0.1, f.Ms),
+                Format = v => ProfilerCounter.FormatBytes(v) + "/s",
+            });
+        }
+        Add("TCP in", ProfilerNetworkGroups.Tcp, true);
+        Add("TCP out", ProfilerNetworkGroups.Tcp, false);
+        Add("UDP in", ProfilerNetworkGroups.Udp, true);
+        Add("UDP out", ProfilerNetworkGroups.Udp, false);
+        Add("P2P in", ProfilerNetworkGroups.Direct, true);
+        Add("P2P out", ProfilerNetworkGroups.Direct, false);
+        Add("Relay in", ProfilerNetworkGroups.Relay, true);
+        Add("Relay out", ProfilerNetworkGroups.Relay, false);
+        ch.Height = 18 + ch.Series.Count * 14 + 8;
+        return ch;
+    }
+
+    /// <summary>Mitspieler/Pakete als Momentanwerte – nicht in Bytes.</summary>
+    ChartView NetworkPlayersChart()
+    {
+        var ch = new ChartView { Title = "Network Players / Packets" };
+        int i = 4;   // andere Farbe als die Traffic-Reihen
+        void Add(string name, Func<ProfilerFrame, double> value)
+        {
+            ch.Series.Add(new ChartSeries
+            {
+                Name = name,
+                Color = ProfilerTheme.Series(i++),
+                Value = value,
+                Format = ProfilerCounter.FormatCount,
+            });
+        }
+        foreach (var name in new[] { "Lobby peers", "Direct peers", "Relay peers", "Remote cars", "Players online" })
+            Add(name, f => f.Network.Value(name));
+        Add("Packets/s", f => (f.Network.InCount + f.Network.OutCount) * 1000.0 / Math.Max(0.1, f.Ms));
+        ch.Height = 18 + ch.Series.Count * 14 + 8;
+        return ch;
+    }
+
     public void FocusMe()
     {
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
@@ -206,7 +267,7 @@ internal sealed class ProfilerForm : Form
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         // Bild vor/zurück wie Unity (nicht, wenn die Hierarchy oder ein Eingabefeld die Pfeile braucht)
-        if (!_hierarchy.Focused && !_search.Focused && !_thread.Focused && !_view.Focused)
+        if (!_hierarchy.Focused && !_networkView.Focused && !_search.Focused && !_thread.Focused && !_view.Focused)
         {
             if (keyData == Keys.Left) { Step(-1); return true; }
             if (keyData == Keys.Right) { Step(1); return true; }
@@ -284,23 +345,33 @@ internal sealed class ProfilerForm : Form
             _summary.Text = Profiler.Available ? (Profiler.Enabled ? "Waiting for frames…" : "Recording paused.") : "";
             _hierarchy.SetData(null, 1);
             _timeline.SetData(_frames, _gc, -1);
+            _networkView.SetData(ProfilerNetworkSnapshot.Empty, 16.7);
             return;
         }
 
         _summary.Text = "CPU: " + selFrame.Ms.ToString("0.00", Inv) + "ms (" + (1000.0 / Math.Max(0.001, selFrame.Ms)).ToString("0", Inv) + " FPS)" +
                         (selFrame.Gpu.Length > 0 ? "   GPU: " + selFrame.GpuMs.ToString("0.00", Inv) + "ms" : "") +
                         "   GC Alloc: " + ProfilerCounter.FormatBytes(selFrame.Counter(ProfilerCounters.GcAllocFrame)) +
+                        "   Net: ↓ " + ProfilerCounter.FormatBytes(selFrame.Network.InBytes * 1000.0 / Math.Max(0.1, selFrame.Ms)) +
+                        " ↑ " + ProfilerCounter.FormatBytes(selFrame.Network.OutBytes * 1000.0 / Math.Max(0.1, selFrame.Ms)) +
                         (_gcFrames.Contains(sel) ? "   [GC]" : "");
 
+        bool all = _allFrames.Checked;
         if (_timeline.Visible)
         {
             _timeline.SetData(_frames, _gc, sel);
             return;
         }
+        if (_networkView.Visible)
+        {
+            var snap = all ? ProfilerNetworkSnapshot.Merge(_frames.Select(f => f.Network), true) : selFrame.Network;
+            double ms = all && _frames.Count > 0 ? _frames.Average(f => f.Ms) : selFrame.Ms;
+            _networkView.SetData(snap, ms);
+            return;
+        }
 
         UpdateThreadList(selFrame);
         string thread = _thread.SelectedItem as string ?? "Main Thread";
-        bool all = _allFrames.Checked;
         bool rebuild = selFrame.Index != _shownFrame || thread != _shownThread || all != _shownAll;
         if (all && !rebuild && Profiler.Enabled && DateTime.Now >= _nextAllRebuild) rebuild = true;
         if (!rebuild) return;

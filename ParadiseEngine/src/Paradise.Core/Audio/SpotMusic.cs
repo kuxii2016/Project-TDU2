@@ -54,8 +54,6 @@ public static class SpotMusic
                     {
                         if (name != null)
                             Log.Warn("Spot music " + name + ".wav cannot be decoded");
-                        else
-                            Log.Info("Spot music: empty " + code);
                         return;
                     }
                     _current = name;

@@ -5,6 +5,7 @@ using Paradise.Core.Files;
 using Paradise.Core.Flash;
 using Paradise.Core.Formats;
 using Paradise.Core.Online;
+using Paradise.Core.Photos;
 using Paradise.Core.Physics;
 using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
@@ -42,7 +43,7 @@ public class GAME_MODE_LIVING : InteriorUtils
 
     internal static bool HomeMenuOpen => _diaryOpen || _myHouse != HouseMode.None || _mediaOpen;
     /// <summary>Maus frei für den Film (Tagebuch, Fernseher, Möbel-/Material-Editor ohne Vorschau).</summary>
-    internal static bool HomeMenuFreesMouse => _mediaOpen || _diaryOpen || ((_myHouse == HouseMode.Furniture || _myHouse == HouseMode.Material) && !_housePreview);
+    internal static bool HomeMenuFreesMouse => _mediaOpen || _diaryOpen || ((_myHouse == HouseMode.Furniture || _myHouse == HouseMode.Material || _myHouse == HouseMode.Frame) && !_housePreview);
     /// <summary>Umsehen/Laufen erlaubt (kein Tagebuch/Fernseher; im Editor nur in der Vorschau).</summary>
     internal static bool HomeAllowsLook => !_mediaOpen && !_diaryOpen && (_myHouse == HouseMode.None || _myHouse == HouseMode.Walk || _housePreview);
 
@@ -108,7 +109,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         _ui.SetVariable("/:SelItemType", "diary");
         _ui.SetVariable("/:WhatDiaryMenu", "diary");
         _ui.SetValue("/:LockMyHouse", false);
-        _ui.SetValue("/:LockMyPhotos", true);      // Fotoalbum noch nicht umgesetzt -> gesperrt (Film spielt "wrong")
+        _ui.SetValue("/:LockMyPhotos", false);     // Fotoalbum (PhotoBook, Fotos aus dem Fotomodus des Pausemenüs)
         _ui.SetVariable("/:BtValid", "");
         _diaryStuckAt = -1f;
         var sv = TDU2Session.Save;
@@ -222,6 +223,7 @@ public class GAME_MODE_LIVING : InteriorUtils
 
     internal static void OnDiaryCommand(string c)
     {
+        if (PhotoBook.Command(c, _ui)) return;   // "Meine Fotos" (photo_book_content)
         switch (c)
         {
             case "wmon":                 // diary_out (Bild 89): zurück in den Laufmodus
@@ -290,8 +292,22 @@ public class GAME_MODE_LIVING : InteriorUtils
 
     internal static int LifeField(MyLifeData? l, string id)
     {
-        if (l != null) foreach (var e in l.fields) if (e.k == id && int.TryParse(e.v, out int v)) return v;
+        if (l != null) foreach (var e in l.fields) if (e.k == id && int.TryParse(e.v, out int v)) return LifeIndex(id, v);
         return -1;
+    }
+
+    /// <summary>Wert aus dem Savegame (MyLife.AttitudeId …) als Listenindex. Steht dort der Text-Hashcode statt des Index,
+    /// wird er auf den Index umgesetzt [vermutet: die exe speichert den Index].</summary>
+    static int LifeIndex(string id, int v)
+    {
+        foreach (var li in LifeLists)
+            if (li.Id == id)
+            {
+                if (v >= 0 && v < li.Hc.Length) return v;
+                int i = Array.IndexOf(li.Hc, v);
+                return i;
+            }
+        return v;
     }
 
     internal static void SetLifeField(MyLifeData? l, string id, int v)
@@ -321,16 +337,18 @@ public class GAME_MODE_LIVING : InteriorUtils
         _ui.SetVariable("/:Money", (sv != null ? sv.money : 0).ToString("N0", de) + " $");
         _ui.SetVariable("/:NbCars", cars.ToString());
         _ui.SetVariable("/:NbHouses", Paradise.Core.Savegame.TDU2Garage.OwnedNames(sv).Count.ToString());
-        foreach (var g in new[] { "Racing", "Social", "Cruising", "Collection" })
-        {
-            _ui.SetValue("/:" + g + "Points", 0);
-            _ui.SetValue("/:" + g + "LvlPoints", 0);
-            _ui.SetValue("/:Is" + g + "GaugeFull", false);
-        }
-        _ui.SetValue("/:GlobalLevel", 1);
-        _ui.SetValue("/:GlobalPoints", 0);
-        _ui.SetValue("/:GlobalLvlPoints", 0);
-        _ui.SetVariable("/:GlobalLevelCount", "1");
+        // Fortschritt wie das Pausemenü (UserProgress, exe MngMyLife-Ausgabe "Racing Level / Collector Level …")
+        var p = sv != null ? new Paradise.Game.Utils.UserProgress(sv) : new Paradise.Game.Utils.UserProgress();
+        PushLifeGauge("Racing", (int)p.RacingPoints, (int)p.RacingLevel, 10000, 15);
+        PushLifeGauge("Collection", (int)p.CollectionPoints, (int)p.CollectionLevel, 10000, 15);
+        PushLifeGauge("Social", (int)p.SocialPoints, (int)p.SocialLevel, 10000, 15);
+        PushLifeGauge("Cruising", (int)p.CruisingPoints, Paradise.Game.Gameplay.Discovery.Current?.Level ?? (int)p.CruisingLevel, 14500, 18);
+        const int maxGlobal = 73;   // UserProgress.GlobalMaxLevel (19+20+17+17)
+        int global = Math.Clamp((int)p.GlobalLevel, 0, maxGlobal);
+        _ui.SetValue("/:GlobalLevel", global);
+        _ui.SetValue("/:GlobalPoints", Math.Min(100, global * 100 / maxGlobal));
+        _ui.SetValue("/:GlobalLvlPoints", maxGlobal);
+        _ui.SetVariable("/:GlobalLevelCount", global.ToString(CultureInfo.InvariantCulture));
         _ui.SetValue("/:HasClub", false);
         _ui.SetValue("/:ClubLevel", 0);
         _ui.SetVariable("/:ClubName", " ");
@@ -341,18 +359,52 @@ public class GAME_MODE_LIVING : InteriorUtils
         _ui.SetVariable("/:DrivenDistance", km.ToString("N0", de) + " km");
         _ui.SetVariable("/:DrivenDistanceFR", km.ToString("N0", de) + " km");
         _ui.SetVariable("/:MostUsedCarKm", bestKm.ToString("N0", de) + " km");
+        // Sammler-Kasten (exe: Nb house/vehicle/clothes/furnitures/stickers/haircuts/surgery owned)
+        var col = p.getMyLifeCollector;
         _ui.SetVariable("/:NbVehOwned", cars.ToString());
-        _ui.SetVariable("/:NbVehiclesBought", cars.ToString());
-        _ui.SetVariable("/:NbClothesBought", (sv?.ownedClothes?.Count ?? 0).ToString());
-        _ui.SetVariable("/:NbFurnituresBought", (sv?.ownedFurniture?.Count ?? 0).ToString());
-        _ui.SetVariable("/:NbStickersBought", (sv?.stickerBoards?.Count ?? 0).ToString());
+        _ui.SetVariable("/:NbVehiclesBought", col.NbVehiclesOwned.ToString());
+        _ui.SetVariable("/:NbClothesBought", col.NbClothesOwned.ToString());
+        _ui.SetVariable("/:NbFurnituresBought", col.NbFurnituresOwned.ToString());
+        _ui.SetVariable("/:NbStickersBought", col.NbStickersOwned.ToString());
+        _ui.SetVariable("/:NbHaircutsBought", col.NbHaircutsTried.ToString());
+        _ui.SetVariable("/:NbSurgeriesBought", col.NbSurgeryTried.ToString());
         _ui.SetVariable("/:EdCarSticked", (sv?.liveries?.Count ?? 0).ToString());
-        _ui.SetVariable("/:NbHousesTotal", Paradise.Core.Savegame.TDU2Garage.OwnedNames(sv).Count.ToString());
-        foreach (var z in new[] { "NbCarUpgraded", "NbEventsWon", "NbPhotosIDone", "NbPhotosHDone", "NbFriends", "NbFriendsInvited",
-                                  "NbInstantWon", "NbInstantTotal", "NbMultiWon", "NbMultiTotal", "NbCoopPlayed", "NbChasePlayed", "NbSurgeriesBought" })
-            _ui.SetVariable("/:" + z, "0");
-        _ui.SetVariable("/:NbWrecksFound", (Paradise.Game.Gameplay.Wrecks.Current?.FoundCount ?? 0).ToString());
-        foreach (var z in new[] { "PlayTime", "GameCompletion", "UnlockedRoadsPercent", "LongestCruise", "BestJump", "BestDrift", "BestDodgeChain", "BestFrogSession" })
+        _ui.SetVariable("/:NbHousesBought", col.NbHouseOwned.ToString());
+        _ui.SetVariable("/:NbHousesTotal", col.NbHouseOwned.ToString());
+        _ui.SetVariable("/:NbCarUpgraded", "0");   // kein Zähler im Spielstand gelesen (StatisticsData.NbCarUpgrade) – offen
+        // Entdecker-Kasten (exe: Unlocked roads, Nb Events completed, Ibiza/Ohahu photos, Wrecks collected)
+        var cru = p.getMyLifeCruising;
+        long roadsTotal = Paradise.Game.Utils.UserProgress.TotalRoads;
+        _ui.SetVariable("/:UnlockedRoadsPercent", (roadsTotal > 0 ? Math.Min(100, cru.UnlockedRoads * 100 / roadsTotal) : 0).ToString(CultureInfo.InvariantCulture) + "%");
+        var disc = Paradise.Game.Gameplay.Discovery.Current;
+        var ev = disc?.BuildEventRows(); var ph = disc?.BuildPhotoRows();
+        _ui.SetVariable("/:NbEventsWon", (ev?.Sum(r => r.Found) ?? (int)cru.NbEventsCompleted).ToString());
+        _ui.SetVariable("/:NbEventsTotal", (ev?.Sum(r => r.Total) ?? 0).ToString());
+        _ui.SetVariable("/:NbPhotosIDone", (ph?.Where(r => r.Island.Contains("Ibiza", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Found) ?? 0).ToString());
+        _ui.SetVariable("/:NbPhotosITotal", (ph?.Where(r => r.Island.Contains("Ibiza", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Total) ?? 0).ToString());
+        _ui.SetVariable("/:NbPhotosHDone", (ph?.Where(r => !r.Island.Contains("Ibiza", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Found) ?? 0).ToString());
+        _ui.SetVariable("/:NbPhotosHTotal", (ph?.Where(r => !r.Island.Contains("Ibiza", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Total) ?? 0).ToString());
+        var wr = Paradise.Game.Gameplay.Wrecks.Current;
+        _ui.SetVariable("/:NbWrecksFound", (wr?.FoundCount ?? (int)cru.NbWrecksCollected).ToString());
+        _ui.SetVariable("/:NbWrecksTotal", (wr?.Total ?? 0).ToString());
+        // Wettbewerbs-Kasten (exe: Licences, Championships, Cups, Multi & Coop, Instant)
+        var rc = Paradise.Game.Gameplay.Racing.Current;
+        LifeRows("NbChampionshipsDone", "NbChampionshipsTotal", rc, Paradise.Game.Gameplay.Racing.ListKind.Championship, (int)p.NbChampCompleted);
+        LifeRows("NbCupsDone", "NbCupsTotal", rc, Paradise.Game.Gameplay.Racing.ListKind.Cup, (int)p.NbCupsWon);
+        LifeRows("NbMultiWon", "NbMultiTotal", rc, Paradise.Game.Gameplay.Racing.ListKind.Multi, 0);
+        LifeRows("NbInstantWon", "NbInstantTotal", rc, Paradise.Game.Gameplay.Racing.ListKind.Instant, 0);
+        // Sozial-Kasten (exe: Friends, Friends invited, Club challenges, Chase, Coop, Time in coop)
+        var so = p.getMyLifeSocial;
+        _ui.SetVariable("/:NbFriends", so.NbFriends.ToString());
+        _ui.SetVariable("/:NbFriendsInvited", so.NbFriendsInvited.ToString());
+        _ui.SetVariable("/:NbClubChallPlayed", so.NbInnerClubChalPlayed.ToString());
+        _ui.SetVariable("/:NbChasePlayed", so.NbChasePlayed.ToString());
+        _ui.SetVariable("/:NbCoopPlayed", so.NbCoopPlayed.ToString());
+        _ui.SetVariable("/:TimeInCoop", so.TimeInCoop.ToString("0", CultureInfo.InvariantCulture));
+        // Freeride-Kasten (exe: Play time, Game completion, Driven distance, Vehicles owned, Most used car (+km))
+        // Spielzeit (StatisticsData.PlayTime*) und Bestwerte (BestFrog*, LongestCruise) liest der Spielstand-Leser noch nicht – offen
+        _ui.SetVariable("/:GameCompletion", (global * 100 / maxGlobal).ToString(CultureInfo.InvariantCulture) + "%");   // [vermutet: erreichte Level / 73]
+        foreach (var z in new[] { "PlayTime", "LongestCruise", "BestJump", "BestDrift", "BestDodgeChain", "BestFrogSession" })
             _ui.SetVariable("/:" + z, "--");
         if (l == null) return;
         string mood = string.IsNullOrEmpty(l.mood) ? "neutral" : l.mood;
@@ -369,6 +421,26 @@ public class GAME_MODE_LIVING : InteriorUtils
         // Unity: sonst Geschlecht des Avatars (AvatarConfigs) – den Avatar gibt es in der Engine noch nicht
         _ui.SetVariable("/:EdPlayerGender", !string.IsNullOrEmpty(l.gender) ? l.gender : "male");
         _ui.SetVariable("/:EdMail", "");
+    }
+
+    /// <summary>Balken einer Kategorie wie im Pausemenü (Prozent, Maximum, Level/Max-Level).</summary>
+    static void PushLifeGauge(string g, int points, int level, int maxPoints, int maxLevel)
+    {
+        int pts = Math.Clamp(points, 0, maxPoints), lvl = Math.Clamp(level, 0, maxLevel);
+        int pct = Math.Min(100, pts * 100 / maxPoints);
+        _ui!.SetValue("/:" + g + "Points", pct);
+        _ui.SetValue("/:" + g + "LvlPoints", maxPoints);
+        _ui.SetValue("/:Is" + g + "GaugeFull", pct >= 100);
+        _ui.SetVariable("/:" + g + "LevelCount", lvl.ToString(CultureInfo.InvariantCulture) + "/" + maxLevel.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Erledigt/Gesamt aus einer Racing-Liste (dieselben Zeilen wie Pausemenü -> Wettbewerb).</summary>
+    static void LifeRows(string doneVar, string totalVar, Paradise.Game.Gameplay.Racing? rc, Paradise.Game.Gameplay.Racing.ListKind kind, int fallback)
+    {
+        int found = fallback, total = 0;
+        if (rc != null) { found = 0; foreach (var r in rc.Rows(kind)) { found += r.Found; total += r.Total; } }
+        _ui!.SetVariable("/:" + doneVar, found.ToString(CultureInfo.InvariantCulture));
+        _ui.SetVariable("/:" + totalVar, total.ToString(CultureInfo.InvariantCulture));
     }
 
     internal static void PushBirth(MyLifeData l)
@@ -398,6 +470,105 @@ public class GAME_MODE_LIVING : InteriorUtils
         l.boxes = list;
     }
 
+    // ------------------------------------------------------------------ MyTDULife: Foto-Kästen
+    // Kastenwerte photo0..photo6 (Labels des Kastens, "photo_empty" ohne Album), welches Foto drinsteht: Feld "photoN" -> Datei.
+    // Die exe merkt sich je Kasten das Foto des Albums (0xcde435 setzt /:PhotoAvailable auf den nächsten freien Kasten, phne/phpr
+    // blättern zyklisch durch das Album, phva übernimmt). Anderen Spielern wird nur der Kasten gezeigt – die Datei liegt lokal.
+    internal static bool _lifeBook;
+    internal static int _lifePhotoIdx;
+
+    internal static string? LifeString(MyLifeData? l, string id)
+    {
+        if (l != null) foreach (var e in l.fields) if (e.k == id) return e.v;
+        return null;
+    }
+
+    internal static void SetLifeString(MyLifeData? l, string id, string v)
+    {
+        if (l == null) return;
+        foreach (var e in l.fields) if (e.k == id) { e.v = v; return; }
+        l.fields.Add(new HouseEntry { k = id, v = v });
+    }
+
+    internal static int LifeEditBox() => (int)Math.Round(double.TryParse(_ui?.GetVariable("/mylf/edbox/:num_box"), NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : 0);
+
+    static string LifeBoxPhotoPath(int box) => "/mylf/edbox/ed_container/ed" + box + "/boxes/box/p0/lure_photo";
+
+    /// <summary>mylf:edit:phot: nächster freier Foto-Kasten (photo0..photo6) bzw. "photo_empty", wenn das Album leer ist.</summary>
+    internal static void LifePhotoAvailable()
+    {
+        if (_ui == null) return;
+        PhotoAlbum.Invalidate();
+        string v = "photo_empty";
+        if (PhotoAlbum.Count > 0)
+        {
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i <= 8; i++) { var b = _ui.GetVariable("/:ed" + i); if (!string.IsNullOrEmpty(b)) used.Add(b); }
+            for (int k = 0; k <= 6; k++) if (!used.Contains("photo" + k)) { v = "photo" + k; break; }
+            if (v.StartsWith("photo", StringComparison.Ordinal) && v != "photo_empty" && LifeString(Life, v) == null)
+                SetLifeString(Life, v, PhotoAlbum.List()[0].File);   // neuer Kasten zeigt zunächst das erste Foto
+        }
+        _ui.SetVariable("/:PhotoAvailable", v);
+        _lifePhotoIdx = 0;
+    }
+
+    static int AlbumIndex(string? file)
+    {
+        var l = PhotoAlbum.List();
+        for (int i = 0; i < l.Count; i++) if (string.Equals(l[i].File, file, StringComparison.OrdinalIgnoreCase)) return i;
+        return 0;
+    }
+
+    /// <summary>phne/phpr: im bearbeiteten Kasten durch das Album blättern (Vorschau).</summary>
+    internal static void LifePhotoStep(int dir)
+    {
+        var l = PhotoAlbum.List();
+        if (_ui == null || l.Count == 0) return;
+        int box = LifeEditBox();
+        string id = _ui.GetVariable("/:ed" + box) ?? "";
+        if (_lifePhotoIdx < 0 || _lifePhotoIdx >= l.Count) _lifePhotoIdx = AlbumIndex(LifeString(Life, id));
+        _lifePhotoIdx = ((_lifePhotoIdx + dir) % l.Count + l.Count) % l.Count;
+        _ui.SetClipTexture(LifeBoxPhotoPath(box), PhotoBook.FlashTexture(l[_lifePhotoIdx])!);
+    }
+
+    /// <summary>phva: gewähltes Foto (Fotobuch oder Blättern) in den Kasten übernehmen.</summary>
+    internal static void LifePhotoValidate()
+    {
+        if (_ui == null) return;
+        int box = LifeEditBox();
+        string id = _ui.GetVariable("/:ed" + box) ?? "";
+        PhotoEntry? e = _lifeBook ? PhotoBook.Selected(_ui) : null;
+        var l = PhotoAlbum.List();
+        if (e == null && _lifePhotoIdx >= 0 && _lifePhotoIdx < l.Count) e = l[_lifePhotoIdx];
+        _lifeBook = false;
+        if (e != null && id.StartsWith("photo", StringComparison.Ordinal) && id != "photo_empty")
+        {
+            SetLifeString(Life, id, e.File);
+            MarkLifeEdited();
+            Log.Info($"MyTDULife: Kasten {box} ({id}) = {e.File} \"{e.Name}\"");
+            PhotoSync.Upload(e);   // andere Spieler laden es per photoget (wie die Hausrahmen)
+        }
+        ApplyLifeBoxPhotos();
+        // exe MngMyLife: nach phva wird hochgeladen, der Film wartet mit dem Ladebanner auf /:photoUploaded
+        _ui.SetValue("/:photoUploaded", true);
+    }
+
+    /// <summary>Fotos aller Foto-Kästen ed1..ed8 setzen.</summary>
+    internal static void ApplyLifeBoxPhotos()
+    {
+        if (_ui == null) return;
+        var life = Life;
+        for (int i = 0; i <= 8; i++)
+        {
+            string id = _ui.GetVariable("/:ed" + i) ?? "";
+            if (!id.StartsWith("photo", StringComparison.Ordinal) || id == "photo_empty") continue;
+            string? file = LifeString(life, id);
+            PhotoEntry? e = null;
+            if (file != null) foreach (var p in PhotoAlbum.List()) if (string.Equals(p.File, file, StringComparison.OrdinalIgnoreCase)) { e = p; break; }
+            if (e != null) _ui.SetClipTexture(LifeBoxPhotoPath(i), PhotoBook.FlashTexture(e)!);
+        }
+    }
+
     internal static void MarkLifeEdited()
     {
         _lifeDirty = true;
@@ -412,7 +583,7 @@ public class GAME_MODE_LIVING : InteriorUtils
             case "mylf:self": return true;
             case "mylf:wait": PushMyLifeVars(); _ui!.SetValue("/:myLifeVarLoaded", true); return true;   // Laden: Werte setzen, dann darf "open" sie lesen
             case "mylf:open": PushMyLifeVars(); return true;
-            case "mylf:bxok": ApplyLifePhoto(); return true;
+            case "mylf:bxok": ApplyLifePhoto(); ApplyLifeBoxPhotos(); return true;
             case "mylf:clos": EndLifeModes(); SaveLifeIfDirty(); return true;
             case "mylf:sgcx": return true;
             case "mylf:edit:edin": _lifeSnap = null; return true;
@@ -449,23 +620,23 @@ public class GAME_MODE_LIVING : InteriorUtils
                     MarkLifeEdited();
                 }
                 return true;
-            case "mylf:edit:nlis":
+            case "mylf:edit:nlis":   // Kasten verschoben (MoveBox/RefreshBox tauschen _root.ed<n>) bzw. neue Liste
             case "mylf:edit:cbou":
             case "mylf:edit:valid":
-                ReadLifeBoxes(); MarkLifeEdited(); return true;
+                ReadLifeBoxes(); MarkLifeEdited(); ApplyLifeBoxPhotos(); return true;
             case "mylf:edit:numb": case "mylf:edit:nlist": case "mylf:edit:cbin": case "mylf:edit:cancel": return true;
             case "mylf:edit:upld":   // Verlassen nach Änderungen: speichern, dann darf der Film schließen
                 _lifeDirty = true; SaveLifeIfDirty();
                 _ui!.SetValue("/:MyLifeUploaded", true);
                 KickLifeLoader();
                 return true;
-            case "mylf:edit:phop":
-            case "mylf:edit:phne":
-            case "mylf:edit:phpr":
-            case "mylf:edit:phva":
-            case "mylf:edit:phca":
-            case "mylf:edit:phot":
-                return true;   // Fotoalbum-Kästen – ohne Fotoalbum nichts zu tun
+            // Foto-Kästen (photo0..photo6 in /mylf/edbox/ed_container/ed<n>/boxes/box, exe 0xcde435 / 0xcde539)
+            case "mylf:edit:phot": LifePhotoAvailable(); return true;
+            case "mylf:edit:phne": LifePhotoStep(+1); return true;
+            case "mylf:edit:phpr": LifePhotoStep(-1); return true;
+            case "mylf:edit:phop": if (_ui != null) PhotoBook.Open(_ui); _lifeBook = true; return true;   // Fotobuch /mylf_book
+            case "mylf:edit:phva": LifePhotoValidate(); return true;
+            case "mylf:edit:phca": _lifeBook = false; ApplyLifeBoxPhotos(); return true;
             // Avatar-Foto
             case "mylf:phot:open":
                 try { StartLifePhoto(); }
@@ -699,6 +870,7 @@ public class GAME_MODE_LIVING : InteriorUtils
             WrapU = TextureWrap.Clamp,
             WrapV = TextureWrap.Clamp,
             Name = "MyTDULife Sucher",
+            Linear = true,   // Flash zeigt den gelesenen Wert unkodiert: Bildwerte wie aufgenommen (sRGB wäre abgedunkelt)
         });
         _lifeShowTex ??= Texture.Wrap(_lifeShowGpu, LifeShowSize, LifeShowSize);
         _ui.SetClipTexture("/mylf/photo_taker/lure", _lifeShowTex);
@@ -1041,7 +1213,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         var st = _t.Streamer;
         foreach (var d in _matDonors.Values) if (d != null) st?.DestroyScene(d.Handle);
         _matDonors.Clear(); _donorTasks.Clear(); _zoneWanted.Clear();
-        _zones = null; _zoneParts = null;
+        _zones = null; _zoneParts = null; _frames = null; _frameParts = null; _framesApplied = false;
         _myHouse = HouseMode.None; _edit = null; _editZone = null; _housePreview = false; _houseRestoreAt = -1f;
     }
 
@@ -1197,8 +1369,150 @@ public class GAME_MODE_LIVING : InteriorUtils
         foreach (var e in l.mats) if (e != null && zones.ContainsKey(e.k) && !string.IsNullOrEmpty(e.v)) ApplyZone(e.k, e.v);
     }
 
+    // ------------------------------------------------------------------ Bilderrahmen (exe: Material MAT_FRAME_%02d, 0xd394e8; 5 je Haus)
+    internal static readonly Regex FrameRx = new(@"^MAT_FRAME_(\d+)", RegexOptions.IgnoreCase);
+    internal static Dictionary<int, List<IGpuMaterial>>? _frames;
+    internal static List<(RenderObject ro, RenderPart pt, int frame)>? _frameParts;
+    internal static int _editFrameNo;
+    internal static bool _framesApplied;   // Rahmen der aktuellen Szene belegt (einmal nach dem Aufbau)
+
+    internal static string FrameKey(int n) => "Frame#" + n;
+    internal static bool IsFrame(string? z) => z != null && z.StartsWith("Frame#", StringComparison.Ordinal);
+    internal static int FrameNo(string? z) => IsFrame(z) && int.TryParse(z![6..], out int n) ? n : 0;
+
+    /// <summary>Rahmen-Nummer (1..5) -> Materialien MAT_FRAME_NN der Szene.</summary>
+    internal static Dictionary<int, List<IGpuMaterial>>? Frames
+    {
+        get
+        {
+            if (_frames != null || _scene == null) return _frames;
+            _frames = new();
+            _frameParts = new();
+            foreach (var o in _scene.Objects)
+                for (int li = 0; li < o.Lods.Length; li++)
+                    foreach (var pt in o.Lods[li].Parts)
+                    {
+                        if (!MaterialFactory.TryGetInfo(pt.Material, out var mi)) continue;
+                        var mt = FrameRx.Match(mi.Def.Name ?? "");
+                        if (!mt.Success || !int.TryParse(mt.Groups[1].Value, out int n)) continue;
+                        if (!_frames.TryGetValue(n, out var l)) _frames[n] = l = new();
+                        if (!l.Contains(pt.Material)) l.Add(pt.Material);
+                        if (li == 0) _frameParts.Add((o, pt, n));
+                    }
+            if (_frames.Count > 0) Log.Debug("My House: Bilderrahmen " + string.Join(", ", _frames.Keys));
+            return _frames;
+        }
+    }
+
+    internal static int FrameOnRay(Vector3 eye, Vector3 dir, float maxDist, out float dist)
+    {
+        dist = maxDist;
+        if (Frames == null || _frameParts == null) return 0;
+        int best = 0;
+        foreach (var (ro, pt, n) in _frameParts)
+        {
+            float d = RayObject(ro, eye, dir, dist, p => p == pt);
+            if (d < dist) { dist = d; best = n; }
+        }
+        return best;
+    }
+
+    /// <summary>Fotos der Rahmen aus der Einrichtung (frames "1".."5" -> Datei im Album) auf MAT_FRAME_NN.</summary>
+    internal static void ApplyHouseFrames()
+    {
+        var frames = Frames;
+        var l = Layout(false);
+        if (frames == null || frames.Count == 0 || l?.frames == null) return;
+        foreach (var e in l.frames)
+            if (e != null && int.TryParse(e.k, out int n) && !string.IsNullOrEmpty(e.v)) SetFrameTexture(n, e.v);
+    }
+
+    internal static void SetFrameTexture(int n, string file)
+    {
+        var frames = Frames;
+        if (frames == null || !frames.TryGetValue(n, out var mats)) return;
+        PhotoEntry? photo = null;
+        if (GuestHost != 0) photo = PhotoSync.Guest(GuestHost, file);   // Gast: Foto des Gastgebers vom Server (lädt nach, dann erneut)
+        else foreach (var p in PhotoAlbum.List()) if (string.Equals(p.File, file, StringComparison.OrdinalIgnoreCase)) { photo = p; break; }
+        if (photo == null) { Log.Debug($"My House: Rahmen {n}: Foto {file} {(GuestHost != 0 ? "wird geladen" : "nicht im Album")}"); return; }
+        var r = _v.Renderer;
+        var tex = PhotoBook.GpuTexture(photo, r);
+        if (tex == null) return;
+        foreach (var m in mats)
+        {
+            if (!MaterialFactory.TryGetInfo(m, out var mi)) continue;
+            var desc = mi.Desc;
+            // wie ApplyZone: Hausflächen tragen ihre sichtbare Oberfläche in der Detail-Ebene (Main = Lightmap/Grundton) –
+            // vorher landete das Foto in Main und blieb unsichtbar
+            string before = $"Tint {(desc.Tint != null ? "ja" : "-")}/{desc.TintMode}, Gray {desc.DetailGray}, Alpha {desc.DetailAlpha}, Boost {desc.DetailBoost:0.00}, Unlit {desc.Unlit:0.00}, VC {desc.VertexColorStrength:0.00}";
+            if (desc.Detail != null) desc.Detail = tex; else desc.Main = tex;
+            // Foto nicht mit der Tönung/Graustufe des Platzhalters verrechnen (sonst kaum sichtbar, Test 08:40)
+            desc.Tint = null; desc.TintMode = false; desc.DetailGray = false; desc.DetailAlpha = false;
+            // Original-Renderer: das Bild zeichnet OriginalMaterial (Slots aus der .2DM), nicht desc.Main/Detail -> Foto in dieselbe Ebene
+            // (DETAIL, sonst COLOR) des Original-Materials; UpdateMaterial schreibt dessen Descriptor-Set neu
+            string origInfo = "kein Original-Material";
+            if (desc.Original != null)
+            {
+                var om = desc.Original;
+                // Ebene des Fotos: DETAIL, sonst COLOR, sonst die erste vom Shader benutzte 2D-Ebene mit Textur (Platzhalterbild)
+                // Bild-Sampler des Shaders (TD_Furnitures: gDetailTexSampler s1, s0 = Lichtkarte gOcclusionTexSampler)
+                int slot = om.SamplerSlot("gDetailTexSampler");
+                foreach (var sem in new[] { MaterialDef.SemDetail, MaterialDef.SemColor })
+                    foreach (var ly in mi.Def.Layers)
+                        if (slot < 0 && ly.Semantic == sem && ly.Slot >= 0 && ly.Slot < 16 && om.SamplerType(ly.Slot) == 2) slot = ly.Slot;
+                if (slot < 0)
+                    foreach (var ly in mi.Def.Layers)
+                        if (slot < 0 && ly.TextureKey != 0 && ly.Slot >= 0 && ly.Slot < 16 && om.SamplerType(ly.Slot) == 2) slot = ly.Slot;
+                if (slot >= 0) { om.Slots[slot] = tex; om.SlotWrapMask &= ~(1u << slot); desc.OriginalOverrideSlot = slot; desc.OriginalOverrideTex = tex; }
+                var sb = new System.Text.StringBuilder();
+                foreach (var ly in mi.Def.Layers) sb.Append($" s{ly.Slot}:{ly.SemanticName}{(ly.TextureKey != 0 ? "*" : "")}(Typ {om.SamplerType(ly.Slot)})");
+                origInfo = $"Original {om.Program.Library.Name}, Foto in s{slot}, Ebenen{sb}";
+            }
+            r.UpdateMaterial(m, desc);
+            Log.Info($"[DIAG Rahmen] {n}: {origInfo}");
+            Log.Info($"My House: Rahmen {n} -> {photo.File} ({(desc.Detail == tex ? "Detail" : "Main")}, Material {mi.Def.Name}, Shader {mi.Def.ShaderSet:x16}, Main {desc.Main?.Name ?? "-"}, NightLm {(desc.NightLm != null ? desc.NightLm.Name : "-")}/Interieur {desc.InteriorLm}, ColorStrength {desc.ColorStrength:0.00}, Brightness {desc.Brightness:0.00}; vorher {before})");
+        }
+    }
+
+    /// <summary>myhs:fram:vali: gewähltes Foto in den Rahmen, speichern, an Gäste melden, Film "gesendet" (endLoading -> BackToWM).</summary>
+    internal static void FrameValidate()
+    {
+        var ui = _ui;
+        if (ui == null) return;
+        var photo = PhotoBook.Selected(ui);
+        int n = _editFrameNo;
+        if (photo != null && n > 0)
+        {
+            var l = Layout(true);
+            if (l != null)
+            {
+                l.frames ??= new List<HouseEntry>();
+                string k = n.ToString(CultureInfo.InvariantCulture);
+                l.frames.RemoveAll(f => f == null || f.k == k);
+                l.frames.Add(new HouseEntry { k = k, v = photo.File });
+                SetFrameTexture(n, photo.File);
+                PhotoSync.Upload(photo);   // Gäste laden es per photoget (Original: Upload, dann /:myhsFrameSent)
+                PushHouse();
+                FramePhotoChanged?.Invoke(photo);
+                Log.Info($"My House: Rahmen {n} = {photo.File} \"{photo.Name}\"");
+            }
+        }
+        ui.SetValue("/:myhsFrameSent", true);
+        FrameEditEnd();
+    }
+
+    /// <summary>Foto eines Rahmens geändert (Upload für die Gäste hängt sich hier an).</summary>
+    internal static event Action<PhotoEntry>? FramePhotoChanged;
+
+    internal static void FrameEditEnd()
+    {
+        _editFrameNo = 0; _editZone = null;
+        _myHouse = HouseMode.Walk; _houseModeAt = _time; _t.Input.CursorLocked = true;
+        if (_ui != null) _ui.MouseEnabled = false;
+    }
+
     // ------------------------------------------------------------------ Ablauf
-    internal enum HouseMode { None, Walk, Furniture, Material }
+    internal enum HouseMode { None, Walk, Furniture, Material, Frame }
     internal static HouseMode _myHouse;
     internal static bool _housePreview;
     internal static float _houseModeAt, _houseRestoreAt = -1f;
@@ -1337,6 +1651,9 @@ public class GAME_MODE_LIVING : InteriorUtils
         float maxD = InteractDistance + 4f, hitD = maxD;
         if (Phys != null) { _aimQuery = true; try { if (Phys.Raycast(eye, dir, maxD, out var hit)) hitD = hit.Distance; } finally { _aimQuery = false; } }
         string? zone = ZoneOnRay(eye, dir, MathF.Min(maxD, hitD + 0.3f));
+        // Bilderrahmen (MAT_FRAME_NN) vor der Wand: zählt, wenn keine Fläche näher liegt
+        int frame = FrameOnRay(eye, dir, MathF.Min(maxD, hitD + 0.3f), out float frameD);
+        if (frame > 0) zone = ZoneOnRay(eye, dir, frameD) ?? FrameKey(frame);
         // Möbel genau über ihre Dreiecke (Glasplatten haben keine Kollision); unsichtbare Kollisionsvolumen dürfen davor liegen
         float tol = zone == null ? 0.6f : 0.02f;
         HouseObj? obj = HouseObjOnRay(eye, dir, MathF.Min(maxD, hitD + tol));
@@ -1347,8 +1664,8 @@ public class GAME_MODE_LIVING : InteriorUtils
             if (obj != null || zone != null)
             {
                 _ui.SetVariable("/:SelItemType", "myhs_item");
-                _ui.SetVariable("/:myhsChangeType", obj != null ? "furniture" : "material");
-                _ui.SetVariable("/:t_wm_destination", obj != null ? "Möbel ändern" : (Zones![zone!].Type == 1 ? "Boden ändern" : "Tapete ändern"));
+                _ui.SetVariable("/:myhsChangeType", obj != null ? "furniture" : IsFrame(zone) ? "frame" : "material");
+                _ui.SetVariable("/:t_wm_destination", obj != null ? "Möbel ändern" : IsFrame(zone) ? "Foto ändern" : (Zones![zone!].Type == 1 ? "Boden ändern" : "Tapete ändern"));
                 _ui.GotoLabel("/cursor", "on", true);
                 _ui.GotoLabel("/cursor/low_bar", "open", true);
             }
@@ -1364,7 +1681,9 @@ public class GAME_MODE_LIVING : InteriorUtils
         {
             if (!HouseCatalogReady) { Log.Info("My House: Katalog wird geladen …"); return; }
             _edit = _aimObj; _editZone = _aimObj == null ? _aimZone : null;
-            _ui.SetVariable("/:myhsChangeType", _edit != null ? "furniture" : "material");
+            _editFrameNo = FrameNo(_editZone);
+            if (_editFrameNo > 0) { PhotoAlbum.Invalidate(); _ui.SetValue("/:MyHouseNoPhotos", PhotoAlbum.Count == 0); }
+            _ui.SetVariable("/:myhsChangeType", _edit != null ? "furniture" : _editFrameNo > 0 ? "frame" : "material");
             _ui.CallClip("/", "myhsEditorOpen");   // Film: myhs:furn:open bzw. myhs:mate:open
         }
     }
@@ -1466,8 +1785,17 @@ public class GAME_MODE_LIVING : InteriorUtils
             case "myhs:mate:scma": return true;
             case "myhs:mate:puok": Purchase(); return true;
             case "myhs:mate:clos": ClearMaterialThumbs(); RevertEdit(); _myHouse = HouseMode.Walk; _houseModeAt = _time; _t.Input.CursorLocked = true; _ui?.SetValue("/:Input", true); return true;
-            case "myhs:sobj:open":
             case "myhs:fram:open":
+                if (_editFrameNo <= 0 || _ui == null) { _ui?.CallClip("/myhs_editor", "BackToWM"); return true; }
+                _myHouse = HouseMode.Frame; _houseModeAt = _time; _housePreview = false;
+                _t.Input.CursorLocked = false;
+                _ui.MouseEnabled = true;
+                PhotoBook.Open(_ui);
+                return true;
+            case "myhs:fram:vali": FrameValidate(); return true;
+            case "myhs:fram:canc": FrameEditEnd(); return true;
+            case "phpa": case "phph": case "phal:dele": return PhotoBook.Command(c, _ui);   // Fotobuch der Rahmen (/myhs_editor/frames/book)
+            case "myhs:sobj:open":
                 Log.Info("My House: dieses Objekt kann nicht geändert werden");
                 _ui?.CallClip("/myhs_editor", "BackToWM");
                 return true;
@@ -1745,6 +2073,8 @@ public class GAME_MODE_LIVING : InteriorUtils
     /// <summary>Jedes Bild im Wohnbereich: Antwort von "houseget" übernehmen.</summary>
     internal static void PollGuestHouse()
     {
+        if (PhotoSync.PollReady()) ApplyHouseFrames();   // Fotos der Rahmen vom Server angekommen
+        if (!_framesApplied && _scene != null && Frames is { Count: > 0 }) { _framesApplied = true; ApplyHouseFrames(); }
         if (_houseGet == null || !_houseGet.IsCompleted) return;
         var t = _houseGet; _houseGet = null;
         if (t.IsFaulted) Log.Warn("My House (Sync): " + t.Exception?.GetBaseException().Message);
@@ -1770,6 +2100,7 @@ public class GAME_MODE_LIVING : InteriorUtils
             if (!string.Equals(o.LoadingBank ?? o.Bank, bank, StringComparison.OrdinalIgnoreCase)) SetFurnitureBank(o, bank);
         }
         ApplyHouseMaterials();
+        ApplyHouseFrames();
     }
 
     // ================================================================== TDU Media (Unity TDU2TDUMedia, tdmedia.bnk)

@@ -152,7 +152,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         _loadedPending = true;               // exe setzt GMELoaded erst nach dem Laden der Challenges (0xad0c40)
 
         ui.GotoLabel("/", "init", true);
-        Log.Info("Editor: geöffnet");
     }
 
     /// <summary>
@@ -170,7 +169,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         ui.SetValue("/:BackFromTest", false);
         ui.SetValue("/:GMELoaded", true);
         ui.SetValue("/:NbChallCreated", created);
-        Log.Info("Editor: " + created + " eigene Challenges (höchstens " + MaxChallenges + ")");
     }
 
     /// <summary>
@@ -198,7 +196,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         ui.SetValue("/:LockUndo", true);
         ui.SetValue("/:LockRedo", true);
         _uploadable = false;
-        Log.Info("Editor: neue Challenge \"" + _challenge.Name + "\", Spielart " + _challenge.ModeName + " (" + _challenge.ModeType + ")");
     }
 
     /// <summary>
@@ -419,7 +416,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         _modified = true;
         if (_uploadable) { _uploadable = false; ui.SetValue("/:LockUpload", true); }
         FillCard(ui);
-        Log.Info("Editor: Parameter übernommen – \"" + c.Name + "\", Runden " + c.Laps + ", Pfad " + c.ForcedPath + ", Verkehr " + c.Traffic + ", Strafe " + c.Penalty);
     }
 
     static string Clip(string s, int max) => s.Length > max ? s.Substring(0, max) : s;
@@ -1044,7 +1040,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         }
         _ui.ListRefresh(l);
         _ui.ListLoaded(l);
-        Log.Info("Editor: Liste mit " + l.Rows.Count + " Challenges");
     }
 
     /// <summary>Zeile neu beschrieben: Symbol der Spielart (content/ic) und Gebiet (content/area: h = Oahu, i = Ibiza).</summary>
@@ -1081,7 +1076,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         ui.SetValue("/:LockUndo", true); ui.SetValue("/:LockRedo", true);
         TrackChanged(ui);
         _modified = false; _undo.Clear();
-        Log.Info("Editor: Challenge geladen: " + _fileName + " \"" + _challenge.Name + "\"");
     }
 
     void DeleteSelected(VmfPlayer ui)
@@ -1157,9 +1151,7 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
         _uploadable = _testCompleted;
         _testCompleted = false;
         ui.SetValue("/:LockUpload", !_uploadable);
-        Log.Info("Editor: Testfahrt " + (_uploadable ? "beendet – Hochladen freigegeben" : "abgebrochen – Hochladen bleibt gesperrt"));
         ui.GotoLabel("/", "open", true);
-        Log.Info("Editor: zurück aus der Testfahrt");
     }
 
     // ================================================================== Hochladen (gmed:upld:*, exe ChallengeIDCard 0x977200)
@@ -1310,7 +1302,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
             },
         };
         _uploadTask = client.Send(req);
-        Log.Info("Editor: lade \"" + c.Name + "\" hoch (Gebühr " + _uFee + ", Belohnung " + _uReward + ", " + _uDuration + " Tag(e), Zugang " + _uPostTo + ", " + data.Length + " Byte)");
     }
 
     /// <summary>
@@ -1335,14 +1326,12 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
                 if (added || _uploadReward > 0) _ = TDU2Session.SaveAsync();
             }
             if (_ctx != null) PlayerCarInfo.Apply(ui, _ctx);
-            Log.Info("Editor: Challenge hochgeladen – Id " + r.challId);
             return;
         }
         string err = r?.error ?? "no_response";
         if (err == "max_posted") ui.SetValue("/:MaxChallPosted", true);
         if (err == "text_abuse") ui.SetValue("/:TextAbuse", true);
         ui.SetValue("/:TimeOut", true);
-        Log.Warn("Editor: Hochladen abgelehnt: " + err);
     }
 
     /// <summary>
@@ -1365,8 +1354,6 @@ public sealed class GAME_MODE_EDITOR : GameModeHandler
                   .Append(" varToFocus=").Append(ui.GetVariable(path + ":varToFocus") ?? "-")
                   .Append(" frame=").Append(ui.GetVariable(path + ":frame") ?? "-").Append('\n');
             }
-        Log.Info(sb.ToString());
-        Log.Info("Editor F11 – Baum:\n" + ui.DumpTree(7));
     }
 
     /// <summary>Clip steht still auf "default" (geschlossenes Menü).</summary>

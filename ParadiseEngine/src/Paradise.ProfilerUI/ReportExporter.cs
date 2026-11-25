@@ -6,7 +6,8 @@ namespace Paradise.ProfilerUI;
 
 /// <summary>
 /// Text-Bericht (.md) aus allen Bildern im Puffer: Bildzeiten, Kategorien, teuerste Messpunkte (Self/Total),
-/// GC-Allokationen je Messpunkt, Ruckler mit Aufschlüsselung, GC-Pausen, GPU, Rendering, Speicher, Physik, Hinweise.
+/// GC-Allokationen je Messpunkt, Ruckler mit Aufschlüsselung, GC-Pausen, GPU, Rendering, Speicher, Physik,
+/// Netzwerk (Traffic/Pakete/Mitspieler), Hinweise.
 /// Ziel: Probleme ohne das Fenster nachvollziehen (auch zum Weitergeben).
 /// </summary>
 internal static class ReportExporter
@@ -220,6 +221,9 @@ internal static class ReportExporter
             sb.AppendLine();
         }
 
+        // ---------------------------------------------------------------- Netzwerk
+        AppendNetwork(sb, frames);
+
         // ---------------------------------------------------------------- GC-Pausen
         if (gc.Count > 0)
         {
@@ -260,6 +264,30 @@ internal static class ReportExporter
         foreach (var h in hints) sb.AppendLine("- " + h);
         sb.AppendLine();
         return sb.ToString();
+    }
+
+    /// <summary>Tabelle mit Traffic/Paketen/Mitspielern über die gesamte Aufnahme (aus den Bild-Snapshots).</summary>
+    static void AppendNetwork(StringBuilder sb, IReadOnlyList<ProfilerFrame> frames)
+    {
+        var snaps = frames.Where(f => f.Network != null && f.Network.Entries.Length > 0).Select(f => f.Network).ToList();
+        if (snaps.Count == 0) return;
+        var merged = ProfilerNetworkSnapshot.Merge(snaps, average: false);
+        double msTotal = Math.Max(0.1, frames.Sum(f => f.Ms));
+        string Rate(double v, bool absolute) => absolute ? F(v, "0") : B(v * 1000.0 / msTotal) + "/s";
+        string RateCount(double v, bool absolute) => absolute ? F(v, "0")
+            : ProfilerCounter.FormatCount(v * 1000.0 / msTotal) + "/s";
+
+        sb.AppendLine("## Network (Server / P2P / Relay / Mitspieler)");
+        sb.AppendLine();
+        sb.AppendLine("| Bereich | Eintrag | In Ø | Out Ø | Pakete in/s | Pakete out/s | Details |");
+        sb.AppendLine("|---|---|---:|---:|---:|---:|---|");
+        foreach (var e in merged.Entries.OrderBy(x => x.Group, StringComparer.Ordinal).ThenByDescending(x => x.TotalBytes))
+        {
+            var last = snaps[^1].Find(e.Group, e.Name);
+            sb.AppendLine($"| {Esc(e.Group)} | {Esc(e.Name)} | {Rate(e.InBytes, e.Absolute)} | {Rate(e.OutBytes, e.Absolute)} | " +
+                          $"{RateCount(e.InCount, e.Absolute)} | {RateCount(e.OutCount, e.Absolute)} | {Esc(last?.Detail ?? e.Detail)} |");
+        }
+        sb.AppendLine();
     }
 
     static void AggTable(StringBuilder sb, IEnumerable<Agg> rows, int frames, double avgFrame)

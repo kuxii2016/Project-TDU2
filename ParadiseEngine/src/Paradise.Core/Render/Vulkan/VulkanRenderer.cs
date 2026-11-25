@@ -6,6 +6,7 @@ using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Paradise.Core.Render.Original;
 
 namespace Paradise.Core.Render.Vulkan;
 
@@ -58,8 +59,14 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public Vector4 SkyStars;     // x StarsIntensity, y StarsFade.x, z StarsFade.y, w Skydome_moonPercent
         public Vector4 RainSpecs;    // TD_Road: (GI, wet, 1, puddle_height)
         public Vector4 RainRipple;   // TD_Road: (scroll_u, scroll_v, ripple_intensity, ripple_scale)
+        // Scheinwerfer-Projektoren des Originals (Lichtpuffer s15, DxsoToGlsl.LightBufGlsl: Frame-Block mit 29 vec4 Abstand nach
+        // lampCone – neue Felder vor diesem Block dort mitzählen!): je Projektor 5 vec4 (Lage+Near, Richtung+Stärke,
+        // x-Achse+Cot, Oben, Attenuation), ProjMisc.x Anzahl
+        public fixed float Proj[MaxProjectors * 5 * 4];
+        public Vector4 ProjMisc;
     }
     private const int MaxLamps = 32;
+    private const int MaxProjectors = 8;
 
     // Schatten (Unity: Directional Light, Soft Shadows, 4 Kaskaden, QualitySettings.shadowDistance)
     private const int ShadowCascades = 4;
@@ -352,8 +359,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _skipFrame = false;
         long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         using (s_mFence.Auto())
-        fixed (Fence* pFence = &_inFlight[_currentFrame])
-            _vk.WaitForFences(_device, 1, pFence, true, ulong.MaxValue);
+            fixed (Fence* pFence = &_inFlight[_currentFrame])
+                _vk.WaitForFences(_device, 1, pFence, true, ulong.MaxValue);
         PollSceneCapture();   // Bildaufnahme dieses Bildes im Flug fertig (VulkanRendererCapture)
         long tq = System.Diagnostics.Stopwatch.GetTimestamp();
         ReadTimestamps();
@@ -426,7 +433,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Ambient = new Vector4(ToLin(g.Ambient), g.DayDim),
             Misc = new Vector4(g.NightK, g.StreetLight, g.Origin.X, g.Origin.Y),
             ViewRight = new Vector4(_viewRight, g.Time > 0 ? g.Time : (float)_clock.Elapsed.TotalSeconds),
-            ViewUp = new Vector4(_viewUp, 0),
+            ViewUp = new Vector4(_viewUp, System.Math.Min(g.VehicleLampCount, MaxLamps)),   // w: Scheinwerfer vorn in der Lampenliste (Original-Lichtpuffer)
             Shadow = new Vector4(g.ShadowStrength, g.ShadowDistance, 1.5f, 1f / ShadowSize),
             Splits = _shadowSplits,
             TexelWorld = _shadowTexelWorld,
@@ -480,6 +487,20 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             u.LampCol[i * 4] = lcol.X; u.LampCol[i * 4 + 1] = lcol.Y; u.LampCol[i * 4 + 2] = lcol.Z; u.LampCol[i * 4 + 3] = dir.Y;
             u.LampCone[i * 4] = l.CosOuter; u.LampCone[i * 4 + 1] = l.CosInner; u.LampCone[i * 4 + 2] = dir.X; u.LampCone[i * 4 + 3] = dir.Z;
         }
+        int pc = g.Projectors != null ? System.Math.Min(System.Math.Min(g.ProjectorCount, g.Projectors.Length), MaxProjectors) : 0;
+        u.ProjMisc = new Vector4(pc, 0f, 0f, 0f);
+        for (int i = 0; i < pc; i++)
+        {
+            var p = g.Projectors![i];
+            // x-Achse der Projektor-Ansicht wie die exe (0x4826b0: Richtung x Oben)
+            var x = Vector3.Cross(p.Direction, p.Up);
+            int o = i * 20;
+            u.Proj[o] = p.Position.X; u.Proj[o + 1] = p.Position.Y; u.Proj[o + 2] = p.Position.Z; u.Proj[o + 3] = p.Near;
+            u.Proj[o + 4] = p.Direction.X; u.Proj[o + 5] = p.Direction.Y; u.Proj[o + 6] = p.Direction.Z; u.Proj[o + 7] = p.Strength;
+            u.Proj[o + 8] = x.X; u.Proj[o + 9] = x.Y; u.Proj[o + 10] = x.Z; u.Proj[o + 11] = p.Cot;
+            u.Proj[o + 12] = p.Up.X; u.Proj[o + 13] = p.Up.Y; u.Proj[o + 14] = p.Up.Z; u.Proj[o + 15] = 0f;
+            u.Proj[o + 16] = p.Attenuation.X; u.Proj[o + 17] = p.Attenuation.Y; u.Proj[o + 18] = p.Attenuation.Z; u.Proj[o + 19] = p.Attenuation.W;
+        }
         *(FrameUbo*)_frameUboMem[_currentFrame].Mapped = u;
     }
 
@@ -488,10 +509,16 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (mesh is VulkanMesh vm) DrawMesh(vm, vm.OwnedMaterial, model);
     }
 
+    public void SetFourUvSets(IGpuMesh mesh)
+    {
+        if (mesh is VulkanMesh vm) vm.FourUvSets = true;
+    }
+
     public void SetMaterialUv(IGpuMaterial material, Vector4 mainST, Vector4 detailST)
     {
         if (material is not VulkanMaterial vm || vm.UboMem.Mapped == null) return;
         if (vm.Kind is not (MaterialKind.Object or MaterialKind.Transparent)) return;
+        if (vm.Orig != null) { vm.Orig.MainST = mainST; vm.Orig.DetailST = detailST; }   // Original-Renderer: __UVA_0/1
         float* f = (float*)vm.UboMem.Mapped;
         SetVec(f, 9, mainST.X, mainST.Y, mainST.Z, mainST.W);
         SetVec(f, 10, detailST.X, detailST.Y, detailST.Z, detailST.W);
@@ -1264,6 +1291,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         int segObj = 0;
         foreach (var (mesh, mat, model) in _opaque)
         {
+            // Original-Renderer: eigene Pipelines, nach den übrigen opaken Objekten (Schatten zeichnet weiter der eigene Shader)
+            if (UseOriginal(mat)) { _origDraws.Add((mesh, mat, model)); continue; }
             var pid = PipeFor(mat);
             if (_segActive && segPipe != pid)
             {
@@ -1277,6 +1306,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
         FlushBatch();
         if (segPipe.HasValue) SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj);
+        DrawOriginals(cmd0);
         s_mEfOpaque.End();
         JoinShadows();   // Schatten-Thread fertig, bevor _opaque geleert wird
         _opaque.Clear();
@@ -1287,8 +1317,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (_additive.Count > 0)
         {
             SortAdditive();
-            foreach (var (mesh, mat, model) in _additive) Batch(mesh, mat, model, PipeFor(mat), false, _viewProj);
+            foreach (var (mesh, mat, model) in _additive)
+            {
+                if (UseOriginal(mat)) { FlushBatch(); DrawOriginalNow(cmd0, mesh, mat, model); }
+                else { _origBound = default; _origLastVb = 0; Batch(mesh, mat, model, PipeFor(mat), false, _viewProj); }
+            }
             FlushBatch();
+            EndOriginal();
             _cTransp += _additive.Count;
             _cAdditive = _additive.Count;
             _additive.Clear();
@@ -1299,7 +1334,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (_transparent.Count > 0)
         {
             SortTransparent();
-            foreach (var (mesh, mat, model, _) in _transparent) DrawNow(mesh, mat, model);
+            foreach (var (mesh, mat, model, _) in _transparent)
+            {
+                // Original-Renderer: gemischte Materialien mit Blend-States der .2DM, in derselben Hinten-nach-vorne-Folge
+                if (UseOriginal(mat)) DrawOriginalNow(cmd0, mesh, mat, model, true);
+                else { _origBound = default; _origLastVb = 0; DrawNow(mesh, mat, model); }
+            }
+            EndOriginal();
             _cTransp = _transparent.Count;
             _transparent.Clear();
             SegMark(cmd0, s_gTransparent, _cTransp);
@@ -1927,6 +1968,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         GpuTextureFormat.Bc1 => linear ? Format.BC1RgbaUnormBlock : Format.BC1RgbaSrgbBlock,
         GpuTextureFormat.Bc3 => linear ? Format.BC3UnormBlock : Format.BC3SrgbBlock,
+        GpuTextureFormat.Bc2 => linear ? Format.BC2UnormBlock : Format.BC2SrgbBlock,
         _ => linear ? Format.R8G8B8A8Unorm : Format.R8G8B8A8Srgb,
     };
 
@@ -1939,7 +1981,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     public static int MipSize(GpuTextureFormat f, int w, int h) => f switch
     {
         GpuTextureFormat.Bc1 => System.Math.Max(1, (w + 3) / 4) * System.Math.Max(1, (h + 3) / 4) * 8,
-        GpuTextureFormat.Bc3 => System.Math.Max(1, (w + 3) / 4) * System.Math.Max(1, (h + 3) / 4) * 16,
+        GpuTextureFormat.Bc3 or GpuTextureFormat.Bc2 => System.Math.Max(1, (w + 3) / 4) * System.Math.Max(1, (h + 3) / 4) * 16,
         _ => w * h * 4,
     };
 
@@ -2047,7 +2089,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
 
         var view = CreateImageView(image, fmt, ImageAspectFlags.ColorBit, (uint)mips);
-        var tex = new VulkanTexture(this, image, mem, view, t);
+        var tex = new VulkanTexture(this, image, mem, view, t) { Levels = mips, SkipLevels = skip };
         if (_live.Add(tex)) _liveTextures++;
 
         // Sobald Bilder laufen, IMMER verzögert: die Einzel-Kopie wartete per QueueWaitIdle auf die ganze GPU (laufendes Bild),
@@ -2141,29 +2183,33 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         (VulkanTexture)CreateTexture(new TextureUpload { Width = 1, Height = 1, Format = GpuTextureFormat.Rgba8, Blocks = new[] { r, g, b, a }, Name = name, Linear = true });   // Unity-Standardtexturen: Werte unverändert (grey = 0.5)
 
     // ------------------------------------------------------------------ Regen-Texturen (WFX_WetGrd: PUDDLES, RIPPLE_01..16)
-    private readonly VulkanTexture?[] _rainPudW = new VulkanTexture?[MaxFramesInFlight], _rainRipW = new VulkanTexture?[MaxFramesInFlight];
+    private readonly VulkanTexture?[] _rainPudW = new VulkanTexture?[MaxFramesInFlight], _rainRipW = new VulkanTexture?[MaxFramesInFlight], _cookieW = new VulkanTexture?[MaxFramesInFlight];
 
-    private void WriteRainSet(DescriptorSet set, VulkanTexture pud, VulkanTexture rip)
+    private void WriteRainSet(DescriptorSet set, VulkanTexture pud, VulkanTexture rip, VulkanTexture cookie)
     {
         var samp = GetSampler(TextureWrap.Repeat, TextureWrap.Repeat);
         var pi = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = pud.View, Sampler = samp };
         var ri = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = rip.View, Sampler = samp };
-        var w = stackalloc WriteDescriptorSet[2];
+        var ci = new DescriptorImageInfo { ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = cookie.View, Sampler = GetSampler(TextureWrap.Clamp, TextureWrap.Clamp) };
+        var w = stackalloc WriteDescriptorSet[3];
         w[0] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 5, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &pi };
         w[1] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 6, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &ri };
-        _vk.UpdateDescriptorSets(_device, 2, w, 0, null);
+        w[2] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 7, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &ci };
+        _vk.UpdateDescriptorSets(_device, 3, w, 0, null);
     }
 
-    /// <summary>Bindings 5/6 des Frame-Sets (und der Spiegel-Sets) dieses Bildes, nur bei Wechsel (nach dem Warten auf das Bild).</summary>
+    /// <summary>Bindings 5/6 (Regen) und 7 (Scheinwerfer-Cookie projectivespotlighttexture) des Frame-Sets (und der Spiegel-Sets)
+    /// dieses Bildes, nur bei Wechsel (nach dem Warten auf das Bild).</summary>
     private void UpdateRainDescriptors(int frame)
     {
         var pud = RenderFx.RainPuddles is VulkanTexture p && !p.Disposed ? p : _black;
         var rip = RenderFx.RainRipple is VulkanTexture q && !q.Disposed ? q : _gray;
-        if (ReferenceEquals(_rainPudW[frame], pud) && ReferenceEquals(_rainRipW[frame], rip)) return;
-        WriteRainSet(_frameSets[frame], pud, rip);
+        var ck = RenderFx.HeadlightCookie is VulkanTexture c && !c.Disposed ? c : _black;
+        if (ReferenceEquals(_rainPudW[frame], pud) && ReferenceEquals(_rainRipW[frame], rip) && ReferenceEquals(_cookieW[frame], ck)) return;
+        WriteRainSet(_frameSets[frame], pud, rip, ck);
         if (_envSetsCreated)
-            for (int s = 0; s < EnvSlots; s++) WriteRainSet(_envSets[frame * EnvSlots + s], pud, rip);
-        _rainPudW[frame] = pud; _rainRipW[frame] = rip;
+            for (int s = 0; s < EnvSlots; s++) WriteRainSet(_envSets[frame * EnvSlots + s], pud, rip, ck);
+        _rainPudW[frame] = pud; _rainRipW[frame] = rip; _cookieW[frame] = ck;
     }
 
     private void CreateDefaultTextures()
@@ -2275,7 +2321,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 SetVec(f, 5, B(d.DetailAlpha), d.Unlit, tx, ty);
                 SetVec(f, 6, B(d.WetSurface), d.NightEmit, B(d.WinMode && !d.MarksMode && !d.Marks2Mode), B(d.Kind == MaterialKind.Object && d.Shadow == null && d.NightLm != null));
                 SetVec(f, 7, B(d.AlphaFromDetail), d.Lit, d.Intensity, B(d.NightOnly));
-                SetVec(f, 8, B(d.Kind == MaterialKind.Transparent ? d.VcMul : d.InteriorLm), d.NightLmap.X, d.NightLmap.Y, d.NightLmDayBoost);
+                SetVec(f, 8, d.Kind == MaterialKind.Transparent ? B(d.VcMul) : d.InteriorLm ? (d.FurnitureLm ? 2f : 1f) : 0f, d.NightLmap.X, d.NightLmap.Y, d.NightLmDayBoost);
                 SetVec(f, 9, d.MainST.X, d.MainST.Y, d.MainST.Z, d.MainST.W);
                 SetVec(f, 10, d.DetailST.X, d.DetailST.Y, d.DetailST.Z, d.DetailST.W);
                 SetVec(f, 11, d.WinParams.X, d.WinParams.Y, d.WinParams.Z, d.WinParams.W);
@@ -2406,6 +2452,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         mat.Blend = d.Kind == MaterialKind.Avatar && d.AvBlend;
         mat.TwoSided = d.TwoSided;
         mat.WaterSort = d.Kind == MaterialKind.Water && d.Ocean ? (d.OceanLevel >= 2 ? float.MaxValue : d.OceanLevel == 1 ? 3e38f : 2e38f) : float.MaxValue;
+        if (d.Original != null || mat.OrigSet.Handle != 0) WriteOriginalSet(mat, d);   // Original-Renderer (VulkanRenderer.Original.cs)
     }
 
     private static void SetCol(float* f, int i, Vector4 c) { var l = ToLin(c); SetVec(f, i, l.X, l.Y, l.Z, c.W); }
@@ -2446,6 +2493,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         // Bounding-Kugel (Position = erste 12 Byte jedes Vertex) für das Schatten-Culling
         int stride = objectFormat ? (int)ObjectVertex.SizeInBytes : (int)MeshVertex.SizeInBytes;
         int vc = stride > 0 ? vbytes.Length / stride : 0;
+        mesh.VCount = vc;
         if (vc > 0)
         {
             var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
@@ -2476,6 +2524,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public GpuTextureFormat Format { get; }
         /// <summary>UNORM statt sRGB (TextureUpload.Linear) – für die Diagnose.</summary>
         public readonly bool Linear;
+        /// <summary>Für die Diagnose (s308 Prüf-Log TD_Road): hochgeladene Mip-Stufen und wegen Texturqualität ausgelassene Stufen.</summary>
+        public int Levels, SkipLevels;
         private bool _disposed;
         public bool Disposed => _disposed;
         /// <summary>Staging-Puffer je Bild im Flug für UpdateTexture (erst bei Bedarf angelegt).</summary>
@@ -2516,6 +2566,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public bool Blend;
         /// <summary>Sortierwert in der Transparent-Liste für Wasser (Meer: Insel vor Area vor Sektor).</summary>
         public float WaterSort = float.MaxValue;
+        /// <summary>Original-Renderer: Material, Descriptor-Set (Set 0 der Original-Pipelines) und sRGB-Sampler-Maske.</summary>
+        public OriginalMaterial? Orig;
+        public DescriptorSet OrigSet;
+        public uint OrigMask;
         public MaterialKind Kind { get; set; }
         private bool _disposed;
 
@@ -2527,6 +2581,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             if (_disposed) return;
             _disposed = true;
             if (_r._live.Remove(this)) _r._liveMaterials--;
+            if (OrigSet.Handle != 0) _r.FreeOriginalSet(this);
             var r = _r; var set = Set; var ubo = Ubo; var mem = UboMem;
             r.DeferDestroy(() => { r._vk.FreeDescriptorSets(r._device, r._descriptorPool, 1, in set); r.FreeBuffer(ubo, mem); });
         }
@@ -2539,11 +2594,22 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public readonly Silk.NET.Vulkan.Buffer VertexBuffer, IndexBuffer;
         public readonly GpuAllocator.Allocation VMem, IMem;
         public readonly bool IsObjectFormat;
+        /// <summary>4 UV-Sätze: Uv2 = Satz 3, Uv3 = Satz 2 (IRenderer.SetFourUvSets).</summary>
+        public bool FourUvSets;
         public int IndexCount { get; }
         public Vector3 BCenter;
         public float BRadius = 1e6f;
         public VulkanTexture? OwnedTexture;     // Altpfad (CreateMesh mit Textur)
         public VulkanMaterial? OwnedMaterial;
+        /// <summary>Anzahl Vertices (UploadMesh) und Tangentenpuffer des Original-Renderers (TANGENT/BINORMAL, bei Bedarf berechnet).</summary>
+        public int VCount;
+        public Silk.NET.Vulkan.Buffer TanBuf;
+        public GpuAllocator.Allocation TanMem;
+        public bool TanTried;
+        /// <summary>Original-Renderer TD_HeightMap: (Höhe, Rasterindex x, Rasterindex z, 0) je Vertex (VulkanRenderer.Original.cs).</summary>
+        public Silk.NET.Vulkan.Buffer HmBuf;
+        public GpuAllocator.Allocation HmMem;
+        public bool HmTried;
         private bool _disposed;
 
         public VulkanMesh(VulkanRenderer r, Silk.NET.Vulkan.Buffer vb, GpuAllocator.Allocation vm, Silk.NET.Vulkan.Buffer ib, GpuAllocator.Allocation im, int ic, bool objectFormat)
@@ -2558,6 +2624,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             OwnedTexture?.Dispose();
             var r = _r; var vb = VertexBuffer; var vm = VMem; var ib = IndexBuffer; var im = IMem;
             r.DeferDestroy(() => { r.FreeBuffer(vb, vm); r.FreeBuffer(ib, im); });
+            if (TanBuf.Handle != 0) { var tb = TanBuf; var tm = TanMem; r.DeferDestroy(() => r.FreeBuffer(tb, tm)); }
+            if (HmBuf.Handle != 0) { var hb = HmBuf; var hm = HmMem; r.DeferDestroy(() => r.FreeBuffer(hb, hm)); }
         }
     }
 
@@ -2569,7 +2637,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _terrainSetLayout = CreateSetLayout(4);
         _objectSetLayout = CreateSetLayout(6);
         // set 1: Frame-Globals
-        var fb = stackalloc DescriptorSetLayoutBinding[7];
+        var fb = stackalloc DescriptorSetLayoutBinding[8];
         fb[0] = new DescriptorSetLayoutBinding { Binding = 0, DescriptorType = DescriptorType.UniformBuffer, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };
         fb[1] = new DescriptorSetLayoutBinding { Binding = 1, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Schattenkarte
         fb[2] = new DescriptorSetLayoutBinding { Binding = 2, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Bodenspiegelung
@@ -2577,7 +2645,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         fb[4] = new DescriptorSetLayoutBinding { Binding = 4, DescriptorType = DescriptorType.StorageBuffer, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit };   // Instanz-Modellmatrizen
         fb[5] = new DescriptorSetLayoutBinding { Binding = 5, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Regen: PUDDLES (WFX_WetGrd)
         fb[6] = new DescriptorSetLayoutBinding { Binding = 6, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Regen: aktuelles RIPPLE_xx
-        var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = 7, PBindings = fb };
+        fb[7] = new DescriptorSetLayoutBinding { Binding = 7, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit };   // Scheinwerfer-Cookie (Lichtpuffer s15)
+        var info = new DescriptorSetLayoutCreateInfo { SType = StructureType.DescriptorSetLayoutCreateInfo, BindingCount = 8, PBindings = fb };
         if (_vk.CreateDescriptorSetLayout(_device, in info, null, out _frameSetLayout) != Result.Success)
             throw new Exception("DescriptorSetLayout (Frame) failed.");
     }
@@ -3207,6 +3276,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _uiFramebuffers = Array.Empty<Framebuffer>();
         fixed (CommandBuffer* p = _commandBuffers)
             _vk.FreeCommandBuffers(_device, _commandPool, (uint)_commandBuffers.Length, p);
+        DestroyOriginalPipelines();   // Render-Pass/MSAA neu -> Original-Pipelines bei Bedarf neu anlegen
         for (int i = 0; i < _pipelines.Length; i++)
         {
             _vk.DestroyPipeline(_device, _pipelines[i], null);
@@ -3259,6 +3329,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _vk.DestroyBuffer(_device, _frameUbo[i], null);
             _vk.DestroyBuffer(_device, _instBuf[i], null);
         }
+        DestroyOriginal();
         foreach (var s in _samplers.Values) _vk.DestroySampler(_device, s, null);
         _vk.DestroyDescriptorPool(_device, _descriptorPool, null);
         _vk.DestroyDescriptorSetLayout(_device, _simpleSetLayout, null);

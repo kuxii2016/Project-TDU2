@@ -35,7 +35,7 @@ public sealed partial class DevMenu
             SceneEditor.FocusCamera = EditorFocusCamera;
         }
         SceneEditor.Open();
-        Toast("Editor geöffnet (Hierarchy + Inspector)");
+        Toast("Editor open (Hierarchy + Inspector)");
     }
 
     SceneNode? EditorPlayerCar()
@@ -44,16 +44,16 @@ public sealed partial class DevMenu
         var model = m?.Model;
         if (m == null || model == null) return null;
         string car = m.CurrentCar?.ModelName ?? "?";
-        return SceneAdapters.Car("g:player", "Player Car (" + car + ")", "Eigenes Fahrzeug (VehicleManager)", model,
+        return SceneAdapters.Car("g:player", "Player Car (" + car + ")", "Own Vehicle (VehicleManager)", model,
             () => ReferenceEquals(Mgr?.Model, model),
             b =>
             {
-                b.Section("Eigenes Fahrzeug");
-                b.Info("Auto", car);
-                b.Info("Position (Spielraum)", m.PositionGame);
-                b.Info("Fahrtrichtung", m.ForwardGame);
-                b.Info("Farbe / Felge / Innenraum", m.ColorIndex + " / " + m.RimId + " / " + m.InteriorId);
-                b.Info("Motor läuft", m.EngineRunning ? "ja" : "nein");
+                b.Section("Personal Vehicle");
+                b.Info("Car", car);
+                b.Info("Position (Range)", m.PositionGame);
+                b.Info("Direction of travel", m.ForwardGame);
+                b.Info("Color / Wheels / Interior", m.ColorIndex + " / " + m.RimId + " / " + m.InteriorId);
+                b.Info("Engine Running", m.EngineRunning ? "yes" : "no");
             });
     }
 
@@ -78,9 +78,9 @@ public sealed partial class DevMenu
                         b.Info("Typ", c.Type);
                         if (cur is { } x && x.Id == id)
                         {
-                            b.Info("Position (Spielraum)", x.Position);
-                            b.Info("Tempo", (x.Speed * 3.6f).ToString("0", CultureInfo.InvariantCulture) + " km/h");
-                            b.Info("Modus", x.Mode switch { 0 => "fährt", 1 => "Unfall (Physik)", 2 => "steht", _ => x.Mode.ToString(CultureInfo.InvariantCulture) });
+                            b.Info("Position (Range)", x.Position);
+                            b.Info("Speed", (x.Speed * 3.6f).ToString("0", CultureInfo.InvariantCulture) + " km/h");
+                            b.Info("Mode", x.Mode switch { 0 => "Driving", 1 => "Crash (Physik)", 2 => "Idle", _ => x.Mode.ToString(CultureInfo.InvariantCulture) });
                             b.Info("Gezeichnet", x.Visible ? "ja" : "nein");
                             b.Info("Eigenes (nicht vom Mitspieler)", x.Mine ? "ja" : "nein");
                         }

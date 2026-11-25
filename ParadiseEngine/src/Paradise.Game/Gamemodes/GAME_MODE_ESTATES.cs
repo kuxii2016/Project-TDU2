@@ -7,7 +7,6 @@ using Paradise.Core.Formats;
 using Paradise.Core.Online;
 using Paradise.Core.Savegame;
 using Paradise.Core.Vehicles;
-using Paradise.Game.Input;
 using Paradise.Game.Screens;
 using System.Globalization;
 
@@ -131,7 +130,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         ui.GotoLabel("/", "realtor", true);
         ui.SetVariable("/:SelItemType", "realtor");
         if (!ui.CallClip("/cursor", "ItemAction", "valid")) Log.Warn("Immobilienbüro: cursor.ItemAction fehlt im Film");
-        Log.Info($"Immobilienbüro geöffnet ({_spot?.Code}): {_offer.Count} Häuser im Angebot, {TDU2Garage.OwnedNames(TDU2Session.Save).Count} im Besitz");
     }
 
     static HouseInfo? _exchangeKeep;
@@ -173,7 +171,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         _ext?.Dispose(); _ext = null;
         _camRealtor = false;
         if (_t != null) _t.NearClip = 0.05f;
-        Log.Info("Immobilienbüro geschlossen");
     }
 
     /// <summary>Zurück in den Laufmodus des Büros.</summary>
@@ -298,13 +295,11 @@ public class GAME_MODE_ESTATES : InteriorUtils
             TDU2Garage.RemoveHouse(sv, db, old.SpotName);
             sv.housesSold++;
             if (wasHome) sv.homeHouse = h.SpotName;
-            Log.Info($"Immobilienbüro: {old.SpotName} gegen {h.SpotName} getauscht ({old.SellPrice} $ angerechnet, {h.BuyPrice} $)");
         }
         else
         {
             sv.money -= h.BuyPrice;
             if (string.IsNullOrEmpty(sv.homeHouse)) sv.homeHouse = TDU2Garage.OwnedNames(sv)[0];
-            Log.Info($"Immobilienbüro: {h.SpotName} gekauft für {h.BuyPrice} $");
         }
         TDU2Garage.Normalize(sv, db, sv.homeHouse);
         // exe 0xAED241: die beiden Luxushäuser melden die Freunde ("Ihr Freund §FRIENDNAME§ hat eine Yacht gekauft!")
@@ -367,7 +362,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         _ui2?.ListRefresh(l);
         _ui2?.ListLoaded(l);
         _sellShown = -2;
-        Log.Info("Immobilienbüro: Liste der eigenen Häuser (" + (l.Owner != null ? VmfPlayer.PathOf(l.Owner) : "-") + ", " + l.ViewSize + " Zeilen sichtbar), " + _sellRows.Count + " Häuser");
     }
 
     static void FillSellList(VmfPlayer.FlashList l)
@@ -395,7 +389,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         var ui = _ui2;
         string from = ui?.GetScriptValue("/", "FromMenu") ?? ui?.GetVariable("/:FromMenu") ?? "";
         if (from.StartsWith("exchange", StringComparison.OrdinalIgnoreCase)) _exchange = SellHouse;
-        Log.Info("Immobilienbüro: gewählt " + (SellHouse?.SpotName ?? "-") + " (" + from + ")");
     }
 
     /// <summary>Daten des gewählten eigenen Hauses (/:selected_*, sold_menu/datas: Sterne, Gebiet, Minikarte).</summary>
@@ -471,7 +464,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         var hs = h != null ? HouseUtils.HouseSpot(h) : null;
         RemovalPending = true;                                  // 0x1722952: beim nächsten Betreten C_REMOVAL_I
         if (hs != null && PlayExterior(hs, "C_REMOVAL")) { ClearScene(); _phase = Phase.Removal; return; }
-        Log.Info("Immobilienbüro: kein C_REMOVAL für " + (h?.SpotName ?? "-") + " – Freifahrt am Haus");
         LeaveTo(hs);
     }
 
@@ -485,7 +477,6 @@ public class GAME_MODE_ESTATES : InteriorUtils
         _exchangeKeep = _exchange;
         if (hs == null || !PlayExterior(hs, "C_VTOUR_E"))
         {
-            Log.Info("Immobilienbüro: keine virtuelle Tour für " + (h?.SpotName ?? "-"));
             ReturnFromTour();
             return;
         }

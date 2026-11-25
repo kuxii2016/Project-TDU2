@@ -40,6 +40,8 @@ public sealed class Win32Window : IGameWindow
             lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
             hInstance = hInstance,
             hCursor = LoadCursor(IntPtr.Zero, IDC_ARROW),
+            // Schwarzer Hintergrund: ohne Pinsel zeigt Windows die Client-Fläche bis zum ersten Vulkan-Bild weiß
+            hbrBackground = GetStockObject(BLACK_BRUSH),
             lpszClassName = _className
         };
 
@@ -59,8 +61,8 @@ public sealed class Win32Window : IGameWindow
         if (Handle == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowEx failed (Win32 {Marshal.GetLastWin32Error()}).");
 
-        ShowWindow(Handle, SW_SHOW);
-        UpdateWindow(Handle);
+        // Noch nicht anzeigen: GameLoop ruft Show() erst nach dem ersten fertigen Bild (Renderer, Module, erstes Present) –
+        // vorher stand ein weißes, nicht reagierendes Fenster während des Ladens da.
         SetTitle(title); // sicherheitshalber nochmals explizit setzen
         TrySetIcon("game.ico");
     }
@@ -103,6 +105,18 @@ public sealed class Win32Window : IGameWindow
 
         if (big == IntPtr.Zero && sml == IntPtr.Zero)
             Log.Info($"The icon ‘{path}’ could not be loaded (Win32 {Marshal.GetLastWin32Error()}).");
+    }
+
+    bool _shown;
+
+    /// <summary>Fenster sichtbar machen (einmalig, nach dem ersten gezeichneten Bild).</summary>
+    public void Show()
+    {
+        if (_shown || Handle == IntPtr.Zero) return;
+        _shown = true;
+        ShowWindow(Handle, SW_SHOW);
+        UpdateWindow(Handle);
+        SetForegroundWindow(Handle);
     }
 
     private static string? ResolveAsset(string fileName)
@@ -427,6 +441,9 @@ public sealed class Win32Window : IGameWindow
         int x, int y, int w, int h, nint parent, nint menu, nint hInstance, nint param);
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint hWnd, int cmd);
     [DllImport("user32.dll")] private static extern bool UpdateWindow(nint hWnd);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hWnd);
+    [DllImport("gdi32.dll")] private static extern nint GetStockObject(int obj);
+    private const int BLACK_BRUSH = 4;
     [DllImport("user32.dll")] private static extern bool DestroyWindow(nint hWnd);
     [DllImport("user32.dll", EntryPoint = "SetWindowTextW")] private static extern bool SetWindowTextW(nint hWnd, nint text);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint DefWindowProc(nint hWnd, uint msg, nint wParam, nint lParam);

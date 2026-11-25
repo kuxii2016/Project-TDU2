@@ -7,7 +7,7 @@ namespace Paradise.Core.Vehicles
     {
         public int Color, Rim, Interior;
         public CarChoice(int color, int rim, int interior) { Color = color; Rim = rim; Interior = interior; }
-        public override string ToString() => $"Lack {Color}, Felge {Rim}, Innenraum {Interior}";
+        public override string ToString() => $"Paint {Color}, Wheel {Rim}, Interior {Interior}";
     }
 
     /// <summary>

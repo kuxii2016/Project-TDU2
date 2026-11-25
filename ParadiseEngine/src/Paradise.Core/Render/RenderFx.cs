@@ -35,6 +35,9 @@ public static class RenderFx
     public static IGpuTexture? RainPuddles, RainRipple;
     public static Vector2 RainScroll;
     public static float RainScrollSpeed;
+    /// <summary>Cookie der Scheinwerfer-Projektoren (gProjTexture, fx/weatherfx.bnk projectivespotlighttexture, Frame-Binding 7),
+    /// geladen vom MapStreamer.</summary>
+    public static IGpuTexture? HeadlightCookie;
     public static float OceanY;
     public static Vector3 OceanClear = new(0.12f, 0.23f, 0.18f);
 
@@ -42,7 +45,7 @@ public static class RenderFx
     public static bool ProbeOn;
     public static Vector3 ProbePos;
     /// <summary>Unity probe.farClipPlane.</summary>
-    public static float ProbeFar = 600f;
+    public static float ProbeFar = 450f;
     /// <summary>
     /// Sonde an fester Stelle in einer unbewegten Umgebung (Interieur: Raummitte, ohne Autos): die 6 Seiten einmal rendern und
     /// dann stehen lassen, bis sich Stelle oder <see cref="ProbeVersion"/> ändert (z.B. Möbel nachgeladen). Gleiches Bild wie

@@ -18,10 +18,10 @@ public static class RenderDistance
 
     public static float MultiplierOf(RenderDistanceLevel l) => l switch
     {
-        RenderDistanceLevel.VeryHigh => 4f,
-        RenderDistanceLevel.High => 2f,
-        RenderDistanceLevel.Low => 0.5f,
-        RenderDistanceLevel.VeryLow => 0.25f,
+        RenderDistanceLevel.VeryHigh => 4.5f,
+        RenderDistanceLevel.High => 2.2f,
+        RenderDistanceLevel.Low => 0.6f,
+        RenderDistanceLevel.VeryLow => 0.3f,
         _ => 1f,
     };
 

@@ -57,6 +57,7 @@ public sealed class ScreenModule : GameModule, IGameModeContext
 
     public override void Load()
     {
+        ProfilerNetworkProvider.Register();   // Profiler: echte Netzwerkzähler liefern
         GameMode.Changed += OnModeChanged;
         // general.bnk: Popups/Einladungen – immer geladen (TDU2GameData)
         _general = Open(ScreenDefs.General);
@@ -70,6 +71,21 @@ public sealed class ScreenModule : GameModule, IGameModeContext
             if (_vehicles?.Manager != null && _vehicles.Manager.IsLoadingCar) return false;
             return s.ReadyAround(cam.Position, radius);
         };
+        // Original-Shader vorab übersetzen (nur beim ersten Start / nach Übersetzer-Update): Anzeige mit Fortschritt, Spielstart wartet
+        if (Paradise.Core.Render.Original.ShaderPrecompile.Needed())
+        {
+            Paradise.Core.Render.Original.ShaderPrecompile.Start();
+            Paradise.Core.Render.Original.ShaderPrecompileScreen.Show();
+            _waitShaders = true;
+            return;
+        }
+        StartFirstMode();
+    }
+
+    bool _waitShaders;
+
+    void StartFirstMode()
+    {
         bool same = GameMode.Current == StartMode;
         GameMode.Set(StartMode);
         if (same) OnModeChanged(StartMode, StartMode);   // kein Wechsel-Ereignis: Modus trotzdem starten
@@ -77,6 +93,13 @@ public sealed class ScreenModule : GameModule, IGameModeContext
 
     public override void Update(in GameTime time)
     {
+        Paradise.Core.Render.Original.ShaderPrecompileScreen.Update();   // Shader-Cache-Anzeige (blendet nach Abschluss aus)
+        if (_waitShaders)
+        {
+            if (!Paradise.Core.Render.Original.ShaderPrecompile.Finished) return;
+            _waitShaders = false;
+            StartFirstMode();
+        }
         TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs)
         if (TDU2Controls.Pressed("dev_login")) GameMode.Set(Gamemode.GAME_MODE_LOGIN);
         if (TDU2Controls.Pressed("dev_freeride")) GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
@@ -90,6 +113,12 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (active != null)
             using (active.RunMarker.Auto())   // Profiler: "GAME_MODE_X.Run"
                 active.Run(this, in time);
+        // Avatar-Licht (Core/Avatars/AvatarLighting): Spielmodus wie das Original ([[0xfd50fc]+8]); Pausemenü behält den unterbrochenen
+        // Modus, der Tuner ist im Original Teil des Shop-Managers (SHOP 3)
+        var lm = GameMode.Current;
+        if (lm != Gamemode.GAME_MODE_PAUSE)
+            Paradise.Core.Avatars.AvatarLighting.Mode = lm == Gamemode.GAME_MODE_TUNER ? (int)Gamemode.GAME_MODE_SHOP : (int)lm;
+        Paradise.Core.Avatars.AvatarLighting.InteriorScene = InteriorUtils._data != null;
         using (s_mIsland.Auto())
             IslandTravel.Update(this, time.DeltaTime);   // Inselwechsel (Unity TDU2IslandTravel, Gamemodes/Utils)
         using (s_mStory.Auto())

@@ -106,6 +106,8 @@ public sealed class InteriorScene
     public readonly List<Volume> Volumes = new();
     /// <summary>Entity__CinCar (Story-Szenen: Auto-Darsteller wie CIN_CAR / PLAYER_CAR).</summary>
     public readonly List<Ent> CinCars = new();
+    /// <summary>Entity__Light: Spotlichter der Szene für das Avatar-Licht (Avatars/AvatarLighting, Original-Container max. 64).</summary>
+    public readonly List<Ent> Lights = new();
 
     public Ent? CarSlot(string name)
     {
@@ -155,6 +157,7 @@ public sealed class InteriorScene
                     case "ArrayOf_Entity__CinCar": sc.CinCars.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__MyHouseObject": sc.HouseObjects.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__PNJ": sc.Npcs.Add(Fill(new Ent(), it)); break;
+                    case "ArrayOf_Entity__Light": sc.Lights.Add(Fill(new Ent(), it)); break;
                     case "ArrayOf_Entity__Actor__ActorVehiclePosition":
                         {
                             var v = Fill(new ShowCar(), it);
@@ -208,6 +211,28 @@ public sealed class InteriorScene
             }
         sc.CarSlots.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         return sc;
+    }
+
+    /// <summary>
+    /// Entity__Light -> Licht des Avatar-Sammelns wie das Original (Laden unpacked.exe 0x952cb3, Grundwerte 0 / isInterior 1;
+    /// Adder 0xaf8c50: Lage = Übersetzung der Entity-Matrix, Richtung = −Y-Achse, Farben x Intensity). Szenenraum.
+    /// </summary>
+    public static Avatars.SceneLight LightOf(Ent e)
+    {
+        var n = e.Node;
+        Vector3 V(string name)
+        {
+            var c = n?.Get(name);
+            if (c == null) return Vector3.Zero;
+            if (c.Get("X") != null) return new Vector3(c.F("X"), c.F("Y"), c.F("Z"));
+            var f = c.Floats();
+            return new Vector3(f.Length > 0 ? f[0] : 0f, f.Length > 1 ? f[1] : 0f, f.Length > 2 ? f[2] : 0f);
+        }
+        float F(string name, float def) => n?.Get(name) is XmbNode c ? c.AsFloat(def) : def;
+        var y = new Vector3(e.M.M21, e.M.M22, e.M.M23);
+        return Avatars.SceneLight.Create(e.Position, y, V("Ambient"), V("Diffuse"), V("Specular"), F("Intensity", 0f),
+                                         F("DistanceDropOff", 0f), F("DistanceCutOff", 0f), F("AngularDropOff", 0f), F("AngularCutOff", 0f),
+                                         F("isInterior", 1f) != 0f);
     }
 
     static void SetRow(ref Matrix4x4 m, int r, Vector4 v)

@@ -99,8 +99,7 @@ public sealed class Options
             var aids = (DrivingAids)i;   // Secure, Sport, HyperSport, Off
             if (Vm != null) { Vm.Aids = aids; if (Vm.Current != null) Vm.Current.Aids = aids; }
         });
-        Choice("opts:gase:gear", "gearbox", () => new[] { T("m_Automatic", "Automatik"), T("m_Manual", "Manuell"),
-                                                          T("m_HShifter", "H-Schaltung"), T("m_HShifterClutch", "H-Schaltung + Kupplung") }, _vehicle.AutomaticGearbox ? 0 : 1, i =>
+        Choice("opts:gase:gear", "gearbox", () => new[] { T("m_Automatic", "Automatik"), T("m_Manual", "Manuell"), T("m_HShifter", "H-Schaltung"), T("m_HShifterClutch", "H-Schaltung + Kupplung") }, _vehicle.AutomaticGearbox ? 0 : 1, i =>
         {
             if (Vm == null) return;
             Vm.AutomaticGearbox = i == 0;   // H-Schaltung/Kupplung folgen mit den Eingabegeräten

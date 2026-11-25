@@ -25,7 +25,6 @@ public sealed partial class DevMenu
     static readonly Vector4 LGreen = new(0.3f, 1f, 0.3f, 1f), LRed = new(1f, 0.25f, 0.2f, 1f), LCyan = new(0.3f, 0.95f, 1f, 1f),
         LYellow = new(1f, 0.92f, 0.2f, 1f), LOrange = new(1f, 0.6f, 0.1f, 1f), LMagenta = new(1f, 0.3f, 1f, 1f), LWhite = new(1f, 1f, 1f, 1f);
 
-    // ------------------------------------------------------------------ Auto: Physik-Einstellungen
     List<Item> CarPhysicsMenu()
     {
         var m = Mgr;
@@ -61,7 +60,6 @@ public sealed partial class DevMenu
         return l;
     }
 
-    // ------------------------------------------------------------------ Auto: Physik-Debug (live + Strahlen)
     List<Item> CarDebugMenu()
     {
         var m = Mgr;
@@ -97,7 +95,6 @@ public sealed partial class DevMenu
 
     static string V3(Vector3 v, string fmt = "0.00") => v.X.ToString(fmt, Inv) + " / " + v.Y.ToString(fmt, Inv) + " / " + v.Z.ToString(fmt, Inv);
 
-    /// <summary>Strahlen am eigenen Auto sammeln (jedes Bild, auch bei geschlossenem Menü, wenn eingeschaltet).</summary>
     void CollectCarDebug()
     {
         if (!(_dbgRays || _dbgForces || _dbgVelocity || _dbgWheelLabels)) return;
@@ -144,7 +141,6 @@ public sealed partial class DevMenu
         }
     }
 
-    // ------------------------------------------------------------------ Verkehr (Unity TrafficMenu / TrafficDebugMenu)
     Gameplay.Traffic? Traffic => _vehicles.Traffic;
 
     List<Item> TrafficMenu()
@@ -189,7 +185,6 @@ public sealed partial class DevMenu
         return l;
     }
 
-    /// <summary>Live-Liste der KI-Autos – auch aus Network > Traffic &amp; Remote Cars erreichbar.</summary>
     List<Item> TrafficCarListMenu()
     {
         var tr = Traffic;
@@ -237,7 +232,6 @@ public sealed partial class DevMenu
         return l;
     }
 
-    // ------------------------------------------------------------------ Bloom / AO (Zusatz, Game/Config/PostFxConfig.cs)
     void AddPostFxItems(List<Item> l)
     {
         var d = new PostFxConfig();
@@ -262,7 +256,6 @@ public sealed partial class DevMenu
         l.Add(Info("AO bias high (0.3-0.5) = almost no AO (lower = more AO)"));
     }
 
-    // ------------------------------------------------------------------ Beschriftungen in der Welt + Verkehrstafel
     /// <summary>Unity GUI.Label der Debug-Ansichten: Text am Bildschirmpunkt des Weltpunkts, Tafel des Verkehrs unten links.</summary>
     void RenderWorldDebug(FontAtlas f, float cw, float ch, float lh, float k)
     {

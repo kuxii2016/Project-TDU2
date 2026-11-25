@@ -66,6 +66,7 @@ namespace Paradise.Core.Online
         public List<ChallengeEntry> challenges = new List<ChallengeEntry>();
         public string challData = "";
         public int challId;
+        public string photoData = "";   // photoget: JPG (Base64)
 
         public static NetResponse Error(string e) => new NetResponse { ok = false, error = e };
     }

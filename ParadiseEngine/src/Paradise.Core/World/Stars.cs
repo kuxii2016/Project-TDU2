@@ -45,8 +45,8 @@ public sealed class Stars : IDisposable
                 tex = textures.Get(textures.KeyByName("stars.2db"), TextureWrap.Repeat, TextureWrap.Repeat);
                 moon = textures.Get(textures.KeyByName("moon.2db"), TextureWrap.Clamp, TextureWrap.Clamp);
             }
-            if (moon == null) Log.Warn("Mond: moon.2db (fx/weatherfx.bnk) nicht gefunden");
-            if (tex == null) Log.Warn("Sterne: stars.2db (fx/weatherfx.bnk) nicht gefunden");
+            if (moon == null) Log.Warn("Moon: moon.2db (fx/weatherfx.bnk) not found");
+            if (tex == null) Log.Warn("Stars: stars.2db (fx/weatherfx.bnk) not found");
             BuildDome(30, 30, out var verts, out var idx);
             s._mesh = r.CreateMesh(verts, idx);
             s._mat = r.CreateMaterial(new MaterialDesc { Kind = MaterialKind.SkyStars, Name = "MatDome_Stars", Main = tex });
@@ -61,10 +61,9 @@ public sealed class Stars : IDisposable
             };
             s._moonMesh = r.CreateMesh(mv, new uint[] { 0, 1, 3, 1, 2, 3 });
             s._moonMat = r.CreateMaterial(new MaterialDesc { Kind = MaterialKind.SkyMoon, Name = "MatMoon", Main = moon });
-            Log.Info($"Sterne: Dom-Mesh {verts.Length} Punkte, {idx.Length / 3} Dreiecke");
             return s;
         }
-        catch (Exception ex) { Log.Warn("Sterne: " + ex.Message); s.Dispose(); return null; }
+        catch (Exception ex) { Log.Error("Stars: " + ex.Message); s.Dispose(); return null; }
     }
 
     /// <summary>Zeichnen um die Kamera (Render-Raum). Die Tiefe setzt der Shader auf die Fernebene.</summary>

@@ -84,6 +84,7 @@ public sealed class XmbFile
     // Feldnamen je Offset nur einmal als string (sonst je Datensatz und Feld eine eigene Kopie)
     private readonly Dictionary<int, string> _names = new();
     private static readonly object s_true = true, s_false = false;
+    private bool _rawBytes;
 
     private string Name(int o)
     {
@@ -103,10 +104,14 @@ public sealed class XmbFile
 
     public static bool IsXmb(byte[]? b) => b != null && b.Length > 28 && b[0] == 'X' && b[1] == 'M' && b[2] == 'B' && b[3] == 'F';
 
-    public static XmbNode Parse(byte[] b)
+    public static XmbNode Parse(byte[] b) => Parse(b, false);
+
+    /// <summary><paramref name="rawBytes"/>: Arrays aus UInt8 als ein byte[] in <see cref="XmbNode.Value"/> statt ein Knoten je Byte
+    /// (Shader-Sätze .sob: Bytecode „bin“, „spec“ – sonst Millionen Knoten).</summary>
+    public static XmbNode Parse(byte[] b, bool rawBytes)
     {
         if (!IsXmb(b)) throw new FormatException("no valid XMBF file");
-        var x = new XmbFile(b);
+        var x = new XmbFile(b) { _rawBytes = rawBytes };
         int rootName = x.I32(20);
         int rootType = x.I32(24);
         x.Root = x.ReadValue(x.Name(x._desc + rootName), rootType, x._data, 0);
@@ -147,6 +152,13 @@ public sealed class XmbFile
         int ty = (int)(tw & 0xF);
         arr.Type = (XmbType)ty;
         if (n < 0 || n > 1 << 22) return arr;
+        if (_rawBytes && ty == 6)
+        {
+            var raw = new byte[n];
+            if (n > 0 && baseAddr >= 0 && baseAddr + n <= _b.Length) Buffer.BlockCopy(_b, baseAddr, raw, 0, n);
+            arr.Value = raw;
+            return arr;
+        }
         for (int i = 0; i < n; i++)
         {
             XmbNode item;

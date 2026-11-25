@@ -96,7 +96,6 @@ namespace Paradise.Game.Gamemodes
                 if (!OperatingSystem.IsWindows()) { Log.Warn("Intros: Videowiedergabe nur unter Windows (Media Foundation)."); Finish(); return; }
                 _video = new VideoPlayer(r, path);
                 _video.Start(_cfg.VideoVolume);
-                Log.Info("Intro: " + _cfg.Videos[i]);
                 return;
             }
         }
@@ -121,7 +120,7 @@ namespace Paradise.Game.Gamemodes
                 if (rgba == null) { Log.Warn("startup.png: Format nicht lesbar (erwartet 8 Bit, nicht verschachtelt)."); return null; }
                 return r.CreateTexture(new TextureUpload { Width = w, Height = h, Format = GpuTextureFormat.Rgba8, Blocks = rgba, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "startup.png" });
             }
-            catch (Exception ex) { Log.Warn("startup.png: " + ex.Message); return null; }
+            catch (Exception ex) { Log.Error("startup.png: " + ex.Message); return null; }
         }
 
         static bool AnyInput(IGameModeContext ctx)

@@ -74,7 +74,7 @@ namespace Paradise.Core.Savegame
             var db = Db();
             if (db == null)
             {
-                if (!_warnedNoDb) Log.Warn("[TDU2] Savegame: Fahrzeugdatenbank noch nicht geladen – DATA nicht geschrieben");
+                if (!_warnedNoDb) Log.Warn("Vehicle database not yet loaded – DATA not written");
                 _warnedNoDb = true;
                 return;
             }
@@ -86,7 +86,7 @@ namespace Paradise.Core.Savegame
         {
             if (save == null || string.IsNullOrEmpty(nick)) return Task.CompletedTask;
             db = db ?? Db();
-            if (db == null) { Log.Warn("Savegame: Vehiclebank missing – DATA not Written"); return Task.CompletedTask; }
+            if (db == null) { Log.Warn("Vehiclebank missing – DATA not Written"); return Task.CompletedTask; }
             var copy = NetJson.Copy(save);
             if (!string.IsNullOrEmpty(reason)) Log.Info("Savegame: " + reason + " -> " + PathFor(nick));
             return Task.Run(() => Write(nick, copy, db, true));
@@ -109,12 +109,12 @@ namespace Paradise.Core.Savegame
                     if (File.Exists(path)) File.Delete(path);
                     File.Move(tmp, path);
                 }
-                if (verbose) Log.Info($"[TDU2] Savegame geschrieben: {path} ({file.Length} Bytes) – {info}");
+                if (verbose) Log.Info($"Savegame geschrieben: {path} ({file.Length} Bytes) – {info}");
                 return true;
             }
             catch (Exception e)
             {
-                Log.Warn("[TDU2] Savegame: DATA schreiben fehlgeschlagen: " + e.Message);
+                Log.Error("Failed to write DATA: " + e.Message);
                 return false;
             }
         }
@@ -160,7 +160,7 @@ namespace Paradise.Core.Savegame
                 if (string.IsNullOrEmpty(f) || !seenCars.Add(f)) continue;
                 var c = FindCar(db, f);
                 if (c != null) cars.Add(c);
-                else Log.Warn("[TDU2] Savegame: Auto " + f + " nicht in DBCarPhysicsData – nicht in der Garage");
+                else Log.Warn("Savegame: Auto " + f + " nicht in DBCarPhysicsData – nicht in der Garage");
             }
             var garage = new XArray { ElementType = XType.Object };
             int ci = 0, current = -1, idx = 0, dropped = 0;
@@ -224,7 +224,15 @@ namespace Paradise.Core.Savegame
                 e["LivingMaterials"] = PrimArray(XType.UInt32, 0UL, 0UL);
                 e["GarageMaterials"] = PrimArray(XType.UInt32, 0UL, 0UL);
                 var frames = new XArray { ElementType = XType.Object };
-                for (int i = 0; i < 5; i++) { var fr = new XObject(); fr["FrameFilename"] = new XPrim(XType.String, ""); frames.Items.Add(fr); }
+                // Bilderrahmen (exe: Material MAT_FRAME_%02d, 0xd394e8): Dateiname des Fotos aus dem Album, "" = leer
+                HouseLayout lay = null;
+                if (s.houses != null) foreach (var l in s.houses) if (l != null && Same(l.spot, h.SpotName)) { lay = l; break; }
+                for (int i = 0; i < 5; i++)
+                {
+                    string fn = "";
+                    if (lay?.frames != null) foreach (var f in lay.frames) if (f != null && f.k == (i + 1).ToString(CultureInfo.InvariantCulture)) fn = f.v ?? "";
+                    var fr = new XObject(); fr["FrameFilename"] = new XPrim(XType.String, fn); frames.Items.Add(fr);
+                }
                 e["HouseFrames"] = frames;
                 hArr.Items.Add(e);
             }
@@ -267,6 +275,10 @@ namespace Paradise.Core.Savegame
             if (lv != null) { Set(lv, "PlayedTheGame", true); Set(lv, "TutoSeen", step >= StoryImplemented); }
             var life = root["MyLife"] as XObject;
             if (life != null && s.myLife != null && !string.IsNullOrEmpty(s.myLife.moodText)) Set(life, "PersonalQuote", s.myLife.moodText);
+            if (life != null && s.myLife?.fields != null)
+                foreach (var (id, key) in LifeKeys)
+                    foreach (var f in s.myLife.fields)
+                        if (f != null && f.k == id && int.TryParse(f.v, out int v) && v >= 0 && life[key] is XPrim) Set(life, key, v);
 
             // ---- Autoradio (Original: RadioOptions mit StationHashCode/Volume)
             if (s.radioVolume >= 0)
@@ -635,6 +647,7 @@ namespace Paradise.Core.Savegame
                 }
             if (root["StatisticsData"] is XObject stR) s.housesSold = (int)Long(stR, "NbHouseSold");
             ReadHouses(db, garage, vars, curHouseName, s);
+            ReadHouseFrames(db, root, s);
             if (vars.TryGetValue("U3D_Car", out string vc) && s.ownedCars.Exists(f => string.Equals(f, vc, StringComparison.OrdinalIgnoreCase))) s.currentCar = vc;
             if (string.IsNullOrEmpty(s.currentCar) && s.ownedCars.Count > 0) s.currentCar = s.ownedCars[0];
             s.starterChosen = s.ownedCars.Count > 0;
@@ -763,6 +776,16 @@ namespace Paradise.Core.Savegame
             var life = root["MyLife"] as XObject;
             string quote = life != null ? Str(life, "PersonalQuote") : null;
             if (!string.IsNullOrEmpty(quote) && quote != "Test Drive Unlimited 2") s.myLife.moodText = quote.Length > 60 ? quote.Substring(0, 60) : quote;
+            if (life != null)
+                foreach (var (id, key) in LifeKeys)
+                {
+                    if (!(life[key] is XPrim lp)) continue;
+                    long v = lp.AsLong();
+                    if (v < 0 || v > int.MaxValue) continue;   // ungesetzt (z. B. 0xFFFFFFFF)
+                    s.myLife.fields ??= new List<HouseEntry>();
+                    s.myLife.fields.RemoveAll(e => e == null || e.k == id);
+                    s.myLife.fields.Add(new HouseEntry { k = id, v = v.ToString(CultureInfo.InvariantCulture) });
+                }
 
             info = $"{s.ownedCars.Count} Autos, aktuell {s.currentCar}, Insel {s.island}, Position={s.hasPosition}, Interieur '{s.interior}', Geld {s.money}, Story {s.story}, Avatar {avInfo}";
             return s;
@@ -854,6 +877,31 @@ namespace Paradise.Core.Savegame
         /// Hauses). Dateien des Ports (U3D_Saved) vor U3D_HousesVersion schrieben alle Häuser: dort gelten nur Häuser mit Autos, der Wohnsitz
         /// und das Starthaus als besessen.
         /// </summary>
+        /// <summary>Bilderrahmen der Häuser (MyHouse.House[].HouseHC / HouseFrames[0..4].FrameFilename) in s.houses[].frames.</summary>
+        static void ReadHouseFrames(CarDatabase db, XObject root, SaveData s)
+        {
+            if (root["MyHouse"] is not XObject my || my["House"] is not XArray arr) return;
+            foreach (var it in arr.Items)
+            {
+                if (it is not XObject e || e["HouseFrames"] is not XArray fa) continue;
+                string hn = HouseName(db, ULong(e, "HouseHC"));
+                if (hn == null) continue;
+                HouseLayout lay = null;
+                s.houses ??= new List<HouseLayout>();
+                foreach (var l in s.houses) if (l != null && Same(l.spot, hn)) { lay = l; break; }
+                for (int i = 0; i < fa.Items.Count && i < 5; i++)
+                {
+                    string fn = fa.Items[i] is XObject fo ? Str(fo, "FrameFilename") : null;
+                    if (string.IsNullOrEmpty(fn)) continue;
+                    if (lay == null) { lay = new HouseLayout { spot = hn }; s.houses.Add(lay); }
+                    lay.frames ??= new List<HouseEntry>();
+                    string k = (i + 1).ToString(CultureInfo.InvariantCulture);
+                    lay.frames.RemoveAll(f => f == null || f.k == k);
+                    lay.frames.Add(new HouseEntry { k = k, v = fn });
+                }
+            }
+        }
+
         static void ReadHouses(CarDatabase db, XArray garage, Dictionary<string, string> vars, string curHouseName, SaveData s)
         {
             var inGarage = new List<string>();
@@ -882,7 +930,6 @@ namespace Paradise.Core.Savegame
                 s.ownedHouses.Add(TDU2Garage.StarterHouse);
                 if (curHouseName != null && !s.ownedHouses.Exists(x => Same(x, curHouseName))) s.ownedHouses.Add(curHouseName);
                 foreach (var hn in inGarage) if (withCars.Contains(hn) && !s.ownedHouses.Exists(x => Same(x, hn))) s.ownedHouses.Add(hn);
-                Log.Info("[TDU2] Savegame: alte Datei (alle Häuser) -> besessen: " + string.Join(", ", s.ownedHouses));
             }
             else s.ownedHouses.AddRange(inGarage);
             s.homeHouse = curHouseName != null && s.ownedHouses.Exists(x => Same(x, curHouseName)) ? curHouseName : null;
@@ -1054,6 +1101,15 @@ namespace Paradise.Core.Savegame
         }
 
         static bool Finite(float f) => !float.IsNaN(f) && !float.IsInfinity(f);
+        /// <summary>MyTDULife-Profilangaben: Feld in MyLifeData.fields -> Feld der Original-Struktur PlayerData.MyLife
+        /// (Feldnamen aus unpacked.exe, MngMyLife). Wert = Listenindex [vermutet].</summary>
+        static readonly (string id, string key)[] LifeKeys =
+        {
+            ("attitude", "AttitudeId"), ("driving_camera", "FavCamId"), ("driving_help", "DrivingHelpId"),
+            ("gamer_type", "GamerTypeId"), ("game_genre", "GamerGenreId"), ("gamer_kind", "GamerKindId"),
+            ("like_tdu", "LikeId"), ("fav_game_mode", "FavGameMode"), ("fav_island", "FavIsland"), ("fav_car_category", "AFavcarCategory"),
+        };
+
         static string Str(XObject o, string k) => (o[k] as XPrim)?.AsString();
         static long Long(XObject o, string k) => (o[k] as XPrim)?.AsLong() ?? 0;
         static ulong ULong(XObject o, string k) => (o[k] as XPrim)?.AsULong() ?? 0;

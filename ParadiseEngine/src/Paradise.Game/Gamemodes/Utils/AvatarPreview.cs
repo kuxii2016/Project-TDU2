@@ -75,8 +75,7 @@ internal sealed class AvatarPreview : IDisposable
         a.Rig.BeginPose();
         if (Clip != null)
         {
-            float len = MathF.Max(0.05f, Clip.Length);
-            a.Rig.ApplyClip(Clip, T - MathF.Floor(T / len) * len, 1f, ClipPositions);
+            a.Rig.ApplyClipLoop(Clip, T, 1f, ClipPositions);   // Schleife mit Überblendung (kein Sprung Ende -> Anfang)
         }
         a.Draw(Pose * sceneToRender);
     }

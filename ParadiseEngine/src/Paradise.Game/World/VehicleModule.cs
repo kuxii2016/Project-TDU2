@@ -10,13 +10,6 @@ using Paradise.Game.Input;
 
 namespace Paradise.Game.World;
 
-/// <summary>
-/// Gameplay-Seite der Fahrzeuge (Tasten wie TDU2VehicleManager.HandleKeys/DriveInput im Unity-Projekt). Belegung: Game/Config/KeyConfig.cs
-/// über TDU2Controls (Standard wie Unity: W/S Gas/Bremse, A/D lenken, Leertaste Handbremse, E/Q schalten, G Getriebe, U Fahrhilfen,
-/// C Kamera, B Rückblick, R aufrichten, H Hupe, L Licht, F Lichthupe, Y Blinker rechts, X Warnblinker; Minimap J: GAME_MODE_FREERIDE).
-/// Testtasten: F2 einsteigen/aussteigen, F3/F4 nächstes/voriges Auto, F8 Lackfarbe, F9 neu laden.
-/// (F5–F7 belegt der ScreenModule-Test.) Laden/Physik/Zeichnen: Paradise.Core.Vehicles.VehicleManager.
-/// </summary>
 public sealed class VehicleModule : GameModule
 {
     private readonly IRenderer _renderer;
@@ -25,16 +18,10 @@ public sealed class VehicleModule : GameModule
     private readonly DebugOverlay? _overlay;
     private VehicleManager? _vm;
     private Paradise.Game.Gameplay.Traffic? _traffic;
-
-    /// <summary>Verkehr (Gameplay/Traffic, Werte Game/Config/TrafficConfig.cs).</summary>
     public Paradise.Game.Gameplay.Traffic? Traffic => _traffic;
-
     public VehicleManager? Manager => _vm;
-    /// <summary>Renderer (Zeichnen in den Spielmodi, z.B. Straßennetz der großen Karte).</summary>
     public IRenderer Renderer => _renderer;
-    /// <summary>Unity TDU2VehicleManager.Suspended: während Login/Start keine Fahr-/Freiflugtasten (Tippen im Profil-Popup).</summary>
     public bool Suspended;
-    /// <summary>Unity Time.timeScale = 0 (Pausemenü offen): Physik und Fahrzeug stehen, Kamera bleibt.</summary>
     public bool Frozen;
 
     public VehicleModule(IRenderer renderer, TerrainModule terrain, IGameWindow window, DebugOverlay? overlay = null)
@@ -47,9 +34,9 @@ public sealed class VehicleModule : GameModule
 
     public override void Load()
     {
-        VehicleCamera.PadLook = () => TDU2InputDevices.Look;   // Unity TDU2VehicleCamera: rechter Stick = Blickrichtung
-        Paradise.Game.Screens.AccessoryMenu.HudSource = () => _vm?.Minimap?.Hud;   // Unity TDU2UIManager.Hud
-        if (_terrain.Physics == null) { Log.Warn("VehicleModule: keine Physikwelt (Welt nicht geladen)."); return; }
+        VehicleCamera.PadLook = () => TDU2InputDevices.Look;
+        Paradise.Game.Screens.AccessoryMenu.HudSource = () => _vm?.Minimap?.Hud;
+        if (_terrain.Physics == null) { Log.Warn("VehicleModule: No physics world (world not loaded)."); return; }
         _vm = new VehicleManager(_renderer, _terrain.Physics);
         Paradise.Game.Config.GpsConfig.Apply();
         _vm.TerrainVisualLower = () => _terrain.Streamer?.TerrainLower ?? 0f;
@@ -68,7 +55,7 @@ public sealed class VehicleModule : GameModule
         _overlay?.AddSection("Vehicle (Keys: F2 to get in/out, F3/F4 for car, F8 for color, F9 to reset)", () => _vm.DebugLines());
     }
 
-    // Profiler (F1 > Performance > Open Profiler)
+
     static readonly ProfilerMarker s_mTrafficFixed = new("Traffic.FixedUpdate", ProfilerCategory.Scripts);
     static readonly ProfilerMarker s_mRemoteFixed = new("RemoteCars.FixedUpdate", ProfilerCategory.Network);
     static readonly ProfilerMarker s_mOpponentsFixed = new("RaceOpponents.FixedUpdate", ProfilerCategory.Scripts);
@@ -88,35 +75,35 @@ public sealed class VehicleModule : GameModule
     {
         if (Frozen) return;
         using (s_mTrafficFixed.Auto())
-            _traffic?.FixedUpdate(time.FixedDeltaTime);   // KI + kinematische Körper vor dem Physikschritt
+            _traffic?.FixedUpdate(time.FixedDeltaTime);
         using (s_mRemoteFixed.Auto())
-            Paradise.Game.Online.RemoteCars.FixedUpdate(time.FixedDeltaTime);   // Mitspieler-Autos (kinematisch, Unity TDU2Multiplayer)
+            Paradise.Game.Online.RemoteCars.FixedUpdate(time.FixedDeltaTime);
         using (s_mOpponentsFixed.Auto())
-            Paradise.Game.Racing.RaceOpponents.FixedUpdateActive(time.FixedDeltaTime);   // Gegner im Rennen (kinematisch)
+            Paradise.Game.Racing.RaceOpponents.FixedUpdateActive(time.FixedDeltaTime);
         using (s_mVmFixed.Auto())
             _vm?.FixedUpdate(time.FixedDeltaTime);
     }
 
     public override void Update(in GameTime time)
     {
-        DebugLines.Clear();   // Debug-Linien/Beschriftungen dieses Bildes (Verkehr, Entwicklermenü) neu sammeln
+        DebugLines.Clear();
         if (_vm == null) return;
         using (s_mVmUpdate.Auto())
             _vm.Update();
-        // Verkehr: neue Autos nur in der Freifahrt, wenn gefahren wird (nicht im Interieur, auf der Karte, in Kinos)
+
         bool trafficSpawn = !Suspended && !Frozen && Paradise.Game.Screens.GameMode.Current == Paradise.Game.Screens.Gamemode.GAME_MODE_FREERIDE
                             && !Paradise.Game.Gamemodes.InteriorUtils.Inside && !_terrain.MapView;
         if (!Frozen)
             using (s_mTraffic.Auto())
                 _traffic?.Update(time.DeltaTime, trafficSpawn);
-        if (_traffic != null) _traffic.Alpha = time.FixedAlpha;   // Darstellung zwischen den Physikschritten
-        if (!_terrain.MapView) _traffic?.DrawDebug();   // TrafficConfig.ShowDebug (F1 > Traffic)
+        if (_traffic != null) _traffic.Alpha = time.FixedAlpha;
+        if (!_terrain.MapView) _traffic?.DrawDebug();
         using (s_mControls.Auto())
-            TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs, Unity TDU2Controls)
+            TDU2Controls.Update(_window.Input, time.FrameCount);
         if (Suspended || Frozen)
         {
             _terrain.FlyCameraEnabled = false;
-            _vm?.UpdateGps(time.DeltaTime);   // Unity: TDU2Gps läuft auch bei angehaltenem Spiel (Route für die große Karte)
+            _vm?.UpdateGps(time.DeltaTime); 
             return;
         }
         bool f2 = TDU2Controls.Pressed("dev_car"), f3 = TDU2Controls.Pressed("dev_carnext"), f4 = TDU2Controls.Pressed("dev_carprev"),
@@ -124,6 +111,7 @@ public sealed class VehicleModule : GameModule
         var cam = _terrain.Camera; var s = _terrain.Streamer;
         if (_vm.Ready && cam != null && s != null)
         {
+            #if DEBUG
             if (f2)
             {
                 if (_vm.Current != null || _vm.Model != null) _vm.Despawn();
@@ -133,28 +121,35 @@ public sealed class VehicleModule : GameModule
             if (f4) _vm.SwitchCar(-1);
             if (f8) _vm.NextColor();
             if (f9) _vm.SwitchCar(0);
+            #endif
         }
 
         var v = _vm.Current;
         _terrain.FlyCameraEnabled = v == null || _terrain.FreeFly;
         s?.ExtraLamps.Clear();
+        s?.HeadlightProjectors.Clear();
         if (v == null) return;
         if (_terrain.FreeFly)
         {
-            // Freiflug-Kamera (Entwicklermenü F1, Unity TDU2FlyCameraTool): Auto ohne Eingabe mit Handbremse, Kamera bleibt frei
             _vm.DriveInput(0f, 0f, 0f, true, time.DeltaTime, false, false);
             _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
-            if (s != null) _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
+            if (s != null)
+            {
+                _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
+                var camR = cam != null ? cam.Position : System.Numerics.Vector3.Zero;
+                _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, camR);
+                _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
+                Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
+            }
             return;
         }
 
-        // DriveInput (Unity TDU2VehicleManager: TDU2Controls "accel"/"brake"/"left"/"right"/"handbrake")
         float accel = TDU2Controls.Held("accel") ? 1f : 0f;
         float brake = TDU2Controls.Held("brake") ? 1f : 0f;
         float steer = 0f;
         if (TDU2Controls.Held("left")) steer -= 1f;
         if (TDU2Controls.Held("right")) steer += 1f;
-        // Gamepad/Lenkrad (TDU2InputDevices: Geräteprofil aus StreamingAssets, Pedale kalibriert, Optionen Totzone/Linearität)
+
         bool analog = false; float devSteer = 0f;
         if (!TDU2Controls.Blocked && TDU2InputDevices.HasDevice)
         {
@@ -167,7 +162,6 @@ public sealed class VehicleModule : GameModule
         using (s_mDriveInput.Auto())
             _vm.DriveInput(accel, brake, steer, TDU2Controls.Held("handbrake"), time.DeltaTime, analog, analog && TDU2InputDevices.IsWheel);
 
-        // HandleKeys (Unity TDU2VehicleManager.HandleKeys)
         if (TDU2Controls.Pressed("camera")) _vm.Camera.NextMode();
         _vm.Camera.LookBack = TDU2Controls.Held("lookback");
         if (TDU2Controls.Pressed("aids")) { _vm.Aids = (DrivingAids)(((int)_vm.Aids + 1) % 4); v.Aids = _vm.Aids; }
@@ -186,21 +180,24 @@ public sealed class VehicleModule : GameModule
             lights.Flash = TDU2Controls.Held("flash");
         }
 
-        // LateUpdate: Räder/Lenkrad + Fahrzeugkamera -> Engine-Kamera (Render-Raum)
         using (s_mLateUpdate.Auto())
             _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
         if (cam != null && s != null)
         {
-            var (pos, fwd, up) = _vm.CameraRender(s.RootMatrix);   // ohne Umweg über große Spielkoordinaten (Genauigkeit)
+            var (pos, fwd, up) = _vm.CameraRender(s.RootMatrix);
             cam.Position = pos;
             cam.Override = (fwd, up);
             _terrain.FieldOfView = _vm.Camera.fieldOfView;
             _terrain.NearClip = _vm.Camera.nearClipPlane;
             using (s_mLamps.Auto())
             {
-                _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);   // Scheinwerferkegel, Brems-/Rückfahrlicht
+                _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
                 _traffic?.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
                 Paradise.Game.Online.RemoteCars.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
+                // Scheinwerfer-Projektoren des Originals (Lichtpuffer s15): eigenes Auto zuerst, dann Verkehr
+                _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, pos);
+                _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, pos);
+                Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, pos);
             }
         }
     }
@@ -209,19 +206,19 @@ public sealed class VehicleModule : GameModule
     {
         var s = _terrain.Streamer;
         if (_vm == null || s == null) return;
-        if (_terrain.MapTerrainShown) return;   // Unity: Kartenkamera zeichnet dann nur die Kartenebene
+        if (_terrain.MapTerrainShown) return;
         using (s_mVmRender.Auto())
             _vm.Render(s.RootMatrix);
-        if (_terrain.Camera != null) Paradise.Game.Online.Party.RenderOwnPassenger(_terrain.Camera.Position);   // Beifahrer im eigenen Auto
+        if (_terrain.Camera != null) Paradise.Game.Online.Party.RenderOwnPassenger(_terrain.Camera.Position);
         if (!s.HideWorld)
             using (s_mTrafficRender.Auto())
                 _traffic?.Render(_vm, s.RootMatrix);
         using (s_mRemoteRender.Auto())
         {
-            if (!s.HideWorld && _terrain.Camera != null) Paradise.Game.Online.RemoteCars.Render(_vm, s.RootMatrix, _terrain.Camera.Position, _renderer);   // Mitspieler
-            if (!s.HideWorld) Paradise.Game.Racing.RaceOpponents.RenderActive(s.RootMatrix);   // Gegner im Rennen
+            if (!s.HideWorld && _terrain.Camera != null) Paradise.Game.Online.RemoteCars.Render(_vm, s.RootMatrix, _terrain.Camera.Position, _renderer);
+            if (!s.HideWorld) Paradise.Game.Racing.RaceOpponents.RenderActive(s.RootMatrix);
         }
-        // Debug-Linien (Core/Render/DebugLines, Unity TDU2DebugLines): Verkehr, Radstrahlen des Autos (F1)
+
         var cam = _terrain.Camera;
         if (cam != null && _renderer.Height > 0)
             using (s_mDebugLines.Auto())

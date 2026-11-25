@@ -275,7 +275,7 @@ public static class TDU2GameData
                     int s = ((h - 1 - y) * w + x) * 4;
                     px[y * w + x] = new Color32(rgba[s], rgba[s + 1], rgba[s + 2], alpha ? rgba[s + 3] : (byte)255);
                 }
-            var tex = new Texture2D(w, h) { wrapMode = TextureWrapMode.Clamp };
+            var tex = new Texture2D(w, h, linear: true) { wrapMode = TextureWrapMode.Clamp };   // Bildwerte wie in der Datei (sonst dunkel)
             tex.SetPixels32(px);
             tex.Apply();
             return tex;

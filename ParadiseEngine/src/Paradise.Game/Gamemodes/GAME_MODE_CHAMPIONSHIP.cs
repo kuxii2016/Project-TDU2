@@ -120,7 +120,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         LastTestResult = _race.Result;
         LastTestTopKmh = _race.BestTrapSpeedKmh;
         EndRace();
-        Log.Info("Editor-Testfahrt beendet (" + (completed ? "Ziel" : "abgebrochen/Zeit abgelaufen") + ")");
         te?.Invoke(completed);
     }
 
@@ -216,8 +215,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         _pIdx = 0; _pProgress = -row * ChampionshipConfig.GridRowSpacing; _lastPos = -1;
         _rows = null; _resultAt = -1f; _filmShown = false;
 
-        Log.Info((cup != null ? "Meisterschaft " + cup.Name : "Editor-Testfahrt") + " – " + Championships.ModeName(def) + " " + def.Name + " (" + Championships.RaceName(def) + "): " +
-                 def.Opponents.Count + " Gegner, Strecke " + (_finishLen / 1000f).ToString("0.0", CultureInfo.InvariantCulture) + " km, " + (def.IsCircuit ? def.Laps + " Runden" : "Punkt-zu-Punkt"));
 
         if (def.Kind == RaceMode.Speed)
         {
@@ -310,8 +307,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (_phase == Phase.BackToHub && to == Gamemode.GAME_MODE_MAP) { _phase = Phase.None; return; }
         if (_phase != Phase.None)
         {
-            // Modus von außen gewechselt (Entwicklertaste, Inselwechsel …): Rennen beenden wie Unity OnDisable
-            Log.Info("Meisterschaft: Modus " + to + " – laufendes Rennen beendet");
             if (_testEnd != null && to != Gamemode.GAME_MODE_EDITOR) { _testEnd = null; }
             EndRace();
         }
@@ -396,7 +391,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         _elimLaps = new int[n];
         _elimRoundT = new List<float>[n];
         for (int i = 0; i < n; i++) _elimRoundT[i] = new List<float>();
-        Log.Info("Eliminator: " + n + " Teilnehmer, " + _def!.Laps + " Runden");
     }
 
     void UpdateElimination(float dt, List<RaceOpponents.Standing> st)
@@ -431,7 +425,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (who < 0) return;
         string name = ParticipantName(who, st);
         LapElimination.ShowEliminated(h, name);
-        Log.Info("Eliminator: Runde " + (_elim.Round - 1) + " – " + name + " scheidet aus (Platz " + _elim.FinalPlace[who] + ")");
         if (who == 0) { _race.ForceFinish(false); return; }   // Spieler raus: verloren (exe Zustand 2)
         _race.Opponents?.Eliminate(who - 1);
         Minimap.RaceParticipants = _elim.Remaining;
@@ -560,7 +553,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
             if (place == 1 && _cup.Lic.ChampMoneyReward > 0 && AddMoney(_cup.Lic.ChampMoneyReward))
                 cupInfo += " Preisgeld Meisterschaft: +" + Money(_cup.Lic.ChampMoneyReward);
         }
-        Log.Info("Meisterschaftsrennen " + _def.Name + ": " + info + " | " + cupInfo);
         _phase = Phase.Results;
         _resultAt = _clock + 1.2f;
         Championships.Refresh();
@@ -750,7 +742,6 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (vm?.Current == null) { GameMode.Set(Gamemode.GAME_MODE_FREERIDE); return; }
         var hub = Championships.HubPosition(cup, out var f);
         vm.TeleportSafe(hub, f);
-        Log.Info("Meisterschaft: zurück zum Treffpunkt " + cup.Name);
         _hubCup = cup; _hubUntil = _clock + 15f; _hubSettleAt = -1f; _hubTeleported = true;
         _phase = Phase.BackToHub;
         if (GameMode.Current != Gamemode.GAME_MODE_CHAMPIONSHIP) GameMode.Set(Gamemode.GAME_MODE_CHAMPIONSHIP);

@@ -68,7 +68,7 @@ namespace Paradise.Core.Vehicles
         {
             if (_netTask != null && _netTask.IsCompleted)
             {
-                if (_netTask.IsFaulted) Log.Warn("GPS: Straßennetz nicht ladbar: " + _netTask.Exception?.GetBaseException().Message);
+                if (_netTask.IsFaulted) Log.Warn("GPS: Unable to load road network: " + _netTask.Exception?.GetBaseException().Message);
                 else
                 {
                     var net = _netTask.Result;
@@ -285,7 +285,7 @@ namespace Paradise.Core.Vehicles
             _nextRoute = 0f; _lastCue = null; _prevRemaining = -1f; _played.Clear(); _jPrev.Clear(); _uturnSince = -1f; _uturnDone = false;
             ShowStatus(false);
             if (announce) Voice(TDU2GpsSettings.VoiceTargetSet);
-            try { Changed?.Invoke(); } catch (Exception ex) { Log.Warn("GPS: " + ex.Message); }
+            try { Changed?.Invoke(); } catch (Exception ex) { Log.Error("GPS: " + ex.Message); }
         }
 
         /// <summary>Ziel entfernen (am Ziel angekommen: <paramref name="arrived"/>).</summary>
@@ -295,7 +295,7 @@ namespace Paradise.Core.Vehicles
             HasTarget = false; Route.Clear(); Remaining = -1f; RouteVersion++;
             ShowStatus(true);
             if (arrived) Voice(TDU2GpsSettings.VoiceArrived);
-            try { Changed?.Invoke(); } catch (Exception ex) { Log.Warn("GPS: " + ex.Message); }
+            try { Changed?.Invoke(); } catch (Exception ex) { Log.Error("GPS: " + ex.Message); }
         }
 
         /// <summary>Ziel in der Nähe dieses Punkts (Spielkoordinaten)?</summary>
@@ -478,7 +478,7 @@ namespace Paradise.Core.Vehicles
         {
             if (index <= 0 || !TDU2GpsSettings.Voice) return;
             var clip = Clip(index);
-            if (clip == null) { Log.Warn("GPS-Ansage " + index + ": VFGPSVoice" + index.ToString("000") + "_.wav nicht gefunden"); return; }
+            if (clip == null) { Log.Warn("GPS " + index + ": VFGPSVoice" + index.ToString("000") + "_.wav not found"); return; }
             // laufende Ansage nicht abbrechen: die neueste wartet und kommt danach
             if (_audio.IsPlaying) { _pendingVoice = index; return; }
             _audio.Stop();
@@ -510,7 +510,7 @@ namespace Paradise.Core.Vehicles
                 string dir = Path.Combine(bnk, "sound", "voices", l);
                 string? f = GameFiles.DirectoryExists(dir) ? CarDatabase.FindFile(dir, "gps.bnk") : null;
                 if (f == null) continue;
-                try { _voiceBank = BnkArchive.Open(f); break; } catch (Exception ex) { Log.Warn("GPS-Stimme: " + ex.Message); }
+                try { _voiceBank = BnkArchive.Open(f); break; } catch (Exception ex) { Log.Error("GPS-Voice: " + ex.Message); }
             }
         }
 

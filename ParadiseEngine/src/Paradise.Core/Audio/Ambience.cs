@@ -142,7 +142,7 @@ public sealed class Ambience : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warn($"Ambience: {path}: {ex.Message}");
+            Log.Error($"Ambience: {path}: {ex.Message}");
             return null;
         }
     }

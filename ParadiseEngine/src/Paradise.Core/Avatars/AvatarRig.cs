@@ -54,6 +54,29 @@ public sealed class AvatarRig
         _dirty = true;
     }
 
+    /// <summary>Überblendzeit am Ende einer Schleife (s), höchstens ein Viertel der Clip-Länge.</summary>
+    public static float LoopBlend = 0.3f;
+
+    /// <summary>
+    /// Clip in Schleife ohne Sprung am Übergang: gespielt wird ein Zyklus der Länge L − b; in den ersten b Sekunden wird das Ende
+    /// (t + L − b) in den Anfang (t) überblendet. So ist die Pose am Zyklusende (Zeit L − b) gleich der am Zyklusanfang – kein
+    /// sichtbarer Sprung von der letzten zur ersten Pose. [vermutet: wie die Original-Engine überblendet, ist nicht ausgelesen]
+    /// </summary>
+    public void ApplyClipLoop(AnmClip? clip, float time, float weight = 1f, bool positions = true)
+    {
+        if (clip == null || weight <= 0f) return;
+        float len = MathF.Max(0.05f, clip.Length);
+        float b = MathF.Min(LoopBlend, len * 0.25f);
+        float cycle = len - b;
+        if (b < 0.02f || cycle <= 0.05f) { ApplyClip(clip, time - MathF.Floor(time / len) * len, weight, positions); return; }
+        float t = time - MathF.Floor(time / cycle) * cycle;
+        if (t >= b) { ApplyClip(clip, t, weight, positions); return; }
+        float w = t / b;
+        w = w * w * (3f - 2f * w);   // weich
+        ApplyClip(clip, t + cycle, weight, positions);   // Ende ...
+        ApplyClip(clip, t, weight * w, positions);       // ... in den Anfang
+    }
+
     /// <summary>Set the local position of a bone or blend it using the weight <paramref name="w"/> (FaceFX).</summary>
     public void BlendLocal(int i, Vector3 pos, Quaternion rot, Vector3 scale, float w)
     {

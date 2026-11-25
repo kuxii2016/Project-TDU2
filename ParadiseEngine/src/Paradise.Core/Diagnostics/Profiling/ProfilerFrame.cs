@@ -73,6 +73,8 @@ public sealed class ProfilerFrame
     public double[] CategoryMs = new double[ProfilerCategories.Count];
     /// <summary>Werte je Zähler (<see cref="ProfilerCounter.Id"/>), Stand am Bildende.</summary>
     public double[] Counters = Array.Empty<double>();
+    /// <summary>Netzwerk-Traffic, Pakete und Mitspieler dieses Bildes (Differenzen zum vorigen Bild).</summary>
+    public ProfilerNetworkSnapshot Network = ProfilerNetworkSnapshot.Empty;
     public ProfilerGpuSample[] Gpu = Array.Empty<ProfilerGpuSample>();
 
     public ProfilerThreadData Main => Threads[0];

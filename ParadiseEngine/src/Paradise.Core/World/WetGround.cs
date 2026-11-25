@@ -27,7 +27,7 @@ public sealed class WetGround : IDisposable
     public static WetGround? Create(string? bnkDir, GlobalTextureCache textures)
     {
         string? path = bnkDir != null ? Path.Combine(bnkDir, "fx", "weatherfx.bnk") : null;
-        if (path == null || !GameFiles.Exists(path)) { Log.Warn("Regen: fx/weatherfx.bnk fehlt"); return null; }
+        if (path == null || !GameFiles.Exists(path)) { Log.Warn("Rain: fx/weatherfx.bnk is missing"); return null; }
         var w = new WetGround();
         try
         {
@@ -39,12 +39,11 @@ public sealed class WetGround : IDisposable
                 w._ripples[i] = textures.Get(textures.KeyByName($"ripple_{i + 1:00}.2db"), TextureWrap.Repeat, TextureWrap.Repeat);
                 if (w._ripples[i] != null) found++;
             }
-            Log.Info($"Regen: PUDDLES {(w._puddles != null ? "ok" : "fehlt")}, RIPPLE {found}/16");
             RenderFx.RainPuddles = w._puddles;
             RenderFx.RainRipple = w._ripples[0];
             return w;
         }
-        catch (Exception ex) { Log.Warn("Regen: " + ex.Message); return null; }
+        catch (Exception ex) { Log.Error("Rain: " + ex.Message); return null; }
     }
 
     public void Update(float dt)

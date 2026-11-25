@@ -200,7 +200,6 @@ public sealed class WorldActorBodies
         e.Free = true; e.FreeMs = Environment.TickCount64;
         Matrix4x4.Invert(Matrix4x4.CreateFromQuaternion(e.Rot) * Matrix4x4.CreateTranslation(e.Center), out e.InvPose0);
         _free.Add(e);
-        Log.Info($"World Actor umgefahren: {e.Mass:0} kg bei {hitVel.Length() * 3.6f:0} km/h");
         Broken?.Invoke(e.Sector, e.Name, hitVel.Length());
     }
 

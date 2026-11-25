@@ -29,19 +29,29 @@ namespace Paradise.Core.Vehicles
         public bool Flash;
 
         public float BlinkHz = 1.5f;
-        public bool UnityLights = true;
-        public bool RearPointLights = true;   // aus: die Punktlichter malten rote/weiße Flecken auf die eigene Karosserie
-        public float HeadlightIntensity = 1.5f;
+        public bool UnityLights = false;
+        public bool RearPointLights = false;   // aus: die Punktlichter malten rote/weiße Flecken auf die eigene Karosserie
+        public float HeadlightIntensity = 1f;
+        /// <summary>Bike (Original Autotyp vt+0x2c == 1): Scheinwerfer-Projektor Art +2 und lenkt mit (exe 0xd1c69c).</summary>
+        public bool IsBike;
+        /// <summary>Leuchtkugeln (TDU2/Flare des Unity-Ports) an den Scheinwerfern zeichnen. Aus auf Wunsch (Test 24.11. 20:35).</summary>
+        public bool HeadFlares;
+        /// <summary>
+        /// Engine-Anpassung auf Wunsch (Test 24.11.: „vorn etwas dunkler, hinten etwas heller“), nicht aus dem Original:
+        /// Faktor auf die Positions-/Bremslicht-Kanäle (GLOSSFCT x/z) der hinteren Lichtgläser bei Original-Lichtsteuerung.
+        /// 1 = Werte des Originals (exe 0x71fdd0 schreibt die Intensität unverändert).
+        /// </summary>
+        public float RearLensScale = 1f;
         /// <summary>Reichweite der zusätzlichen hinteren Punktlichter.</summary>
         public float RearLightRange = .5f;
         /// <summary>Helligkeit der zusätzlichen hinteren Punktlichter.</summary>
-        public float RearLightIntensity = 1.5f;
+        public float RearLightIntensity = 1f;
 
         readonly List<Vector3> _headPos = new List<Vector3>();
         readonly Vector3[] _brakePos = new Vector3[2], _reversePos = new Vector3[2];
         float _brakeOn; bool _reverseOn; int _hlOn;
-        public float Brightness = 1.5f;   // Engine ohne Bloom: Flares kräftiger (Unity 0,3)
-        public float LensBrightness = 2f;
+        public float Brightness = 1f;   // Engine ohne Bloom: Flares kräftiger (Unity 0,3)
+        public float LensBrightness = 1f;
 
         readonly List<(CarMaterial mat, int pos)> _lenses = new List<(CarMaterial, int)>();
         /// <summary>Verkehrsauto-Lampen (Knotenname FA_xx -> Funktion), eigene Materialinstanz je Lampe.</summary>
@@ -137,7 +147,7 @@ namespace Paradise.Core.Vehicles
                 // Engine: hinten keine Lichtkugel (Brems-/Rück-/Rückfahrlicht leuchten über die Gläser) – außer bei Verkehrsautos
                 // (External): deren Rückleuchten sind nur Lampenflächen ohne Glas, nachts sonst erst spät zu sehen
                 if (kind is Kind.Brake or Kind.Tail or Kind.Reverse && !External) continue;
-                _flares.Add(new Flare { Kind = kind, Side = GetAnchorSide(n), Local = U.Mirror(model.LocalToVisualParent(kv.Value).Translation), Color = FlareColor(kind) });
+                //_flares.Add(new Flare { Kind = kind, Side = GetAnchorSide(n), Local = U.Mirror(model.LocalToVisualParent(kv.Value).Translation), Color = FlareColor(kind) });
             }
 
             _brakePos[0] = (Anchor('B', 1) ?? new Vector3(-0.7f, 0.7f, -2.2f)) + new Vector3(0.05f, 0, 0);
@@ -188,6 +198,27 @@ namespace Paradise.Core.Vehicles
                 foreach (var p in _reversePos) output.Add(Point(Vector3.Transform(tr.TransformPoint(p), unityToRender), Vector3.One));
         }
 
+        /// <summary>
+        /// Scheinwerfer-Projektor des Originals für dieses Auto (<see cref="HeadlightProjectors"/>, Lichtpuffer s15) anhängen, solange
+        /// der Scheinwerfer an ist. player = eigenes Auto (Art 0), sonst Art 1. Höhe/Länge aus den Karosserie-Bounds.
+        /// </summary>
+        public void CollectProjector(List<HeadlightProjector> output, VehiclePose tr, Matrix4x4 unityToRender, bool player, Vector3 cameraRender)
+        {
+            if (_hlOn <= 0) return;
+            float intensity = CarLighting.HeadlightsIntensity;
+            if (_hlOn == 2) intensity = MathF.Max(intensity, 1f);   // 0x70eaf0: Lichtmodus 2 (erzwungen)
+            intensity *= HeadlightIntensity;   // Engine-Anpassung auf Wunsch (VehicleConfig.HeadlightBeam), 1 = Original
+            var size = _model != null ? _model.BodySize : Vector3.Zero;
+            var upU = U.Rot(tr.rotation, Vec.Up);
+            // Bike: M = RotY(Lenkwinkel car+0x74a4) · T · Automatrix -> Leuchtrichtung um die Hochachse mitgedreht (wie das Vorderrad)
+            var fwdU = IsBike && Vehicle != null ? U.Rot(U.AngleAxis(Vehicle.SteeringAngle, upU), tr.forward) : tr.forward;
+            HeadlightProjectors.Add(output, player, IsBike,
+                Vector3.Transform(tr.position, unityToRender),
+                Vector3.TransformNormal(upU, unityToRender),
+                Vector3.TransformNormal(fwdU, unityToRender),
+                size.Y, size.Z, intensity, 1f, cameraRender);
+        }
+
         LampLight Point(Vector3 pos, Vector3 color) => new LampLight
         {
             Position = pos,
@@ -216,6 +247,7 @@ namespace Paradise.Core.Vehicles
             _head = head; _tail = tail; _brake = brake; _reverse = reverse; _left = left; _right = right;
             if (OriginalControl) UpdateOriginalState(dt);   // überschreibt Scheinwerfer/Positionslicht mit den Werten des Originals
 
+
             // Lichtgläser.
             foreach (var entry in _lenses)
             {
@@ -229,8 +261,8 @@ namespace Paradise.Core.Vehicles
                 {
                     // exe FUN_00c588d0: hinten GLOSSFCT = (Bremse, Rückfahr, Positionslicht, Blinker der Seite),
                     // vorn (0, 0, max(Positionslicht, Scheinwerfer), Blinker der Seite)
-                    Set(mat, ref mat.Desc.LgtLights, pos == 0 ? Mathf.Max(_origPos, _origHead) : _origPos);
-                    Set(mat, ref mat.Desc.LgtBrake, pos == 0 ? 0f : brake);
+                    Set(mat, ref mat.Desc.LgtLights, pos == 0 ? Mathf.Max(_origPos, _origHead) : _origPos * RearLensScale);
+                    Set(mat, ref mat.Desc.LgtBrake, pos == 0 ? 0f : brake * RearLensScale);
                     Set(mat, ref mat.Desc.LgtReverse, pos == 0 ? 0f : reverse ? 1f : 0f);
                     Set(mat, ref mat.Desc.LgtBlink, _origMode == 0 ? 0f : ind);
                     continue;
@@ -300,6 +332,7 @@ namespace Paradise.Core.Vehicles
         // ------------------------------------------------------------------ Original-Lichtsteuerung (exe FUN_00c588d0)
         int _origMode = 1;
         float _origHead, _origPos, _forcedT;
+        string? _diagState;
 
         /// <summary>
         /// Werte des Originals je Bild (car_lights_spec §2.2):
@@ -371,6 +404,7 @@ namespace Paradise.Core.Vehicles
                     Kind.Tail => _tail * 0.5f,
                     _ => ((f.Side == 1 && _left) || (f.Side == 2 && _right) || (f.Side == 0 && (_left || _right))) ? 1f : 0f,
                 };
+                if (f.Kind == Kind.Head && !HeadFlares) continue;
                 Vector3 p = tr.TransformPoint(f.Local);
                 if (k <= 0.001f) continue;
                 Vector3 toCam = camPos - p;

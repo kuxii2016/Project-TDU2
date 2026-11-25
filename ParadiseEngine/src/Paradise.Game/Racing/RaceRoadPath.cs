@@ -10,8 +10,10 @@ namespace Paradise.Game.Racing;
 
 /// <summary>
 /// Route einer Prüfung entlang der Straßen (Verkehrsnetz _ROAD_MAP/_ROAD_DETAIL.IA, <see cref="TrafficLanes"/>):
-/// zwischen zwei Wegpunkten wird über die Spuren der kürzeste Weg gesucht (Dijkstra/A*, Start in beide Richtungen,
-/// Ziel = erste Spur, die am Wegpunkt vorbeiführt). Ergebnis: Polylinie in Inselkoordinaten.
+/// zwischen zwei Wegpunkten wird über die Spuren der kürzeste Weg gesucht (Dijkstra/A*). Wie im Spiel geht es in Fahrtrichtung weiter:
+/// ein Abschnitt beginnt nur auf Spuren in der Durchfahrtsrichtung des letzten Tors (bzw. der Startrichtung) und endet nur auf einer
+/// Spur, die das nächste Tor in dessen Durchfahrtsrichtung passiert – sonst führte der kürzeste Weg nach einem Tor über eine Wende
+/// (180°) zurück. Erst wenn so kein Weg existiert, ohne Richtung. Ergebnis: Polylinie in Inselkoordinaten.
 /// Wird für Minimap-Linie, Fahrbahnmarkierung (Trajectory), Startrichtung und die Gegner benutzt.
 /// Ohne Verkehrsnetz oder ohne Treffer: gerade Verbindung.
 /// </summary>
@@ -23,19 +25,42 @@ public static class RaceRoadPath
     public static TrafficLanes? FindLanes() => Lanes;
 
     /// <summary>Straßenroute durch alle Wegpunkte. seg[i] = Index des Wegpunkt-Abschnitts (0 = erster -> zweiter).</summary>
-    public static List<Vector3> Route(TrafficLanes? lanes, IList<Vector3>? pts, out List<int> seg, out int roadLegs)
+    /// <param name="dirs">Durchfahrtsrichtung je Wegpunkt (Start: Startrichtung, sonst Tor-Vorwärts); null/Null-Vektor = ohne</param>
+    public static List<Vector3> Route(TrafficLanes? lanes, IList<Vector3>? pts, out List<int> seg, out int roadLegs, IList<Vector3>? dirs = null)
     {
         var res = new List<Vector3>(); seg = new List<int>(); roadLegs = 0;
         if (pts == null || pts.Count == 0) return res;
         res.Add(pts[0]); seg.Add(0);
         for (int i = 0; i + 1 < pts.Count; i++)
         {
-            var leg = lanes != null ? Leg(lanes, pts[i], pts[i + 1]) : null;
+            Vector3? da = Dir(dirs, i), db = Dir(dirs, i + 1);
+            var leg = lanes != null ? Leg(lanes, pts[i], pts[i + 1], da, db) : null;
+            if (leg == null && lanes != null && (da != null || db != null))
+            {
+                leg = Leg(lanes, pts[i], pts[i + 1], null, null);
+                if (leg != null) Log.Debug($"Straßenroute: Abschnitt {i} nur ohne Fahrtrichtung gefunden");
+            }
             if (leg != null && leg.Count > 1) roadLegs++;
             else leg = new List<Vector3> { pts[i], pts[i + 1] };
             for (int k = 1; k < leg.Count; k++) { res.Add(leg[k]); seg.Add(i); }
         }
         return res;
+    }
+
+    static Vector3? Dir(IList<Vector3>? dirs, int i)
+    {
+        if (dirs == null || i < 0 || i >= dirs.Count) return null;
+        var d = Flat(dirs[i]);
+        return d.LengthSquared() > 1e-6f ? Vector3.Normalize(d) : null;
+    }
+
+    /// <summary>Spur bei s in Richtung dir (Tangente und Richtung höchstens ~80° auseinander)?</summary>
+    static bool Along(TrafficTrack t, float s, Vector3? dir)
+    {
+        if (dir == null) return true;
+        t.Sample(s, out _, out var tan);
+        tan = Flat(tan);
+        return tan.LengthSquared() < 1e-8f || Vector3.Dot(Vector3.Normalize(tan), dir.Value) > 0.17f;
     }
 
     sealed class Node
@@ -44,7 +69,7 @@ public static class RaceRoadPath
     }
 
     /// <summary>Weg a -> b über die Spuren (null = keiner gefunden oder Umweg &gt; 4x Luftlinie).</summary>
-    static List<Vector3>? Leg(TrafficLanes lanes, Vector3 a, Vector3 b)
+    static List<Vector3>? Leg(TrafficLanes lanes, Vector3 a, Vector3 b, Vector3? aDir, Vector3? bDir)
     {
         float direct = Flat(b - a).Length();
         if (direct < 3f) return new List<Vector3> { a, b };
@@ -56,6 +81,7 @@ public static class RaceRoadPath
         {
             float s = NearestS(t, a, out float d);
             if (d > RaceConfig.RoadSnapRadius) continue;
+            if (!Along(t, s, aDir)) continue;   // nicht gegen die Fahrtrichtung am letzten Tor losfahren (keine Wende)
             open.Add(new Node { Lane = t, SIn = s, G = d });
         }
         if (open.Count == 0) return null;
@@ -83,7 +109,7 @@ public static class RaceRoadPath
 
             // Ziel auf dieser Spur (hinter dem Einstieg)?
             float gs = NearestS(cur.Lane, b, out float gd, cur.SIn);
-            if (gd <= RaceConfig.RoadGoalRadius)
+            if (gd <= RaceConfig.RoadGoalRadius && Along(cur.Lane, gs, bDir))   // Tor in seiner Durchfahrtsrichtung passieren
             {
                 float cost = cur.G + LegCost(cur.Lane, cur.SIn, gs) + gd;
                 if (cost < goalCost) { goalCost = cost; goal = cur; goalS = gs; }
@@ -286,7 +312,11 @@ public static class RaceRoadPath
         var seq = race.TargetSequence();
         var pts = new List<Vector3> { race.StartPosition };
         foreach (int i in seq) pts.Add(race.Checkpoints[i].Position);
-        race.RoadPath = Route(lanes, pts, out var seg, out int roadLegs);
+        // Fahrtrichtung je Wegpunkt: Start = Durchfahrtsrichtung der Startlinie (Tor 0), danach die jedes Tors (CHK2 +Z)
+        var dirs = new List<Vector3>(pts.Count);
+        dirs.Add(race.Checkpoints.Count > 0 ? race.Checkpoints[0].Forward : Vector3.Zero);
+        foreach (int i in seq) dirs.Add(race.Checkpoints[i].Forward);
+        race.RoadPath = Route(lanes, pts, out var seg, out int roadLegs, dirs);
         // Abschnitt -> Checkpoint-Index des Ziel-Tors - 1 (Färbung wie RaceRoute.SegmentColor)
         race.RoadPathSeg = new List<int>(seg.Count);
         foreach (int k in seg) race.RoadPathSeg.Add(k < seq.Count && seq[k] > 0 ? seq[k] - 1 : race.Checkpoints.Count - 1);

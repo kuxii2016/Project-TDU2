@@ -799,8 +799,11 @@ internal sealed class SpotCinematics : IDisposable
     public void Render(Matrix4x4 gameToRender)
     {
         var toRender = Frame * gameToRender;
-        if (_playerShown) DrawAvatar(_player, _playerAnim, _playerPose * toRender);
-        foreach (var p in _pnjs) if (p.Shown) DrawAvatar(p.Avatar, p.Anim, p.Pose * toRender);
+        // Posen im Hauptthread, dann alle Figuren gemeinsam parallel häuten (Profiler 24.11.: 25 Figuren nacheinander = 57 % der Bildzeit)
+        _skinBatch.Clear();
+        if (_playerShown) PoseAvatar(_player, _playerAnim, _playerPose * toRender);
+        foreach (var p in _pnjs) if (p.Shown) PoseAvatar(p.Avatar, p.Anim, p.Pose * toRender);
+        AvatarModel.DrawMany(_skinBatch);
         if (_carShown && _car != null)
         {
             _car.UpdateTransforms(_carPose * toRender);
@@ -808,14 +811,16 @@ internal sealed class SpotCinematics : IDisposable
         }
     }
 
-    void DrawAvatar(AvatarModel? a, Anim anim, Matrix4x4 model)
+    readonly List<(AvatarModel Avatar, Matrix4x4 Model)> _skinBatch = new();
+
+    void PoseAvatar(AvatarModel? a, Anim anim, Matrix4x4 model)
     {
         if (a == null || !a.Ready || a.Rig == null) return;
         if (a.Indoor != _indoor) a.Indoor = _indoor;
         a.Rig.BeginPose();
         if (anim.PrevClip != null) a.Rig.ApplyClip(anim.PrevClip, anim.PrevTime, 1f, true);
         if (anim.Clip != null) a.Rig.ApplyClip(anim.Clip, anim.Time, anim.Weight, true);
-        a.Draw(model);
+        _skinBatch.Add((a, model));
     }
 
     public void Dispose()

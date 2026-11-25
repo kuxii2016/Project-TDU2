@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Bekannte Bigfile-Pfade (9.905 Einträge): nötig, um gepackte Installationen ohne lose Dateien
+    <!-- Bekannte Bigfile-Pfade (12.865 Einträge): nötig, um gepackte Installationen ohne lose Dateien
          verzeichnisweise aufzulisten (die .map speichert nur Hashes). -->
     <EmbeddedResource Include="Files\bigfile-names.tsv" LogicalName="Paradise.Core.Files.bigfile-names.tsv" />
   </ItemGroup>

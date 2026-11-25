@@ -130,7 +130,6 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
                 _ui.SetVariable("/:SelItemType", "gamblin_bar");
                 _ui.GotoLabel("/", "gamblin_hall", true);
                 _ui.CallClip("/", "OpenGamblin");
-                Log.Info("Spielhalle: Bar geöffnet (Challenges): " + item);
                 break;
             default:
                 Log.NotImplemented("Spielhalle: " + item + " noch nicht portiert");
@@ -246,7 +245,6 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
             BackToRoom();
         else if (_items.Count > 0 && _ui != null && _listName != null)
             _ui.PlayLabel("/" + _listName, "open");
-        Log.Info("Spielhalle: " + _items.Count + (mine ? " eigene" : "") + " Challenges vom Server");
     }
 
     /// <summary>Zeile gezeichnet: Symbol der Spielart (content/gm/ic: time/speed/trap) und Klasse (content/category: all).</summary>
@@ -374,7 +372,6 @@ public sealed class GAME_MODE_GAMBLING_HALL : GameModeHandler
         _def = def; _racing = c; _spot = InteriorUtils.CurrentSpot;
         if (_ui != null) _ui.Visible = false;
         _list = null; _listName = null; _listLoaded = false;
-        Log.Info($"Spielhalle: Challenge #{c.id} \"{c.name}\" angenommen (Gebühr {c.fee} $)");
         InteriorUtils.ExitInterior();
         _phase = Phase.WaitCar; _waitT = 0f;
     }

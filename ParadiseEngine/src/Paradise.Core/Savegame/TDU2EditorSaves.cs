@@ -37,7 +37,7 @@ namespace Paradise.Core.Savegame
                 foreach (var f in Directory.GetFiles(dir, "*.ig2")) res.Add("Ige/" + Path.GetFileName(f));
                 res.Sort(StringComparer.Ordinal);
             }
-            catch (Exception ex) { Log.Warn("Editor-Challenges: Liste nicht lesbar: " + ex.Message); }
+            catch (Exception ex) { Log.Error("Editor Challenges: List Is Unreadable: " + ex.Message); }
             return res;
         }
 
@@ -50,7 +50,7 @@ namespace Paradise.Core.Savegame
                 string path = Path.Combine(Folder(nick), name.Replace('/', Path.DirectorySeparatorChar));
                 return File.Exists(path) ? File.ReadAllBytes(path) : null;
             }
-            catch (Exception ex) { Log.Warn("Editor-Challenge " + name + " nicht lesbar: " + ex.Message); return null; }
+            catch (Exception ex) { Log.Error("Editor Challenge " + name + " Is Unreadable: " + ex.Message); return null; }
         }
 
         /// <summary>Schreiben (über eine Zwischendatei, damit ein Abbruch keine halbe Datei hinterlässt). true = gespeichert.</summary>
@@ -64,10 +64,9 @@ namespace Paradise.Core.Savegame
                 File.WriteAllBytes(tmp, data);
                 if (File.Exists(path)) File.Delete(path);
                 File.Move(tmp, path);
-                Log.Info("Editor-Challenge gespeichert: " + path + " (" + data.Length + " Byte)");
                 return true;
             }
-            catch (Exception ex) { Log.Warn("Editor-Challenge " + name + " nicht gespeichert: " + ex.Message); return false; }
+            catch (Exception ex) { Log.Error("Editor Challenge " + name + " not Saved: " + ex.Message); return false; }
         }
 
         public static bool Delete(string? nick, string name)
@@ -78,7 +77,7 @@ namespace Paradise.Core.Savegame
                 if (File.Exists(path)) File.Delete(path);
                 return true;
             }
-            catch (Exception ex) { Log.Warn("Editor-Challenge " + name + " nicht gelöscht: " + ex.Message); return false; }
+            catch (Exception ex) { Log.Error("Editor Challenge " + name + " not Deleted: " + ex.Message); return false; }
         }
     }
 }

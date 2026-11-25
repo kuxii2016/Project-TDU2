@@ -122,6 +122,7 @@ namespace Paradise.Core.Net
         {
             PacketHandlerInfo? handlerInfo;
             lock (_lock) handlers.TryGetValue(magic, out handlerInfo);
+            ProfilerNetwork.StoreIn(magic);   // Profiler: Häufigkeit je Store-Pakettyp
             using (store)
             {
                 if (handlerInfo == null) { UnknownPackets++; return false; }

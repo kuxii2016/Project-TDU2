@@ -114,7 +114,6 @@ public sealed class WorldWeather : IDisposable
             else cost += MathF.Abs(h - (night > 0.5f ? 0f : 13f)) * 0.01f;
             if (cost < best) { best = cost; _ovHour = h; }
         }
-        Paradise.Core.Diagnostics.Log.Info($"Kino-Wetter {ov.Name}: Nacht={night:0.00} -> Uhrzeit {_ovHour:0.00} h");
         return _ovHour;
     }
     public string? Error => _error;
@@ -149,11 +148,11 @@ public sealed class WorldWeather : IDisposable
         string weatherFile = Path.Combine(fx, "game_weathers.xmb"), lampsFile = Path.Combine(fx, "streetlamps.xml");
         try
         {
-            if (GameFiles.Exists(weatherFile)) { _data = WeatherData.Load(weatherFile); Log.Info($"Wetter: {_data.Keys.Count} Zeitpunkte aus {Path.GetFileName(weatherFile)}"); }
+            if (GameFiles.Exists(weatherFile)) { _data = WeatherData.Load(weatherFile); }
             else _error = "game_weathers.xmb fehlt: " + weatherFile;
         }
         catch (Exception ex) { _error = ex.Message; }
-        if (_error != null) Log.Warn("Wetter: " + _error);
+        if (_error != null) Log.Warn("Weather: " + _error);
         try { if (GameFiles.Exists(lampsFile)) LoadLamps(GameFiles.ReadAllText(lampsFile)); } catch (Exception) { }
     }
 
@@ -350,6 +349,7 @@ public sealed class WorldWeather : IDisposable
 
         // ---------------- Autolicht wie im Original (TDU2CarLighting, GS_CarDisplay 0x744990). Interieur: Licht der Szene, noch offen.
         g.CarLight = inside ? default : CarLighting.Compute((n, dv) => S(n, dv));
+        g.DashHeadlights = CarLighting.HeadlightsIntensity;
 
         // ---------------- Himmel wie im Original (td_dome, World/TDU2SkyDome): Streuung aus Skydome_*, Sonne = sundirection,
         // Licht des Doms = sun_diffuse / sun_ambient (Gamma-Raum, ohne die Engine-Skalierung oben)
@@ -396,6 +396,63 @@ public sealed class WorldWeather : IDisposable
         g.StreetLight = street * 1.5f * StreetLightStrength;
         _nightWin = MathF.Max(S("building_nightwindow_frequency").X, Night);
         g.NightWindows = _nightWin;
+
+        // ---------------- Original-Renderer: dieselben Wetterwerte unverändert (OpenTDU2 eden_scene_view), Innenraum = Szenenlicht oben
+        {
+            var sp = S("sun_specular", diff);
+            var ofc = S("fog_color", new Vector4(0.7f, 0.62f, 0.55f, 0));
+            float ofs = S("fog_start", new Vector4(100f, 0, 0, 0)).X, ofe = S("fog_end", new Vector4(2000f, 0, 0, 0)).X;
+            float ofm = ApplyFog && !inside ? S("fog_max", new Vector4(1f, 0, 0, 0)).X : 0f;
+            var shop = S("building_shop_front_back_lighting");
+            g.OrigLight = new OriginalLightGlobals
+            {
+                Set = true,
+                SunDiffuse = inside ? g.SunColor + g.Ambient : new Vector3(diff.X, diff.Y, diff.Z),
+                SunSpecular = inside ? g.SunColor + g.Ambient : new Vector3(sp.X, sp.Y, sp.Z),
+                Ambient = inside ? g.Ambient : new Vector3(amb.X, amb.Y, amb.Z),
+                FogColor = new Vector3(ofc.X, ofc.Y, ofc.Z),
+                FogConfig = new Vector4(ofs, ofe, ofm, 1f / MathF.Max(ofe - ofs, 1f)),
+                Street = S("outside_street_lightmap").X,
+                NightWindows = S("building_nightwindow_frequency").X,
+                Shop = new Vector2(shop.X, shop.Y),
+                SpotExteriorDayNight = SpotDayNightXY(S("spot_exterior_lightmap_day_night", new Vector4(1, 0, 0, 0))),
+            };
+            static Vector2 SpotDayNightXY(Vector4 v) => new(v.X, v.Y);
+        }
+
+        // ---------------- Avatar-Licht (Original: Wetter-Registry avatar_*, Grundwerte der Registrierung; Avatars/AvatarLighting)
+        // Sonne immer mit den Wetterwerten (auch im Interieur: das Original hat dort kein eigenes Wetter, sondern das aktive)
+        {
+            var sp = S("sun_specular", diff);
+            var cld = S("avatar_cameralight_direction", new Vector4(0f, -1f, 0f, 0f));
+            var sio = S("avatar_spotlight_interior_exterior_influence", Vector4.Zero);
+            Paradise.Core.Avatars.AvatarLighting.Weather = new Paradise.Core.Avatars.AvatarWeatherLight
+            {
+                Set = true,
+                SunDir = dir.LengthSquared() > 1e-6f ? dir : new Vector3(0f, -0.856f, -0.423f),
+                SunAmbient = new Vector3(amb.X, amb.Y, amb.Z), SunDiffuse = new Vector3(diff.X, diff.Y, diff.Z), SunSpecular = new Vector3(sp.X, sp.Y, sp.Z),
+                CameraLightFactor = S("avatar_cameralight_factor", Vector4.Zero).X,
+                CameraLightDesynchro = S("avatar_cameralight_desynchro", Vector4.Zero).X,
+                CameraLightDirection = new Vector3(cld.X, cld.Y, cld.Z),
+                SpotInfluence = new Vector2(sio.X, sio.Y),
+                CarEnvmapFactor = S("avatar_car_envmap_factor", new Vector4(0.7f, 0, 0, 0)).X,
+                SunAmbiantFactor = S("avatar_sun_ambiant_factor", Vector4.One).X,
+                SunDiffuseFactor = S("avatar_sun_diffuse_factor", Vector4.One).X,
+                SunSpecularFactor = S("avatar_sun_specular_factor", Vector4.One).X,
+                CarNightReflectionFactor = S("avatar_car_night_reflection_factor", Vector4.Zero).X,
+                LumMin = S("avatar_lum_min", Vector4.Zero).X,
+                LumMax = S("avatar_lum_max", Vector4.One).X,
+                ShadowInfluence = S("avatar_shadow_influence", Vector4.One).X,
+                RainSpecularCoef = S("avatar_rain_specular_coef", Vector4.One).X,
+            };
+        }
+        // Autos im Interieur (exe 0x744990 -> 0x744d5f): Licht der Szene statt Sonne, gesammelt an der Raummitte (Sonde des Interieurs,
+        // RenderFx.ProbePos) [vermutet; Original: Lichtblock des Autos]. Vorher CarLight = default -> Original-Autoshader schwarz.
+        if (inside)
+        {
+            Paradise.Core.Avatars.AvatarLightState.GatherAt(Render.RenderFx.ProbePos, out _, out var ca, out var cd, out var cs);
+            g.CarLight = CarLighting.ComputeInterior((n, dv) => S(n, dv), ca, cd, cs);
+        }
         // Himmel: Skybox-Exposure x lerp(1, 0.06, Nacht) x Wolken (Blitz: über die Wetterwerte, World/Lightning)
         // Wolkenfaktor zwischen alter und neuer Wetterart überblenden (vorher Sprung bei der Hälfte des Übergangs)
         static float CloudOf(WeatherKind k) => k == WeatherKind.Rainy || k == WeatherKind.Tempest ? 0.55f : k == WeatherKind.Cloudy || k == WeatherKind.BeforeRain ? 0.8f : 1f;

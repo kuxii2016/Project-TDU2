@@ -54,7 +54,7 @@ public sealed partial class MapStreamer
                              LogAircraft, ParkAircraft)) return;
             _aircraft = system;
         }
-        catch (Exception ex) { Log.Warn("Flugzeuge konnten nicht geladen werden: " + ex.Message); }
+        catch (Exception ex) { Log.Error("Aircraft could not be loaded: " + ex.Message); }
     }
 
     /// <summary>Nach PollLibrary: Library-Nodes binden und die Flugzeuge einen Schritt weiterbewegen.</summary>
@@ -65,7 +65,6 @@ public sealed partial class MapStreamer
         {
             if (_library == null) return;   // commonworld.bnk noch nicht fertig
             _aircraft.Bind(_library, _textures, _opt, _renderer);
-            Log.Info($"Flugzeuge: {_aircraft.ModelCount} Modelle aus der commonworld-Library gebunden");
         }
         // Positionen bleiben in Spielkoordinaten; RootMatrix/RootOffset werden erst beim Zeichnen angewandt.
         _aircraft.Tick(dt * AircraftSpeedScale);

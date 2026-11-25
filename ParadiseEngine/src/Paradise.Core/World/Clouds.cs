@@ -37,7 +37,7 @@ public sealed class Clouds : IDisposable
     public static Clouds? Load(string fxDir, IRenderer r, GlobalTextureCache textures)
     {
         string path = Path.Combine(fxDir, "clouds.bnk");
-        if (!GameFiles.Exists(path)) { Log.Warn("Wolken: clouds.bnk fehlt: " + path); return null; }
+        if (!GameFiles.Exists(path)) { Log.Warn("Clouds: clouds.bnk is missing: " + path); return null; }
         var c = new Clouds(r);
         try
         {
@@ -73,10 +73,9 @@ public sealed class Clouds : IDisposable
                     }
                 c._mats[o] = list;
             }
-            Log.Info($"Wolken: {c._objects.Count} Objekte ({string.Join(", ", c._objects.Select(o => o.Name))}), {c._allMats.Count} Materialien");
             return c;
         }
-        catch (Exception ex) { Log.Warn("Wolken: " + ex.Message); c.Dispose(); return null; }
+        catch (Exception ex) { Log.Error("Clouds: " + ex.Message); c.Dispose(); return null; }
     }
 
     readonly Dictionary<RenderObject, char> _letter = new();
@@ -113,7 +112,6 @@ public sealed class Clouds : IDisposable
         }
         foreach (var o in _objects)
             if (byName.TryGetValue(o.Name, out var l)) _letter[o] = l;
-        Log.Info("Wolken: Zuordnung " + string.Join(", ", _objects.Select(o => o.Name + "=" + (_letter.TryGetValue(o, out var l) ? l : '-'))));
     }
 
     static char LetterOf(ulong key)

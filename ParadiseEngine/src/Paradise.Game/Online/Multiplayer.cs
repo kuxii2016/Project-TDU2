@@ -169,6 +169,7 @@ public static class Multiplayer
         {
             Interlocked.Increment(ref _serverPacketsOut);
             Interlocked.Add(ref _serverBytesOut, len);
+            ProfilerNetwork.PacketOut(b[0], len);   // Profiler: Ausgang je UDP-Pakettyp
         }
         return true;
     }

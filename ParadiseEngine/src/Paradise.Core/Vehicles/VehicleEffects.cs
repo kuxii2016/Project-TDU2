@@ -205,7 +205,7 @@ namespace Paradise.Core.Vehicles
                 if (def == null) { Diagnostics.Log.Warn($"Reifenspuren: {name} nicht in skidmarks.bnk – Ersatztextur."); return null; }
                 return World.TextureInfo.Create(r, def, TextureWrap.Repeat, TextureWrap.Clamp, linear: true);
             }
-            catch (Exception ex) { Diagnostics.Log.Warn("Reifenspuren: " + ex.Message); return null; }
+            catch (Exception ex) { Diagnostics.Log.Error("Reifenspuren: " + ex.Message); return null; }
         }
 
         /// <summary>Ringpuffer aus Quads; jedes Quad verbindet den vorherigen mit dem aktuellen Spurpunkt.</summary>

@@ -51,6 +51,12 @@ public interface IRenderer : IDisposable
     IGpuMesh CreateMesh(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices);
 
     /// <summary>
+    /// Objekt-Mesh mit 4 UV-Sätzen: MeshData legt dann (Unity-Zuordnung) den letzten Satz in Uv2 und Satz 2 in Uv3. Der Original-Renderer
+    /// liest TEXCOORD2/3 wie die D3D-Vertexdeklaration (Satz 2/3) und tauscht für solche Meshes zurück.
+    /// </summary>
+    void SetFourUvSets(IGpuMesh mesh) { }
+
+    /// <summary>
     /// Mesh mit Material und Modellmatrix zeichnen (zwischen BeginFrame und EndFrame).
     /// Transparente Materialien werden gesammelt und am Frameende hinten→vorne gezeichnet (Unity: Queue Transparent).
     /// </summary>

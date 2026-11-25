@@ -34,7 +34,6 @@ public class GAME_MODE_DRESSING : AvatarShop
         UpdateUiAim(null);
         _afterBuild = () => GameMode.Set(Gamemode.GAME_MODE_DRESSING);
         LoadScene(bank, Kind.Other, null);
-        Log.Info("Garderobe: lade " + Path.GetFileNameWithoutExtension(bank));
     }
 
     protected override void StartFilm(VmfPlayer ui)

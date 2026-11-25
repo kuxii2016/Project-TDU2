@@ -90,9 +90,6 @@ public sealed class PowerWires
         var poles = new (bool ok, Matrix4x4 m, Vector3 bmin, Vector3 bmax)[n];
         bool missing = false;
         int found = 0;
-        // Eine Suche für alle Posts (Kugel um alle Posts) statt einer Suche über alle Platzierungen je Post – das war je Post ein
-        // Durchlauf über sämtliche Platzierungen aller Sektoren (Log 19:18: bis 27 ms je Bild). Danach je Post die Treffer im Umkreis
-        // 1,5 m aus einem Raster (gleiches Ergebnis wie vorher: nächste Platzierung innerhalb 1,5 m).
         if (n == 0) return;
         var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
         for (int i = 0; i < n; i++) { var gp = w.Origin + pen.Posts[i].Pos; mn = Vector3.Min(mn, gp); mx = Vector3.Max(mx, gp); }
@@ -128,7 +125,6 @@ public sealed class PowerWires
         }
         if (missing && !allowBare) return;
 
-        // Slots je Post sammeln (für die Verteilung über den Querträger)
         var slots = new List<int>[n];
         for (int i = 0; i < n; i++) slots[i] = new List<int>();
         foreach (var l in pen.Links)

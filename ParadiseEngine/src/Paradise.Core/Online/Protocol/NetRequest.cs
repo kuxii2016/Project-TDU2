@@ -24,6 +24,16 @@ namespace Paradise.Core.Online
         public HouseLayout house;   // house: geänderte Einrichtung eines eigenen Hauses (My House, Server erweitert)
         public string spot = "";    // houseget: Haus-Spot (leer = alle Häuser des Spielers "target")
         public int score;           // challres: Wertung der Fahrt (Zeit ms bzw. km/h x 100); kind = Auto
+        public PhotoUpload photo;   // photoup: Foto eines Bilderrahmens (My House) für die Gäste
+        public string file = "";    // photoget: Dateiname des Fotos (target = Spielernummer des Besitzers)
         public ChallengeUpload chall;  // challup: Challenge aus dem Race-Editor; challlist: kind "crc"/"community", target = Insel (-1 alle); challget: target = Id
+    }
+    /// <summary>photoup: ein Foto des Albums (JPG Base64, Dateiname "%07X%c.JPG", Name).</summary>
+    [Serializable]
+    public sealed class PhotoUpload
+    {
+        public string file = "";
+        public string name = "";
+        public string data = "";
     }
 }

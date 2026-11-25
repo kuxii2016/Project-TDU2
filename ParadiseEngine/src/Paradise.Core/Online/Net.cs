@@ -186,7 +186,7 @@ namespace Paradise.Core.Online
             if (string.IsNullOrEmpty(host) || port <= 0) return;
             if (Client != null && Client.Host == host && Client.Port == port) return;
             Client?.Dispose();
-            Log.Info($"TDU2Session.Connect({host}:{port})");
+            Log.Info($"Connecting to Server Online:true Host({host}:{port})");
             Client = new TDU2NetClient(host, port);
         }
 
@@ -355,14 +355,14 @@ namespace Paradise.Core.Online
                     if (p != null && p.list != null) { last = p.last ?? ""; p.list.RemoveAll(x => x == null || string.IsNullOrEmpty(x.nick)); return p.list; }
                 }
             }
-            catch (Exception e) { Log.Warn("Profile: " + ProfilesFile + " nicht lesbar: " + e.Message); }
+            catch (Exception e) { Log.Error("Profile: " + ProfilesFile + " nicht lesbar: " + e.Message); }
             return new List<LocalProfile>();
         }
 
         public static void StoreProfiles(List<LocalProfile> list, string last)
         {
             try { File.WriteAllText(ProfilesFile, NetJson.ToJson(new ProfileList { list = list, last = last ?? "" })); }
-            catch (Exception e) { Log.Warn("Profile: " + ProfilesFile + " nicht schreibbar: " + e.Message); }
+            catch (Exception e) { Log.Error("Profile: " + ProfilesFile + " nicht schreibbar: " + e.Message); }
         }
 
         /// <summary>Fehlercodes des Servers als Text für die Original-Oberfläche.</summary>

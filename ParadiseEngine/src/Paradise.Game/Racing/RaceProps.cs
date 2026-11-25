@@ -16,22 +16,23 @@ namespace Paradise.Game.Racing;
 public enum RaceGateState { Pending, Next, Passed }
 
 /// <summary>
-/// Tor einer Prüfung (Unity RaceGateVisual mit Original-Modell): An-/Aus-Variante (Start_line/_Off, Finish_line/_Off).
-/// Nächstes Tor = "an", spätere Tore = "aus" (bzw. "an", wenn es keine Aus-Variante gibt), passierte Tore ausgeblendet.
+/// Tor einer Prüfung: genau ein Checkpoint-Entity aus pack_cp.bnk, gewählt wie in der exe (Typ 0x979f90, Variante 0x980ea8,
+/// Suche 0x8926d0). "_Off" in Start_line_Off / Finish_line_Off ist KEIN Aus-Zustand, sondern die Gelände-Variante
+/// (OffRoadCheckpoint 1) – früher wurden beide gebaut und wartende Tore zeigten fälschlich das Gelände-Modell.
+/// Gate_Main besteht aus zwei Kind-Actors (Actor1/Actor2) und hat daher mehrere Szenen. Passierte Tore werden ausgeblendet.
 /// </summary>
 public sealed class RaceGate
 {
     public int Index;
     public RaceCheckpoint Checkpoint = null!;
-    internal MapStreamer.SceneHandle? On, Off;
+    public string Model = "";
+    internal readonly List<MapStreamer.SceneHandle> Scenes = new();
     public RaceGateState State { get; private set; }
 
     public void SetState(RaceGateState state)
     {
         State = state;
-        bool showOn = state == RaceGateState.Next || Off == null;
-        if (On != null) On.Active = state != RaceGateState.Passed && showOn;
-        if (Off != null) Off.Active = state != RaceGateState.Passed && !showOn;
+        foreach (var h in Scenes) h.Active = state != RaceGateState.Passed;
     }
 }
 
@@ -87,10 +88,21 @@ public sealed class RaceProps
         public bool SeparMeasured, SeparAlongX = true;
         /// <summary>Actors aus pack_cp.bnk nach __Name (Check_point, Start_line(_Off), Finish_line(_Off), BrakingZone_01, CP_OffRoad, Trajectory ...).</summary>
         public readonly Dictionary<string, ObjectSet> Named = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Entity__Actor__CheckPoint-Einträge in Dateireihenfolge (für die Suche nach Typ/Variante wie exe 0x8926d0).</summary>
+        public readonly List<CpRecord> CheckPoints = new();
         /// <summary>Bank, aus der ein Set stammt (worldactors.bnk oder pack_cp.bnk).</summary>
         public readonly Dictionary<ObjectSet, ActorBank> BankOf = new();
-        public readonly Dictionary<ObjectSet, float> GateWidth = new();
         public string Log = "";
+    }
+
+    /// <summary>Ein Entity__Actor__CheckPoint aus pack_cp.bnk: CheckPointType, OffRoadCheckpoint, Modell bzw. Kind-Actors.</summary>
+    sealed class CpRecord
+    {
+        public string Name = "";
+        public int Type, OffRoad;
+        public ObjectSet? Set;
+        /// <summary>Actor1 / Actor2 (Gate_Main: SF_Barel_D_act_left / _right, Verweis über __Hc) – Lage setzt <see cref="BuildGate"/> wie exe 0x8ad4da.</summary>
+        public readonly List<(string name, ObjectSet set)> Children = new();
     }
 
     static Library? _lib;
@@ -109,6 +121,10 @@ public sealed class RaceProps
         {
             string dir = Path.Combine(bnkDir, "islands", islandName, "scenarics", "packs");
             if (!GameFiles.DirectoryExists(dir)) return null;
+            // Der direkte Pfad wird über den Hash der .map aufgelöst (GameFiles.TryGetEntry).
+            // GetFiles bleibt als Fallback für lose Dateien/ältere Namenslisten erhalten.
+            string direct = Path.Combine(dir, "worldactors.bnk");
+            if (GameFiles.Exists(direct)) return direct;
             foreach (var f in GameFiles.GetFiles(dir, "*.bnk"))
                 if (string.Equals(Path.GetFileName(f), "worldactors.bnk", StringComparison.OrdinalIgnoreCase)) return f;
         }
@@ -247,12 +263,21 @@ public sealed class RaceProps
         // zusätzlich worldactors.bnk. Klasse Entity__Actor__CheckPoint (Shader td_checkpoint).
         var banks = new List<ActorBank>();
         string? cpPath = null;
-        try
+        string packsDir = Path.GetDirectoryName(path) ?? "";
+        // pack_cp.bnk liegt in gepackten Installationen in den .big-Dateien. Der direkte Pfad findet
+        // den Eintrag über seinen Hash in der .map (GameFiles.TryGetEntry); GetFiles bleibt als
+        // Fallback für lose Dateien/ältere Namenslisten erhalten.
+        string cpDirect = Path.Combine(packsDir, "pack_cp.bnk");
+        if (GameFiles.Exists(cpDirect)) cpPath = cpDirect;
+        if (cpPath == null)
         {
-            foreach (var f in GameFiles.GetFiles(Path.GetDirectoryName(path) ?? "", "*.bnk"))
-                if (string.Equals(Path.GetFileName(f), "pack_cp.bnk", StringComparison.OrdinalIgnoreCase)) cpPath = f;
+            try
+            {
+                foreach (var f in GameFiles.GetFiles(packsDir, "*.bnk"))
+                    if (string.Equals(Path.GetFileName(f), "pack_cp.bnk", StringComparison.OrdinalIgnoreCase)) cpPath = f;
+            }
+            catch (Exception) { }
         }
-        catch (Exception) { }
         if (cpPath != null)
         {
             try { var cp = ActorBank.Open(cpPath, log, tex); if (cp != null) banks.Add(cp); }
@@ -273,10 +298,34 @@ public sealed class RaceProps
                             || (ab != wa && (it.Get("mesh") != null || it.Get("Model") != null));
                 if (!isCp || nm.Length == 0) continue;
                 all.Add(nm);
-                var set = ab.Load(it, nm, log);
-                if (set == null) continue;
-                lib.BankOf[set] = ab;
-                if (!lib.Named.ContainsKey(nm)) lib.Named[nm] = set;
+                bool hasMesh = (it.Get("mesh")?.Items.Count ?? 0) > 0 || it.Get("Model") != null || it.Get("Mesh") != null;   // Gate_Main: leeres mesh-Array
+                var set = hasMesh || it.Get("CheckPointType") == null ? ab.Load(it, nm, log) : null;
+                if (set != null)
+                {
+                    lib.BankOf[set] = ab;
+                    if (!lib.Named.ContainsKey(nm)) lib.Named[nm] = set;
+                }
+                if (arr.IndexOf("CheckPoint", StringComparison.OrdinalIgnoreCase) >= 0 && it.Get("CheckPointType") != null)
+                    lib.CheckPoints.Add(new CpRecord { Name = nm, Type = it.I("CheckPointType", 0), OffRoad = it.I("OffRoadCheckpoint", 0), Set = set });
+            }
+            // Kind-Actors (Actor1 / Actor2 = __Hc eines Entity__Actor derselben Bank; exe 0x8ac792 klont sie)
+            var byHc = new Dictionary<ulong, (string name, XmbNode item)>();
+            foreach (var (_, it) in ab.Items()) { ulong hc = it.U("__Hc", 0); if (hc != 0) byHc[hc] = (it.S("__Name", "") ?? "", it); }
+            foreach (var (_, it) in ab.Items())
+            {
+                if (it.Get("CheckPointType") == null) continue;
+                var rec = lib.CheckPoints.Find(r => string.Equals(r.Name, it.S("__Name", ""), StringComparison.OrdinalIgnoreCase));
+                if (rec == null || rec.Children.Count > 0) continue;
+                foreach (var key in new[] { "Actor1", "Actor2" })
+                {
+                    ulong hc = it.U(key, 0);
+                    if (hc == 0) continue;
+                    if (!byHc.TryGetValue(hc, out var child)) { log.Add(rec.Name + "." + key + ": Entity " + hc + " nicht gefunden"); continue; }
+                    var cs = ab.Load(child.item, child.name, log);
+                    if (cs == null) continue;
+                    lib.BankOf[cs] = ab;
+                    rec.Children.Add((child.name, cs));
+                }
             }
             log.Add(Path.GetFileName(ab.Path) + ": Checkpoint-Actors [" + string.Join(", ", all) + "], Arrays [" + string.Join(", ", arrays) + "]");
         }
@@ -343,22 +392,8 @@ public sealed class RaceProps
                 }
             }
 
-            // Kegel an den Seiten der Kegel-Tore (CHK2-Art 1) und an den Ecken der Bremszone
-            foreach (var cp in race.Checkpoints)
-            {
-                if (cp.GateKind == Ige2GateKind.Cones)
-                {
-                    cones.Add(Trs(Ground(st, cp.Position + cp.Right * (cp.Width * 0.5f)), cp.Forward));
-                    cones.Add(Trs(Ground(st, cp.Position - cp.Right * (cp.Width * 0.5f)), cp.Forward));
-                }
-                else if (cp.IsBrakingZone)
-                {
-                    float hw = cp.Width * 0.5f, hd = cp.ZoneDepth * 0.5f;
-                    foreach (var sx in new[] { -1f, 1f })
-                        foreach (var sz in new[] { -1f, 1f })
-                            cones.Add(Trs(Ground(st, cp.Position + cp.Right * (hw * sx) + cp.Forward * (hd * sz)), cp.Forward));
-                }
-            }
+            // Keine Zusatz-Kegel an Toren: CHK2-Art 1/2 sind selbst Fass-Entities aus pack_cp.bnk (exe 0x979f90 -> Typ 5/6),
+            // die Bremszone ist das Entity BrakingZone_01 (Typ 7). Die früher an Tor-Seiten/Bremszonen-Ecken gesetzten Kegel gibt es nicht.
 
             // Startplatz freihalten: keine Kegel/Absperrungen auf dem Auto (Startpunkt aus spotworld.bin, Auto ~4.5 x 2 m)
             int removed = ClearStart(race, cones) + ClearStart(race, separA) + ClearStart(race, separB);
@@ -377,7 +412,7 @@ public sealed class RaceProps
             {
                 var g = BuildGate(st, cp, race);
                 if (g != null) gates.Add(g);
-                else if (cp.IsStart || race.Kind != RaceMode.Speed) Log.Warn($"Tor {cp.Index} ({cp.GateKind}) von {race.Name}: kein Modell in pack_cp.bnk");
+                else if (GateType(race, cp) != 0) Log.Warn($"Tor {cp.Index} ({cp.GateKind}) von {race.Name}: kein Modell in pack_cp.bnk");
             }
             // Nur Prüfungen mit freigestellten Toren zeigen das Band auf der Fahrbahn. Bei Straßentoren
             // (und damit bei allen Rennen) übernimmt stattdessen die Minimap die Routenanzeige.
@@ -513,62 +548,127 @@ public sealed class RaceProps
     }
 
     /// <summary>
-    /// Original-Tor aus pack_cp.bnk (Entity__Actor__CheckPoint) an einem Checkpoint, ausgerichtet nach der CHK2-Matrix
-    /// (Right/Up/Forward wie im Spiel) und auf die Torbreite skaliert. Welches Tor, entscheidet wie in der exe der Checkpoint-Typ
-    /// (0x979f90, Feld CheckPointType der Entities): 1 Start_line, 2 Finish_line (Ereignis: Finishline_Event), 3 Check_point
-    /// (Dirt-Schule: CP_OffRoad), 4 Radar, 7 BrakingZone_01. Radar (gmth 1) hat ab Tor 1 nur Radare – auch das letzte ist ein
-    /// Radar, keine Ziellinie; Tempo (gmth 10) hat außer dem Start keine Tore. "_Off" = Variante, solange das Tor nicht das
-    /// nächste ist.
+    /// CheckPointType eines Tors wie exe 0x979f90: Tor 0 = 1 (Start). Danach nach Spielart (Tabelle 0x97a078 über gmth 0..12):
+    /// Zeitfahren/Rennen/Ereignis/HotSpots -> nach CHK2-Art (1 -> 5 Fass, 2 -> 6 Gate_Main, 3 -> 7 Bremszone, 5 -> 8, 6 -> 9, sonst
+    /// letztes Tor 2 Ziel, andere 3 Checkpoint); Radarfalle -> 4; Abstand halten / Folge dem Führenden -> letztes 2, sonst 3;
+    /// alle übrigen (Fahrprüfung 2, Tempo 10, 4-6, 8) -> 0 = kein Tor.
+    /// </summary>
+    public static int GateType(RaceDefinition race, RaceCheckpoint cp)
+    {
+        if (cp.Index == 0) return 1;
+        bool last = cp.Index == race.Checkpoints.Count - 1;
+        uint mode = (uint)race.Kind;
+        int sel = mode <= 12 ? new[] { 0, 1, 4, 0, 4, 4, 4, 0, 4, 0, 2, 3, 3 }[mode] : 4;
+        switch (sel)
+        {
+            case 0:
+                return cp.Kind switch { 1 => 5, 3 => 7, 2 => 6, 6 => 9, 5 => 8, _ => last ? 2 : 3 };
+            case 1: return 4;
+            case 3: return last ? 2 : 3;
+            default: return 0;
+        }
+    }
+
+    /// <summary>OffRoadCheckpoint wie exe 0x980ea8: Ereignis-Ziel 2 (Finishline_Event), Tor an einer Straße 0, frei gesetzt 1.</summary>
+    public static int GateVariant(RaceDefinition race, RaceCheckpoint cp, int type)
+    {
+        if (race.Kind == RaceMode.Event && type == 2) return 2;
+        // exe: Straßenverweis vorhanden, Flag +0x60 = 0 und Prüfung 0x4327b3 (Straße selbst) negativ -> 0. Die Prüfung der Straße ist
+        // nicht nachgebaut [vermutet: Geländestraße]; hier entscheidet allein der Straßenverweis (Placement 0).
+        return cp.OnRoad ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Halber Abstand der beiden Fässer eines Gate_Main wie exe 0x8ad3a5: ohne Tor-Datensatz 3,5 m; frei gesetztes Tor (0x9796d0):
+    /// CHK2-Art &lt;= 4 -> Torbreite * 0,5, sonst 20 * 0,5; Straßentor: (Profil +0x24 + +0x28) * 0,5 / 1,4 – im IA-Profil sind das
+    /// Width (+36) und TotalWidth (+40) [vermutet: Zuordnung der Speicher- auf die Dateifelder]. Ohne Straßendaten: Torbreite * 0,5.
+    /// </summary>
+    static float BarrelHalfSpan(RaceCheckpoint cp)
+    {
+        if (!cp.OnRoad) return (cp.Kind <= 4 ? cp.Width : 20f) * 0.5f;
+        var net = RaceRoadPath.Lanes?.Net;
+        if (net != null && net.Roads.TryGetValue(cp.Road, out var road) && cp.Piece >= 0 && cp.Piece < road.Pieces.Count
+            && net.Profiles.TryGetValue(road.Pieces[cp.Piece].ProfileId, out var prof))
+            return (prof.Width + prof.TotalWidth) * 0.5f / 1.4f;
+        Log.Debug($"Tor {cp.Index}: Straßenprofil {cp.Road}/{cp.Piece} nicht gefunden – Fässer bei Torbreite");
+        return cp.Width * 0.5f;
+    }
+
+    /// <summary>Entity-Suche wie exe 0x8926d0: exakt (Typ, Variante), sonst der letzte Eintrag gleichen Typs.</summary>
+    static CpRecord? FindCheckPoint(int type, int variant)
+    {
+        if (_lib == null) return null;
+        CpRecord? any = null;
+        foreach (var r in _lib.CheckPoints)
+        {
+            if (r.Type != type) continue;
+            if (r.OffRoad == variant) return r;
+            any = r;
+        }
+        return any;
+    }
+
+    /// <summary>
+    /// Original-Tor aus pack_cp.bnk (Entity__Actor__CheckPoint) an einem Checkpoint: Typ und Variante wie die exe (siehe
+    /// <see cref="GateType"/>, <see cref="GateVariant"/>), gesetzt mit der CHK2-Matrix der Datei (Achsen samt ihrer Länge, Position;
+    /// exe 0x980ee0/0x97e330) – nicht mehr auf die Torbreite gestaucht (Straßentore sind 7 m breit, die Bögen 24,5 m: im Original
+    /// stehen sie in voller Größe). Gate_Main: die beiden Kind-Actors (Fässer) in ihrer Lage im Tor.
     /// </summary>
     RaceGate? BuildGate(MapStreamer st, RaceCheckpoint cp, RaceDefinition race)
     {
-        if (_lib == null || _lib.Named.Count == 0) return null;
-        string on; string? off = null;
-        if (!cp.IsStart && race.Kind == RaceMode.Speed) return null;                       // exe: Typ 0 = kein Tor
-        if (!cp.IsStart && race.Kind == RaceMode.SpeedTrap) on = "Radar";                  // exe: Typ 4
-        else if (cp.IsBrakingZone) on = "BrakingZone_01";
-        else if (cp.IsStart && !race.IsCircuit) { on = "Start_line"; off = "Start_line_Off"; }
-        else if (cp.IsFinish && race.Kind == RaceMode.Event && _lib.Named.ContainsKey("Finishline_Event")) on = "Finishline_Event";
-        else if (cp.IsFinish || (cp.IsStart && race.IsCircuit)) { on = "Finish_line"; off = "Finish_line_Off"; }
-        else on = race.School == 'B' && _lib.Named.ContainsKey("CP_OffRoad") ? "CP_OffRoad" : "Check_point";
-        if (!_lib.Named.TryGetValue(on, out var setOn)) return null;
-        _lib.Named.TryGetValue(off ?? "", out var setOff);
-
-        // Breite (lokal X) messen und auf die Checkpoint-Breite skalieren
-        if (!_lib.GateWidth.TryGetValue(setOn, out float w))
+        if (_lib == null) return null;
+        int type = GateType(race, cp);
+        if (type == 0) return null;
+        int variant = GateVariant(race, cp, type);
+        var rec = FindCheckPoint(type, variant);
+        if (rec == null || (rec.Set == null && rec.Children.Count == 0))
         {
-            var probe = BuildFromLibrary(st, setOn, new List<Matrix4x4> { Matrix4x4.Identity }, false);
-            float ex = 0f;
-            if (probe != null) { foreach (var o in probe.Objects) ex = MathF.Max(ex, o.BoundsMax.X - o.BoundsMin.X); probe.Res.Destroy(); }
-            w = ex > 0.2f ? ex : 0f;
-            _lib.GateWidth[setOn] = w;
+            Log.Warn($"Tor {cp.Index}: CheckPointType {type}/{variant} {(rec == null ? "nicht in pack_cp.bnk" : rec.Name + " ohne Modell")}");
+            return null;
         }
-        float k = w > 0f && cp.Width > 0.5f ? cp.Width / w : 1f;
 
         var gy = Ground(st, cp.Position).Y;
         var r = cp.Right.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Right) : Vector3.Normalize(Vector3.Cross(Vector3.UnitY, cp.Forward));
         var f = cp.Forward.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Forward) : Vector3.UnitZ;
         var u = cp.Up.LengthSquared() > 1e-6f ? Vector3.Normalize(cp.Up) : Vector3.UnitY;
-        // holder = LookRotation(f, u), localScale = (k, 1, 1) – CHK2-Matrix ohne Zusatzdrehung. Die frühere 180°-Drehung glich
-        // nur die zweiseitige Darstellung aus; mit dem Original-Culling ist jede Schriftseite nur von vorn sichtbar.
-        var m = new Matrix4x4(r.X * k, r.Y * k, r.Z * k, 0f, u.X, u.Y, u.Z, 0f, f.X, f.Y, f.Z, 0f, cp.Position.X, gy, cp.Position.Z, 1f);
-        Log.Debug($"Tor {cp.Index} ({on}): cp.Width {cp.Width:0.00} m, Modell {w:0.00} m, Faktor {k:0.000}, " +
-                  $"Richtung f=({f.X:0.00},{f.Z:0.00}) r=({r.X:0.00},{r.Z:0.00})");
+        var s = cp.AxisScale;
+        var m = new Matrix4x4(r.X * s.X, r.Y * s.X, r.Z * s.X, 0f, u.X * s.Y, u.Y * s.Y, u.Z * s.Y, 0f, f.X * s.Z, f.Y * s.Z, f.Z * s.Z, 0f,
+                              cp.Position.X, gy, cp.Position.Z, 1f);
+        Log.Debug($"Tor {cp.Index}: Typ {type}/{variant} -> {rec.Name}, Achsen {s.X:0.00}/{s.Y:0.00}/{s.Z:0.00}, f=({f.X:0.00},{f.Z:0.00})");
 
-        MapStreamer.SceneHandle? hOn = null, hOff = null;
-        try { hOn = BuildFromLibrary(st, setOn, new List<Matrix4x4> { m }); }
-        catch (Exception ex) { Log.Warn("Tormodell " + on + ": " + ex.Message); }
-        if (hOn == null) return null;
-        ConvertGateMaterials(hOn);
-        // Start_line/_Off und Finish_line/_Off verweisen auf dieselbe Szene (verschiedene Knoten) -> nur einmal bauen
-        if (setOff != null && setOff != setOn)
+        var g = new RaceGate { Index = cp.Index, Checkpoint = cp, Model = rec.Name };
+        void Add(ObjectSet set, Matrix4x4 at, string label)
         {
-            try { hOff = BuildFromLibrary(st, setOff, new List<Matrix4x4> { m }); }
-            catch (Exception ex) { Log.Warn("Tormodell " + off + ": " + ex.Message); }
-            if (hOff != null) ConvertGateMaterials(hOff);
+            try
+            {
+                var h = BuildFromLibrary(st, set, new List<Matrix4x4> { at });
+                if (h == null) return;
+                ConvertGateMaterials(h);
+                g.Scenes.Add(h);
+            }
+            catch (Exception ex) { Log.Warn("Tormodell " + label + ": " + ex.Message); }
         }
-        var g = new RaceGate { Index = cp.Index, Checkpoint = cp, On = hOn, Off = hOff };
-        g.SetState(cp.IsStart || cp.IsFinish ? RaceGateState.Next : RaceGateState.Pending);
+        if (rec.Set != null) Add(rec.Set, m, rec.Name);
+        if (rec.Children.Count > 0)
+        {
+            // exe 0x8ad4da..0x8ad6a2: Actor1 bei Position - X-Achse * h, Actor2 bei Position + X-Achse * h (Achse samt Matrix-Skalierung);
+            // bei CHK2-Art 2 wird Actor1 um 180° gedreht (0x8ad6c8, Drehung pi), damit beide Fässer zur Mitte schauen.
+            float h = BarrelHalfSpan(cp);
+            var x = new Vector3(m.M11, m.M12, m.M13);
+            var pos = new Vector3(m.M41, m.M42, m.M43);
+            for (int i = 0; i < rec.Children.Count && i < 2; i++)
+            {
+                var cm = m;
+                if (i == 0 && cp.Kind == 2 && rec.Children.Count > 1) cm = Matrix4x4.CreateRotationY(MathF.PI) * cm;
+                var cpPos = i == 0 ? pos - x * h : pos + x * h;
+                var cg = Ground(st, cpPos);
+                cm.M41 = cpPos.X; cm.M42 = cg.Y; cm.M43 = cpPos.Z;
+                Add(rec.Children[i].set, cm, rec.Children[i].name);
+            }
+            Log.Debug($"Tor {cp.Index} {rec.Name}: Fässer ±{h:0.00} m");
+        }
+        if (g.Scenes.Count == 0) return null;
+        g.SetState(RaceGateState.Pending);
         return g;
     }
 

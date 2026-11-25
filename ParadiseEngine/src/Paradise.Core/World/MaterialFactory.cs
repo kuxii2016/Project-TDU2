@@ -26,6 +26,11 @@ public static class MaterialFactory
     public static bool Interior;
     /// <summary>Spot-Hologramme (pack_spots.bnk, SpotHolograms): TD_Gouraud-Tafeln/Rahmen wie im Original unbeleuchtet (Textur), auch am Tag.</summary>
     public static bool Hologram;
+    /// <summary>
+    /// Spot-Exteriors (MapStreamer.BuildExterior, s309): Original-Renderer setzt bei TD_Building mit S_USERTYPE6 = 1 den Parameter
+    /// NIGHTLMAP je Bild auf spot_exterior_lightmap_day_night.xy (exe 0xc60bb0 sammelt, 0xc60dc0 schreibt, 0xc61320 je Bild).
+    /// </summary>
+    public static bool SpotExterior;
     public static float HologramIntensity = 1f;
     /// <summary>Möbel/Szenen ohne Interieur-Bank (Unity InteriorFx.Apply(null, …)): nur Glas transparent.</summary>
     public static bool InteriorGlass;
@@ -152,18 +157,31 @@ public static class MaterialFactory
     }
 
     /// <summary>
-    /// Wasserfläche für Pools/Brunnen (TD_Water: "Oasis_*", "Water"): Meer-Shader mit eigener Wasserfarbe und Deckung. Die
-    /// Originalmaterialien tragen in COLOR/NORMAL nur Normalmaps und Kacheln – als gewöhnliches Material dunkel/schwarz.
+    /// Wasserfläche für Pools/Brunnen (TD_Water: "Oasis_*", "Water"): derselbe Meer-Shader wie das Meer (TD_Ocean, NoiseNMap, Fresnel,
+    /// Sonnenglanz, Wetterwerte) ohne Colormap und ohne die Spiegelung der Meeresebene (die liegt auf Meereshöhe, OceanLevel -1).
+    /// Die Originalmaterialien tragen in COLOR/NORMAL nur Normalmaps und Kacheln – als gewöhnliches Material dunkel/schwarz.
     /// </summary>
     public static IGpuMaterial? PoolWater
     {
         get
         {
-            if (_pool == null && Renderer != null)
-                _pool = Renderer.CreateMaterial(new MaterialDesc { Kind = MaterialKind.Water, Name = "TDU2_PoolWater", PoolTint = PoolColor, Main = _waterDesc?.Main });
+            if (Renderer == null) return _pool;
+            if (_pool == null) { _pool = Renderer.CreateMaterial(PoolDesc()); _poolNoise = OceanNoiseTexture; }
+            else if (!ReferenceEquals(_poolNoise, OceanNoiseTexture)) { _poolNoise = OceanNoiseTexture; Renderer.UpdateMaterial(_pool, PoolDesc()); }
             return _pool;
         }
     }
+
+    static IGpuTexture? _poolNoise;
+
+    static MaterialDesc PoolDesc() => new MaterialDesc
+    {
+        Kind = MaterialKind.Water,
+        Name = "TDU2_PoolWater (TD_Ocean)",
+        Main = OceanNoiseTexture,
+        Ocean = true,
+        OceanLevel = -1,
+    };
 
     /// <summary>Normalmap des Meeres setzen (water_n.2db aus commonworld, Unity: Water.SetTexture("_NormalMap")).</summary>
     public static void SetWaterNormalMap(IGpuTexture? normalMap)
@@ -173,7 +191,6 @@ public static class MaterialFactory
         if (_waterDesc == null || _water == null) return;
         _waterDesc.Main = normalMap;
         Renderer.UpdateMaterial(_water, _waterDesc);
-        if (_pool != null) Renderer.UpdateMaterial(_pool, new MaterialDesc { Kind = MaterialKind.Water, Name = "TDU2_PoolWater", PoolTint = PoolColor, Main = normalMap });
     }
 
     /// <summary>NoiseNMap des Meeres (World/OceanNoise, vom MapStreamer gesetzt).</summary>
@@ -245,6 +262,28 @@ public static class MaterialFactory
     }
 
     /// <summary>Gemeinsame Materialien (nicht pro Objekt besitzen/zerstören).</summary>
+    /// <summary>
+    /// Wasserflächen nach dem Materialnamen, nur wenn "water" ein eigenes Wort ist ("SF_Fount_water", "Pool_Water_01"), "Oasis_*",
+    /// "*piscine*" oder genau "pool". Vorher reichte "*water*" / "*_pool*": dadurch wurden 'Planks_Pool' (Holz/Beton am Pool, Treppe
+    /// beim Camper EPH_L0C) und 'waterwing' (Schwimmflügel) zu Wasser.
+    /// </summary>
+    static readonly System.Text.RegularExpressions.Regex WaterWord = new(@"(^|[_\-\s\d])water(s)?($|[_\-\s\d])", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    public static bool IsWaterName(string? n)
+    {
+        if (string.IsNullOrEmpty(n)) return false;
+        string l = n.ToLowerInvariant();
+        if (l.Contains("waterfall") || l.Contains("cascade")) return false;
+        return WaterWord.IsMatch(l) || l.StartsWith("oasis") || l.Contains("piscine") || l == "pool";
+    }
+
+    static readonly HashSet<string> _waterLogged = new(StringComparer.OrdinalIgnoreCase);
+    static void LogWater(MaterialDef def, string what)
+    {
+        lock (_waterLogged)
+            if (_waterLogged.Add(def.Name ?? ""))
+                Paradise.Core.Diagnostics.Log.Debug($"[Wasser] {what}: Material '{def.Name}' Shader {def.ShaderSet:x16}");
+    }
+
     public static bool IsShared(IGpuMaterial? m) => m != null && (m == _fallback || m == _water || m == _pool);
 
     /// <param name="getTexture">key, wrapU, wrapV -> Textur (lokal oder global)</param>
@@ -254,7 +293,9 @@ public static class MaterialFactory
         if (def == null) return Fallback;
         if (def.IsOcean) return Water;
         // Pools/Brunnen ("Water"): im Spiel Reflexions-Shader mit Normalmaps -> eigene Wasserfläche verwenden
-        if (def.IsPoolWater || def.Name.Equals("Water", StringComparison.OrdinalIgnoreCase)) return PoolWater;
+        if (def.IsPoolWater || def.Name.Equals("Water", StringComparison.OrdinalIgnoreCase)) { LogWater(def, "Pool-Wasser"); return PoolWater; }
+        // Pools der Haus-Exteriors (eph_*.bnk) u.a.: Wasser-Materialien, die nicht TD_Water sind, nach dem Namen (Unity InteriorFx: WaterMats)
+        if (IsWaterName(def.Name)) { LogWater(def, "Pool-Wasser (Name)"); return PoolWater; }
 
         var missing = new List<ulong>();
         var d = BuildObjectDesc(def, getTexture, sprite, tintUv, fourUv, wetGround, missing, out var info);
@@ -264,7 +305,7 @@ public static class MaterialFactory
         // Textur noch nicht bekannt (liegt in einer Bank, die erst später indiziert wird) -> später das GANZE Material neu
         // entscheiden (Kind, Lightmap-Verstärkung, Palette, Fenster ...), nicht nur die Textur einsetzen
         if (missing.Count > 0)
-            _pending.Add(new PendingMat { Mat = mat, Def = def, Get = getTexture, Sprite = sprite, TintUv = tintUv, FourUv = fourUv, WetGround = wetGround, Missing = missing });
+            _pending.Add(new PendingMat { Mat = mat, Def = def, Get = getTexture, Sprite = sprite, TintUv = tintUv, FourUv = fourUv, WetGround = wetGround, SpotExterior = SpotExterior, Missing = missing });
         return mat;
     }
 
@@ -276,6 +317,8 @@ public static class MaterialFactory
         bool wetGround, List<ulong> missing, out MaterialInfo info)
     {
         info = null!;
+        // Original-Renderer Stufe 1: Original-Shader zuordnen (Statistik im DevMenu > Rendering)
+        var origProg = GraphicsSettings.RenderUseOriginal ? Paradise.Core.Render.Original.OriginalShaderSystem.Resolve(def) : null;
         IGpuTexture? getTexture(ulong k, TextureWrap u, TextureWrap v)
         {
             var t = getTexture0(k, u, v);
@@ -423,6 +466,8 @@ public static class MaterialFactory
                 float mix = System.Math.Clamp(System.Math.Max(1f - fbc.W, bias * 0.8f), 0f, 1f);
                 if (mix > 0.001f) mix = System.Math.Max(mix, MinFloorReflection);
                 if (PlanarReflections && mix > 0.001f) d.ReflMix = mix;
+                // TD_Furnitures.sob: eigene Lichtformel (Shader p7.x = 2), Vertex-Eingang ohne COLOR -> keine Vertexfarbe
+                if (d.InteriorLm) { d.FurnitureLm = true; d.VertexColorStrength = 0f; }
             }
             d.Cutoff = blend == EdenBlend.Cutout ? System.Math.Clamp(alphaRef, 0.05f, 0.95f) : (foliage ? 0.5f : 0f);
         }
@@ -481,6 +526,13 @@ public static class MaterialFactory
             Packed = detail != null && TextureInfo.IsPacked(detail),
             NeonMask = neonMask,
         };
+        // Original-Renderer: Objekte aller Sätze (opak, Alpha-Test, gemischt) mit den Original-Shadern. Innenräume bekommen bis zum
+        // echten Lichtpuffer s15 (Stufe 4) einen Platzhalter ohne Sonne.
+        if (origProg != null && d.Kind is MaterialKind.Object or MaterialKind.Foliage or MaterialKind.Transparent)
+        {
+            d.Original = Paradise.Core.Render.Original.OriginalMaterial.Create(origProg, def, getTexture, interiorFx);
+            if (d.Original != null) d.Original.SpotExterior = SpotExterior && !interiorFx;
+        }
         return d;
     }
 
@@ -492,6 +544,7 @@ public static class MaterialFactory
         public Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> Get = null!;
         public bool WetGround;   // Material des NETWORK-Modells (Regen/Pfützen)
         public bool Sprite, TintUv, FourUv;
+        public bool SpotExterior;   // s309: beim Nachreichen wieder als Spot-Exterior bauen
         public List<ulong> Missing = null!;
         public long Since = Environment.TickCount64;
         public bool Logged;
@@ -528,15 +581,18 @@ public static class MaterialFactory
                 if (!p.Logged && Environment.TickCount64 - p.Since > 15000)
                 {
                     p.Logged = true;
-                    Paradise.Core.Diagnostics.Log.Warn($"TEXTUR FEHLT: Material '{p.Def.Name}' Shader {p.Def.ShaderSet:x16} Schlüssel " + string.Join(" ", p.Missing.ConvertAll(k => k.ToString("x16"))));
+                    Paradise.Core.Diagnostics.Log.Warn($"TEXTURE MISSING: Material ‘{p.Def.Name}’ Shader {p.Def.ShaderSet:x16} Key " + string.Join(" ", p.Missing.ConvertAll(k => k.ToString("x16"))));
                 }
                 continue;
             }
             var missing = new List<ulong>();
             MaterialDesc? d;
             MaterialInfo info;
+            bool spotWas = SpotExterior;
+            SpotExterior = p.SpotExterior;
             try { d = BuildObjectDesc(p.Def, (k, u, v) => p.Get(k, u, v) ?? get(k, u, v), p.Sprite, p.TintUv, p.FourUv, p.WetGround, missing, out info); }
             catch (Exception) { continue; }
+            finally { SpotExterior = spotWas; }
             if (d == null) { _pending.RemoveAt(i); continue; }
             // Neon-Maske / laufende Textur-Animation: die Hauptebene bleibt die der Animation
             if (_info.TryGetValue(p.Mat, out var old) && old.NeonMask != null && old.Desc.Main == old.NeonMask) d.Main = old.Desc.Main;
@@ -590,7 +646,8 @@ public static class MaterialFactory
     }
 
     /// <summary>Terrain-Material: Colormap + optional Splat/Shadow-Map + Detailtexturen.</summary>
-    public static IGpuMaterial CreateTerrainMaterial(IGpuTexture? colorMap, IGpuTexture? splatMap, IGpuTexture? detail1, IGpuTexture? detail2, float detailTiling, float detailStrength)
+    public static IGpuMaterial CreateTerrainMaterial(IGpuTexture? colorMap, IGpuTexture? splatMap, IGpuTexture? detail1, IGpuTexture? detail2, float detailTiling, float detailStrength,
+        Paradise.Core.Render.Original.OriginalMaterial? original = null)
     {
         var r = Renderer ?? throw new InvalidOperationException("MaterialFactory.Renderer nicht gesetzt.");
         return r.CreateMaterial(new MaterialDesc
@@ -605,6 +662,7 @@ public static class MaterialFactory
             Detail2 = detail2,
             DetailTiling = detailTiling,
             DetailStrength = (detail1 != null || detail2 != null) ? detailStrength : 0f,
+            Original = original,   // Original-Renderer: TD_HeightMap
         });
     }
 

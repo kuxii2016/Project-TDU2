@@ -51,9 +51,28 @@ public static class CarLighting
         var amb = Xyz(S("sun_ambient", new Vector4(0.58f, 0.67f, 0.82f, 0)));
         var dif = Xyz(S("sun_diffuse", new Vector4(2.01f, 1.74f, 1.36f, 0)));
         var spc = Xyz(S("sun_specular", new Vector4(1f, 1f, 1f, 0)));
+        return Finish(S, amb, dif, spc, true);
+    }
+
+    /// <summary>
+    /// Interieur (exe 0x744990, Modi 3/0x1d/0x1e/8/0x16/0x23 -> 0x744d5f): Ambient/Diffus/Glanz aus dem Lichtblock des Autos statt
+    /// der Sonne, kein Tunnel; danach dieselben Schritte 2 und 4 (Faktoren, Sättigung) und ENVCOEFF wie draußen (0x744dec ff.).
+    /// </summary>
+    public static CarLightGlobals ComputeInterior(Func<string, Vector4, Vector4> S, Vector3 amb, Vector3 dif, Vector3 spc)
+    {
+        HeadlightFlare = S("car_headlight_flare_intensity", Vector4.Zero).X;
+        PosLight = S("car_poslight_intensity", Vector4.Zero).X;
+        Caustics = S("car_caustics_intensity", Vector4.Zero).X;
+        HeadlightsIntensity = S("car_headlights_intensity", Vector4.Zero).X;
+        if (!Enabled) return default;
+        return Finish(S, amb, dif, spc, false);
+    }
+
+    static CarLightGlobals Finish(Func<string, Vector4, Vector4> S, Vector3 amb, Vector3 dif, Vector3 spc, bool outside)
+    {
 
         // 1b. Tunnel: lerp(Sonne, tunnel_light_*, Tunnelfaktor) – 0x744b03..0x744d2e, nur wenn der Faktor > 0
-        float tf = TunnelLight.Factor;
+        float tf = outside ? TunnelLight.Factor : 0f;
         if (tf > 0f)
         {
             amb = Vector3.Lerp(amb, Xyz(S("tunnel_light_ambient", new Vector4(amb, 0f))), tf);

@@ -6,13 +6,22 @@ namespace Paradise.Core.Formats;
 /// .2db = Texture (“BMAP” chunk).
 ///   File: 16-byte header, BMAP chunk starting at 0x10.
 ///   0x20 u64 key, 0x28 u16 width, 0x2A u16 height, 0x2C u16 depth/faces (6 = cubemap),
-///   0x2E u8 Mipmaps, 0x2F u8 Mipmaps, 0x30 u32 Format (0x84 = DXT1, 0x86 = DXT3, 0x88 = DXT5, bit 0x40 = Cubemap),
+///   0x2E u8 Mipmaps, 0x2F u8 Mipmaps, 0x30 u32 Format (0x84 = DXT1, 0x86 = DXT3, 0x88 = 16-Byte-Blöcke, bit 0x40 = Cubemap),
+///   0x3C u8 D3D-Format (0x33 DXT1, 0x35 DXT3, 0x37 DXT5 – entscheidet bei 0x88 zwischen DXT3 und DXT5, s310),
 ///   Pixel data starting at 0x50 (D3D order: Mip 0 .. n, blocks at least 4x4).
 /// </summary>
 public sealed class TextureDef
 {
     public ulong Key;
     public int Width, Height, Depth, Mips, Format;
+    /// <summary>
+    /// D3D-Formatbyte der BMAP (Datei +0x3C = Chunk +0x2C), s310: 0x33 = DXT1, 0x35 = DXT3, 0x37 = DXT5 (commonworld.bnk: alle 0x84 = 0x33,
+    /// 124 × 0x88 = 0x37, 2 × 0x88 = 0x35 = arrows.2db und r_m_00.2db). Format 0x88 allein sagt nur „16 Byte je Block“ – die beiden
+    /// Markierungstexturen sind DXT3 (explizites 4-Bit-Alpha) und wurden als DXT5 dekodiert: ausgefranste, verwaschene Straßenmarkierungen.
+    /// [aus den Daten abgeleitet, Leser in der exe noch nicht gesucht]
+    /// </summary>
+    public int D3dFormat;
+    public bool IsDxt3Block => BaseFormat == 0x88 && D3dFormat == 0x35;
     public byte[]? Data;
     public const int DataOffset = 0x50;
     public string? Name;
@@ -31,6 +40,7 @@ public sealed class TextureDef
             Depth = Bin.U16(d, 0x2C),
             Mips = System.Math.Max(1, (int)d[0x2E]),
             Format = (int)Bin.U32(d, 0x30),
+            D3dFormat = d[0x3C],
             Data = d,
             Name = name,
         };
@@ -81,7 +91,7 @@ public sealed class TextureDef
                 Width = Width,
                 Height = Height,
                 Mips = mips,
-                Format = bf == 0x84 ? GpuTextureFormat.Bc1 : GpuTextureFormat.Bc3,
+                Format = bf == 0x84 ? GpuTextureFormat.Bc1 : IsDxt3Block ? GpuTextureFormat.Bc2 : GpuTextureFormat.Bc3,
                 Blocks = raw,
                 WrapU = wrapU,
                 WrapV = wrapV,
@@ -158,11 +168,21 @@ public sealed class TextureDef
         }
         return n > 0 ? (float)(sum / n) : 0.5f;
     }
-    /// <summary>Eden address mode: 1 = Wrap, 2 = Clamp (lightmaps, color maps), 3 = Mirror, 4 = Clamp.</summary>
+    /// <summary>
+    /// Adressmodus der .2DM-Ebene (MAT.-Ebene +24/+25): 1 Wrap, 2 Clamp, 3 Mirror, 4 Clamp (Zuordnung des Unity-Ports).
+    /// s294 hatte das als D3DTEXTUREADDRESS gelesen (2 = Mirror, 3 = Clamp) – danach wiederholten sich die Straßenmarkierungen
+    /// (MARKS 2/1) quer über die Fahrbahn und das Kennzeichen (DETAIL 2/2) verschwand (Test 24.11.); vorher mit 2 = Clamp korrekt.
+    /// Die Sektortextur (3/3, exe 0xc50d24) liegt genau auf 0..1, dort sind Mirror und Clamp gleich. Die Umsetzung in der exe
+    /// (Eden-Wert -> SetSamplerState) ist noch nicht gefunden [vermutet aus dem Bild].
+    /// s312: wieder D3DTEXTUREADDRESS (1 Wrap, 2 Mirror, 3 Clamp, 4 Border->Clamp). Gründe: Feldwege/Felsen (TD_Ground COLOR/DETAIL
+    /// 2/x, z. B. V_Rocks_Lod, SF_gliss_*) kacheln im Original längs, mit 2 = Clamp entstanden die Streifen (Test 24.11. 20:25); seit s309
+    /// gilt der Modus je Ebene, vorher hatte die geteilte Textur oft zufällig Wrap. Die Gegenprobe aus s294 lief noch mit der
+    /// DXT3-als-DXT5-Dekodierung (s310) und ohne Adressmodus je Ebene (s309). 3/3 (projizierte Sektortextur) = Clamp passt dazu.
+    /// </summary>
     public static TextureWrap WrapFromEden(byte mode) => mode switch
     {
-        2 => TextureWrap.Clamp,
-        3 => TextureWrap.Mirror,
+        2 => TextureWrap.Mirror,
+        3 => TextureWrap.Clamp,
         4 => TextureWrap.Clamp,
         _ => TextureWrap.Repeat,
     };
@@ -177,6 +197,7 @@ public sealed class TextureDef
         return BaseFormat switch
         {
             0x84 => DecodeBc(Data, DataOffset, Width, Height, false),
+            0x88 when IsDxt3Block => DecodeDxt3(Data, DataOffset, Width, Height),   // s310: D3D-Formatbyte 0x35
             0x88 => DecodeBc(Data, DataOffset, Width, Height, true),
             0x86 => DecodeDxt3(Data, DataOffset, Width, Height),
             _ => null,

@@ -71,7 +71,7 @@ public static class FrontendSounds
         }
         catch (Exception ex)
         {
-            Log.Warn("UI sounds: " + ex.Message);
+            Log.Error("UI sounds: " + ex.Message);
             _bank = null;
             return false;
         }

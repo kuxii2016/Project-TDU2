@@ -350,4 +350,3 @@ public static class VehicleUtils
 
     static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
 }
-

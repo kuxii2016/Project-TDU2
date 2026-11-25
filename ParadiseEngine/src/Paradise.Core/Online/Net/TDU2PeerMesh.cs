@@ -1,5 +1,6 @@
 #nullable disable
 // Portiert aus dem Unity-Projekt (Runtime/Online/Net/TDU2PeerMesh.cs) – unverändert bis auf Namensraum.
+using Paradise.Core.Diagnostics;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -138,7 +139,7 @@ public sealed class TDU2PeerMesh
         b[1] = (byte)_myId; b[2] = (byte)(_myId >> 8);
         b[3] = (byte)_myToken; b[4] = (byte)(_myToken >> 8); b[5] = (byte)(_myToken >> 16); b[6] = (byte)(_myToken >> 24);
         b[7] = (byte)(reply ? 1 : 0);
-        try { _udp.Send(b, 8, to); Interlocked.Increment(ref _punchPacketsOut); } catch (Exception) { }
+        try { _udp.Send(b, 8, to); Interlocked.Increment(ref _punchPacketsOut); ProfilerNetwork.PacketOut(UdpPacketId.PeerPunch, 8); } catch (Exception) { }
     }
 
     /// <summary>Empfangs-Thread: Punch-Paket eines Peers. Token passt -&gt; direkter Weg über den Absender-Endpunkt.</summary>
@@ -197,6 +198,8 @@ public sealed class TDU2PeerMesh
                     _udp.Send(peerPacket, len, direct);
                     Interlocked.Increment(ref _directPacketsOut);
                     Interlocked.Add(ref _directBytesOut, len);
+                    ProfilerNetwork.PacketOut(peerPacket[0], len);
+                    ProfilerNetwork.PeerOut(p.Id, len);
                 }
                 catch (Exception) { Interlocked.Increment(ref _directSendErrors); relay.Add(p.Id); }
             }
@@ -215,6 +218,9 @@ public sealed class TDU2PeerMesh
             _udp.Send(b, b.Length, server);
             Interlocked.Increment(ref _relayPacketsOut);
             Interlocked.Add(ref _relayBytesOut, b.Length);
+            ProfilerNetwork.PacketOut(UdpPacketId.RelayIn, b.Length);
+            ProfilerNetwork.RelayOut(b.Length);
+            for (int i = 0; i < n; i++) ProfilerNetwork.PeerOut(relay[i], len);
         }
         catch (Exception) { }
     }

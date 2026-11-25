@@ -604,6 +604,11 @@ public abstract partial class InteriorUtils : GameModeHandler
         MaterialFactory.MinFloorReflection = _pendingKind == Kind.Garage ? GarageFloorReflection : 0f;   // Unity InteriorFx.MinFloorReflection
         _scene = st.BuildScene(model, _holder, true);
         InteriorNpcs.Build(_v.Renderer, data, model.Bank);   // Figuren (Unity TDU2InteriorNpcs: Verkäufer, Friseur …)
+        // Avatar-Licht wie im Original: Entity__Light der Interieur-Bank in den Licht-Container (Core/Avatars/AvatarLighting)
+        Paradise.Core.Avatars.AvatarLighting.ClearLights();
+        foreach (var le in data.Lights) Paradise.Core.Avatars.AvatarLighting.AddLight(InteriorScene.LightOf(le));
+        Paradise.Core.Avatars.AvatarLighting.LightFrame = _holder * st.RootMatrix;
+        if (data.Lights.Count > 0) Log.Info("Interieur: " + data.Lights.Count + " Entity__Light für das Avatar-Licht");
         MaterialFactory.MinFloorReflection = 0f;
         SetupMirror();
         st.Scenes.Add(_scene);
@@ -896,6 +901,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         // Bodenspiegelung (Unity InteriorMirror): Ebene in den Render-Raum (Gleitkomma-Ursprung -> jedes Bild)
         RenderFx.PlanarOn = _mirrorValid && _scene != null && _sceneTask == null;
         if (RenderFx.PlanarOn) RenderFx.PlanarY = st.GameToRender(new Vector3(_holder.Translation.X, _mirrorY, _holder.Translation.Z)).Y;
+        if (_scene != null && _sceneTask == null) Paradise.Core.Avatars.AvatarLighting.LightFrame = _holder * st.RootMatrix;   // Gleitkomma-Ursprung
         if (_scene != null && _sceneTask == null) InteriorNpcs.Render(_holder * st.RootMatrix);
         if (_scene != null && _sceneTask == null) GAME_MODE_LIVING.RenderLifePhoto(_holder * st.RootMatrix);   // MyTDULife: Avatar vor der Fotokamera
         if (_scene != null && _sceneTask == null) Paradise.Game.Online.RoomAvatars.Render(_holder * st.RootMatrix);   // Mitspieler als Spielfigur
@@ -1235,6 +1241,7 @@ public abstract partial class InteriorUtils : GameModeHandler
         if (st != null) st.HideWorld = false;
         if (_scene != null && st != null) st.DestroyScene(_scene);
         _scene = null; _data = null;
+        Paradise.Core.Avatars.AvatarLighting.ClearLights();
         EndRoomCinematics();
         InteriorNpcs.Clear();
         foreach (var f in _furniture) st?.DestroyScene(f);

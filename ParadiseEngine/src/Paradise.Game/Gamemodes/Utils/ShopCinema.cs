@@ -1,6 +1,5 @@
 using Paradise.Core.Avatars;
 using Paradise.Game.Input;
-using System.Numerics;
 
 namespace Paradise.Game.Gamemodes;
 

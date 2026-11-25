@@ -107,6 +107,9 @@ namespace Paradise.Core.Vehicles
         public float SquealVolume = 0.5f, GearShiftVolume = 0.35f;
         /// <summary>Helligkeit der Lichtgläser (Game/Config/VehicleConfig).</summary>
         public float LightBrightness = 3f;
+        /// <summary>Engine-Anpassung (Game/Config/VehicleConfig): Scheinwerfer-Lichtkegel und hintere Lichtgläser.</summary>
+        public float HeadlightBeam = 1f, RearLensBrightness = 1f;
+        public bool HeadlightFlares;
 
         public string BnkDir => _bnkDir ?? "";
         public int ColorIndex => _colorIndex;
@@ -134,7 +137,7 @@ namespace Paradise.Core.Vehicles
             _status = "Lade Fahrzeugdatenbank ...";
             _dbTask = Task.Run(() =>
             {
-                var dbFile = CarDatabase.FindDatabase(bnk) ?? throw new System.IO.FileNotFoundException("database/db_data.cpr fehlt");
+                var dbFile = CarDatabase.FindDatabase(bnk) ?? throw new System.IO.FileNotFoundException("database/db_data.cpr is missing");
                 var db = CarDatabase.Load(dbFile);
                 var cams = CameraDatabase.Load(bnk);
                 var phys = PhysicsConfig.Load(bnk);
@@ -150,11 +153,11 @@ namespace Paradise.Core.Vehicles
                 Database = db; Cameras = cams; Physics = phys;
                 // Avatare (Kleidung aus DBClothe, Bänke unter avatar/, Animationen unter scenarics/avatars) – Unity TDU2VehicleManager
                 try { Avatars.AvatarLibrary.Init(bnk, db.Root, _r); }
-                catch (Exception ex) { Log.Warn("Avatare: " + ex.Message); }
+                catch (Exception ex) { Log.Error("Avatare: " + ex.Message); }
                 CarUpgrades.Init(db.Root);   // Tuning: Zuwachs je Stufe (DBEnvironnement)
                 // Sticker-Planchen (DBStickersBanks) für die eigenen Lackierungen (Unity TDU2StickerLibrary.Ensure)
                 try { StickerLibrary.Init(bnk, db.Root, _r); }
-                catch (Exception ex) { Log.Warn("Sticker-Planchen: " + ex.Message); }
+                catch (Exception ex) { Log.Error("Sticker-Planchen: " + ex.Message); }
             });
         }
 
@@ -417,6 +420,13 @@ namespace Paradise.Core.Vehicles
         {
             if (Current == null || _lights == null) return;
             _lights.CollectLamps(output, Current.VisualPose, UnityToRender(gameToRender));
+        }
+
+        /// <summary>Scheinwerfer-Projektor des eigenen Autos (Original Art 0, Lichtpuffer s15) anhängen; cameraRender = Kamera im Render-Raum.</summary>
+        public void CollectProjectors(List<HeadlightProjector> output, Matrix4x4 gameToRender, Vector3 cameraRender)
+        {
+            if (Current == null || _lights == null) return;
+            _lights.CollectProjector(output, Current.VisualPose, UnityToRender(gameToRender), true, cameraRender);
         }
 
         /// <summary>Lage des Fahrzeugs in Spielkoordinaten.</summary>
@@ -688,7 +698,7 @@ namespace Paradise.Core.Vehicles
             if (_audio != null) _audio.EngineOn = EngineRunning;
 
             // Lichter (Scheinwerfer, Bremse, Rückfahr, Blinker)
-            _lights = new VehicleLights { Headlights = _headlights >= 0 ? _headlights : VehicleLights.OriginalControl ? 1 : 0, LensBrightness = LightBrightness };
+            _lights = new VehicleLights { IsBike = car != null && car.IsBike, Headlights = _headlights >= 0 ? _headlights : VehicleLights.OriginalControl ? 1 : 0, LensBrightness = LightBrightness, HeadlightIntensity = HeadlightBeam, HeadFlares = HeadlightFlares, RearLensScale = RearLensBrightness };
             _lights.Setup(veh, _model);
 
             // Cockpit-Nadeln (ND_SPD/ND_RPM) und Fahr-HUD (gauges.bnk)

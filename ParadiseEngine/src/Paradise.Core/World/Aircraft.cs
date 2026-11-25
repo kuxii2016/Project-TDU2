@@ -128,17 +128,17 @@ public sealed class AircraftSystem
                     Name = actor.S("__Name", "") ?? "",
                 };
                 _models.Add(m);
-                if (_log) Log.Info($"Flugzeug Typ {m.TypeId} '{m.Name}' -> {Bin.KeyToString(m.Key)}");
+                if (_log) Log.Info($"Aircraft Type {m.TypeId} ‘{m.Name}’ -> {Bin.KeyToString(m.Key)}");
             }
         }
-        if (_models.Count == 0) { Log.Warn($"Flugzeuge: {modelPath} hat keine Entity__Actor__Aircraft"); return false; }
+        if (_models.Count == 0) { Log.Warn($"Aircraft: {modelPath} has no Entity__Actor__Aircraft"); return false; }
 
         // 2) world_aircrafts.bnk: Volume-Punkte und die geschlossenen Routen.
         string routePath = Path.Combine(folder, "world_aircrafts.bnk");
-        if (!GameFiles.Exists(routePath)) { Log.Info($"Flugzeuge: {routePath} fehlt (keine Routen)"); return false; }
+        if (!GameFiles.Exists(routePath)) { Log.Info($"Airplanes: {routePath} is missing (no routes)"); return false; }
         var routeBank = BnkArchive.Open(routePath);
         var routeXmb = Entities(routeBank);
-        if (routeXmb == null) { Log.Warn($"Flugzeuge: {routePath} hat kein entities.xmb"); return false; }
+        if (routeXmb == null) { Log.Warn($"Aircraft: {routePath} does not have an entities.xmb file"); return false; }
 
         var volumes = new Dictionary<ulong, Vector3>();
         var volumeArray = routeXmb.Get("ExportType_Volume")?.Get("ArrayOf_Entity__Volume");
@@ -175,20 +175,20 @@ public sealed class AircraftSystem
                     {
                         if (!volumes.TryGetValue(pt.U("positionVolume"), out var p))
                         {
-                            if (_log) Log.Warn($"Flugzeuge: '{route.Name}' Punkt: Volume 0x{pt.U("positionVolume"):X16} fehlt");
+                            if (_log) Log.Warn($"Aircraft: ‘{route.Name}’ Point: Volume 0x{pt.U("positionVolume"):X16} is missing");
                             continue;
                         }
                         points.Add(p);
                         types.Add(pt.I("Type"));
                     }
                 }
-                if (points.Count < 3) { Log.Warn($"Flugzeuge: '{route.Name}' hat {points.Count} Punkte, übersprungen"); continue; }
+                if (points.Count < 3) { Log.Warn($"Airplanes: ‘{route.Name}’ has {points.Count} points, skipped"); continue; }
                 BuildRoute(route, points, types, surface);
                 if (route.Length < 100f) continue;
                 _routes.Add(route);
             }
         }
-        if (_routes.Count == 0) { Log.Warn($"Flugzeuge: {routePath} hat keine benutzbare Route"); return false; }
+        if (_routes.Count == 0) { Log.Warn($"Airplanes: {routePath} has no usable route"); return false; }
 
         // 3) Die Flugzeuge selbst: Abstand aus den Daten, erster Start auf der Landebahn.
         foreach (var route in _routes)
@@ -215,13 +215,7 @@ public sealed class AircraftSystem
                 route.SpawnDistances.Add(plane.Distance);
                 _planes.Add(plane);
             }
-            if (_log)
-                Log.Info($"Flugzeuge: '{route.Name}' Typ {route.TypeId}: {count} Flugzeuge, Loop {route.Length:F0} m, " +
-                         $"{route.NumGroundPoints} Bodenpunkte, {route.GroundSpeed:F0}/{route.AirSpeed:F0} m/s");
         }
-
-        Log.Info($"Flugzeuge: {_routes.Count} Routen, {_models.Count} Typen, {_planes.Count} Flugzeuge " +
-                 $"({GroundCount} auf dem Boden), Sichtweite {ViewRadius:F0} m{(_park ? " [park]" : "")}");
         return _planes.Count > 0;
     }
 
@@ -237,7 +231,6 @@ public sealed class AircraftSystem
             m.BoundsMax = m.Object.BoundsMax;
             m.Centre = (m.BoundsMin + m.BoundsMax) * 0.5f;
             m.Length = MathF.Max(m.BoundsMax.X - m.BoundsMin.X, m.BoundsMax.Z - m.BoundsMin.Z);
-            if (_log) Log.Info($"Flugzeug '{m.Name}': Bounds {m.Length:F1} m, {m.Object.Lods.Length} LODs");
         }
     }
 
@@ -259,8 +252,6 @@ public sealed class AircraftSystem
         int transitions = TakeEvents(), ground = GroundCount;
         if (_loggedPlanes == _planes.Count && _loggedGround == ground && transitions == 0) return;
         _loggedPlanes = _planes.Count; _loggedGround = ground;
-        Log.Info($"Flugzeuge: {_planes.Count} auf {_routes.Count} Routen, {ground} am Boden, " +
-                 $"{transitions} Start/Landung seit der letzten Meldung");
     }
 
     /// <summary>Zeichnet die Flugzeuge in Spielkoordinaten; root = MapStreamer.RootMatrix.</summary>
@@ -348,13 +339,6 @@ public sealed class AircraftSystem
                             MathF.Abs(h - points[i].Y) <= GroundTolerance;
             ground[i] = isGround;
             if (isGround) route.NumGroundPoints++;
-            if (_log)
-            {
-                float terrainY = 0f;
-                bool has = surface != null && surface(points[i].X, points[i].Z, out terrainY);
-                Log.Info($"Flugzeuge: '{route.Name}' Punkt {i} Typ {types[i]} bei ({points[i].X:F1}, {points[i].Y:F1}, " +
-                         $"{points[i].Z:F1}): Terrain {(has ? terrainY.ToString("F1") : "?")} -> {(isGround ? "Boden" : "Luft")}");
-            }
         }
         for (int i = 0; i < count; i++)
         {

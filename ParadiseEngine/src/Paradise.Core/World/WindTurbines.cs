@@ -162,11 +162,10 @@ public static class WindTurbines
                 var bankData = new BankData { Model = rotor };
                 bankData.Actors.AddRange(actors);
                 result.Banks.Add(bankData);
-                Log.Info($"Windräder: {actors.Count} Rotoren in {nested.Name} ({dd.Name})");
             }
             catch (Exception ex)
             {
-                Log.Warn($"Windräder {nested.Name}: {ex.Message}");
+                Log.Error($"Wind Turbines {nested.Name}: {ex.Message}");
                 rotor?.Release();
             }
         }

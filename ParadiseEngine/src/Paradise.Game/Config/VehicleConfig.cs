@@ -29,7 +29,15 @@ public sealed class VehicleConfig
     /// <summary>Lautstärke des Fahrzeugs (zusätzlich zu AudioConfig.Master).</summary>
     public float Volume { get; set; } = new AudioConfig().Vehicle;
     /// <summary>Helligkeit der Lichtgläser (Scheinwerfer, Rück-, Brems-, Rückfahrlicht, Blinker); 1 = wie im Unity-Projekt.</summary>
-    public float LightBrightness { get; set; } = 4f;
+    public float LightBrightness { get; set; } = 1f;
+    /// <summary>Helligkeit des Scheinwerferlichts auf Straße/Umgebung: Faktor auf die Intensität der Scheinwerfer-Projektoren
+    /// (Lichtpuffer s15) und der Engine-Spots. 1 = Original; 0,8 auf Wunsch „etwas dunkler“ (Test 24.11. 20:35). Engine-Anpassung.</summary>
+    public float HeadlightBeam { get; set; } = 0.8f;
+    /// <summary>Leuchtkugeln an den Scheinwerfern (Flares des Unity-Ports). Aus auf Wunsch (Test 24.11. 20:35).</summary>
+    public bool HeadlightFlares { get; set; } = false;
+    /// <summary>Helligkeit der hinteren Lichtgläser (Positions-/Bremslicht) bei Original-Lichtsteuerung (1 = wie das Original).
+    /// Engine-Anpassung, kein Originalwert.</summary>
+    public float RearLensBrightness { get; set; } = 1.5f;
     /// <summary>
     /// Lichtsteuerung wie das Original (Core/Vehicles/TDU2VehicleLights.OriginalControl): Licht-Taste schaltet den Modus
     /// 0 aus / 1 automatisch nach Wetter (Start) / 2 Scheinwerfer erzwungen; Blinker 1,0 s Takt mit 0,6 s an; Lichtgläser ohne
@@ -78,6 +86,9 @@ public sealed class VehicleConfig
         vm.SquealVolume = audio.TireSqueal;
         vm.GearShiftVolume = audio.GearShift;
         vm.LightBrightness = LightBrightness;
+        vm.HeadlightBeam = System.Math.Clamp(HeadlightBeam, 0f, 4f);
+        vm.RearLensBrightness = System.Math.Clamp(RearLensBrightness, 0f, 4f);
+        vm.HeadlightFlares = HeadlightFlares;
         VehicleLights.OriginalControl = OriginalLightControl;
     }
 }

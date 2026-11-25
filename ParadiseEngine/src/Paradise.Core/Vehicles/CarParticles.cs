@@ -74,7 +74,7 @@ namespace Paradise.Core.Vehicles
                     d[s.Name] = rows;
                 }
             }
-            catch (Exception ex) { Log.Warn("FX carfx.xmb: " + ex.Message); }
+            catch (Exception ex) { Log.Error("FX carfx.xmb: " + ex.Message); }
             return d;
         }
 

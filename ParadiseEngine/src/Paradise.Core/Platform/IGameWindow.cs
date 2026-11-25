@@ -17,6 +17,9 @@ public interface IGameWindow : IDisposable
 
     void SetTitle(string title);
 
+    /// <summary>Fenster anzeigen; GameLoop ruft es nach dem ersten fertigen Bild (kein weißes Fenster beim Laden).</summary>
+    void Show() { }
+
     event Action<int, int>? Resized;
     event Action? CloseRequested;
 }

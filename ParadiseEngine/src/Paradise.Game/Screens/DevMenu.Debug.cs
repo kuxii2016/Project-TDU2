@@ -658,7 +658,7 @@ public sealed partial class DevMenu
             if (TDU2SaveGame.TryRead(TDU2Session.Nick, m.Database, out var s2, out var why))
             {
                 string info = "DATA: money " + s2.money + ", cars " + s2.ownedCars.Count + ", island " + s2.island + ", story " + s2.story + ", interior '" + s2.interior + "'";
-                Paradise.Core.Diagnostics.Log.Info(info); Toast(info);
+                Toast(info);
             }
             else Toast("DATA not readable: " + why);
         }));

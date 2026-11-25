@@ -12,7 +12,7 @@ namespace Paradise.Game.Config;
 public sealed class PostFxConfig
 {
     /// <summary>Turn Bloom on/off.</summary>
-    public bool Bloom { get; set; } = true;
+    public bool Bloom { get; set; } = false;
     // Hinweis: Das Bild ist 8 Bit (kein HDR). Helle Flächen (Himmel, weiße Wände, Straße in der Sonne) liegen deshalb schon bei
     // 0,8–1,0 – eine niedrige Schwelle lässt sie alle strahlen. Darum Schwelle hoch, Stärke moderat; Lampen/Neon kommen über die
     // Bloom-Maske (BloomEmissive) mit eigener Schwelle (BloomEmissiveThreshold).

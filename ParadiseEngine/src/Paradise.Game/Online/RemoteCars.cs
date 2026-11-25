@@ -484,6 +484,19 @@ public static class RemoteCars
         }
     }
 
+    /// <summary>Scheinwerfer-Projektoren der Mitspieler (Original Art 1 bzw. 3 bei Bikes; höchstens 26 Slots insgesamt).</summary>
+    public static void CollectProjectors(VehicleManager vm, List<HeadlightProjector> output, Matrix4x4 gameToRender, Vector3 cameraRender)
+    {
+        var u2r = vm.UnityToRender(gameToRender);
+        foreach (var r in _remotes.Values)
+        {
+            if (output.Count >= HeadlightProjectors.MaxSlots) break;
+            if (r.Lights == null || r.Model == null || !r.Visible) continue;
+            r.Lights.IsBike = r.Assets?.Car?.IsBike ?? false;
+            r.Lights.CollectProjector(output, PoseUnity(vm, r), u2r, false, cameraRender);
+        }
+    }
+
     /// <summary>F1/Diagnose: Id, geladen, Auto, Alter des letzten Pakets (Unity RemoteInfo).</summary>
     public static IEnumerable<(int id, bool loaded, string car, float age)> Info()
     {

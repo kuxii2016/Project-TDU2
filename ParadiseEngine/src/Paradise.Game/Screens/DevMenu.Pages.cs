@@ -58,7 +58,7 @@ public sealed partial class DevMenu
 
         Head("TOOLS"),
 #if WINDOWS
-        Action_("Open Editor (Hierarchy + Inspector)", OpenEditor),
+        Action_("Open Editor (External)", OpenEditor),
 #endif
         Menu("Cutscene Tester", CutsceneMenu),
         Menu("Animation Viewer", AnimViewerMenu),
@@ -290,6 +290,12 @@ public sealed partial class DevMenu
         l.Add(Bool("VSync (restart)", () => GraphicsSettings.VSync, v => GraphicsSettings.VSync = v, true));
         l.Add(Table("Anti-aliasing (restart)", MsaaNames, () => Math.Max(0, Array.IndexOf(MsaaValues, GraphicsSettings.Msaa)), i => GraphicsSettings.Msaa = MsaaValues[i], 0));
         l.Add(Float("View distance (camera)", () => _terrain.FarClip, v => _terrain.FarClip = v, 500f, 1000f, 60000f, 60000f, "0", " m"));
+        l.Add(Head("ORIGINAL RENDERER (im Aufbau)"));
+        l.Add(Bool("RenderUseOriginal", () => GraphicsSettings.RenderUseOriginal, v => GraphicsSettings.RenderUseOriginal = v, false));
+        l.Add(Action_("Original-Shader uebersetzen (Test)", () => Task.Run(Paradise.Core.Render.Original.OriginalShaders.SelfTest)));
+        l.Add(Info("Ergebnis", () => Paradise.Core.Render.Original.OriginalShaders.Status));
+        l.Add(Info("Shader-Zuordnung", () => Paradise.Core.Render.Original.OriginalShaderSystem.Stats));
+        l.Add(Action_("Alle Materialien zuordnen (Scan)", () => Task.Run(Paradise.Core.Render.Original.OriginalShaderSystem.ScanAllMaterials)));
         l.Add(Head("DETAIL"));
         l.Add(Table("Texture resolution (new textures)", TexNames, () => Math.Clamp(GraphicsSettings.TextureMipLimit, 0, 3), i => GraphicsSettings.TextureMipLimit = i, 0));
         if (s != null) l.Add(Float("Object LOD distance (new tiles)", () => s.LodDistanceScale, v => s.LodDistanceScale = v, 0.25f, 0.25f, 10f, 4f, "0.00", " x"));

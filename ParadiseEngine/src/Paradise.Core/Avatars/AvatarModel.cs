@@ -144,6 +144,8 @@ public static class AvatarMaterials
                 m.AvTColor = Clr(def, "TCOLOR", new Vector4(0f, 0f, 0f, 1f));
             }
         }
+        // Original-Renderer: Avatar-Shader (vorgehäutete Vertices, Knochen 0 = Einheit; Spot-Licht noch nicht angeschlossen)
+        m.Original = Paradise.Core.Render.Original.OriginalMaterial.For(def, (k, u, v) => get(k, u, v));
         return m;
     }
 }
@@ -196,6 +198,8 @@ public sealed partial class AvatarModel : IDisposable
     ObjectVertex[] _verts = Array.Empty<ObjectVertex>();
     bool _inCar, _indoor, _headHidden;
     int _lightVersion = -1;
+    /// <summary>Licht wie im Original (Avatars/AvatarLighting): jedes Bild vor dem Zeichnen berechnet, von den Original-Materialien gelesen.</summary>
+    public readonly AvatarLightState Light = new();
 
     AvatarModel(IRenderer r, AvatarConfig cfg) { _r = r; Config = cfg; }
 
@@ -298,6 +302,7 @@ public sealed partial class AvatarModel : IDisposable
             var desc = AvatarMaterials.Create(def, (key, u, v) => GetTexture(part, key, u, v), pr.Uv.Length);
             if (part.HasHairColor && desc.AvMode > 2.5f && desc.AvMode < 3.5f) { desc.AvPrimClr = part.HairPrim; desc.AvScdClr = part.HairScd; }
             ApplyLight(desc);
+            if (desc.Original != null) desc.Original.Avatar = Light;   // Original-Renderer: Instanz-Lichter dieses Avatars
             var idx = new uint[pr.Tris.Length];
             for (int k = 0; k < idx.Length; k++) idx[k] = (uint)pr.Tris[k];
             _pieces.Add(new Piece { Prim = pr, Desc = desc, Mat = _r.CreateMaterial(desc), Indices = idx, Head = head, BaseCoeffs = desc.AvCoeffs, BaseSpec = desc.AvSpec });
@@ -394,7 +399,7 @@ public sealed partial class AvatarModel : IDisposable
     }
 
     /// <summary>Fußraum-Schatten der Avatar-Shader (im Auto).</summary>
-    public bool InCar { get => _inCar; set { if (_inCar == value) return; _inCar = value; Refresh(); } }
+    public bool InCar { get => _inCar; set { if (_inCar == value) return; _inCar = value; Light.InCar = value; Refresh(); } }
     /// <summary>Innenraum: Deckenlicht statt Sonne (Unity _TDU2AvatarIndoor, TDU2Interiors.SetAvatarIndoor).</summary>
     public bool Indoor { get => _indoor; set { if (_indoor == value) return; _indoor = value; Refresh(); } }
 
@@ -422,25 +427,58 @@ public sealed partial class AvatarModel : IDisposable
     /// <summary>Häuten (aktuelle Pose von <see cref="Rig"/>) und zeichnen. <paramref name="model"/>: Avatar-Raum -> Render-Raum.</summary>
     public void Draw(Matrix4x4 model)
     {
-        if (!Ready || !Visible || EditorHidden || Rig == null) return;
-        EditorLastModel = model; EditorDrawnTick = System.Environment.TickCount64;   // Szenen-Editor: Lage/Markierung
-        if (_lightVersion != AvatarLight.Version) { _lightVersion = AvatarLight.Version; Refresh(); }
-        ApplyFace();
-        Rig.UpdateSkin();
-        var rig = Rig;
+        if (!BeginSkin(out int total)) return;
+        var rig = Rig!;
         using (s_mSkin.Auto())
         {
-            int total = 0;
-            foreach (var p in _pieces)
-            {
-                p.SkinnedThisFrame = p.Prim.Pos.Length > 0 && p.Indices.Length > 0 && !(p.Head && _headHidden);   // Cockpit-Kamera: Kopfteile nicht zeichnen
-                if (p.SkinnedThisFrame) total += p.Prim.Pos.Length;
-            }
             // Teile unabhängig voneinander häuten (jeder Teil schreibt nur in seinen eigenen Puffer); Zeichnen danach im Hauptthread.
             if (total >= ParallelSkinVertices && _pieces.Count > 1)
                 Parallel.For(0, _pieces.Count, i => SkinPiece(rig, _pieces[i]));
             else
                 foreach (var p in _pieces) SkinPiece(rig, p);
+        }
+        Submit(model);
+    }
+
+    /// <summary>Viele Avatare auf einmal (Cinematic-Party: 25 Figuren, 12,9 ms je Bild nacheinander im Debug-Build):
+    /// Vorbereitung im Hauptthread, Häuten aller Figuren parallel (jede schreibt nur in ihre eigenen Puffer), Zeichnen im Hauptthread.
+    /// Die Pose (Rig.BeginPose/ApplyClip) muss vorher gesetzt sein.</summary>
+    public static void DrawMany(IReadOnlyList<(AvatarModel Avatar, Matrix4x4 Model)> list)
+    {
+        var ready = new List<(AvatarModel Avatar, Matrix4x4 Model)>(list.Count);
+        foreach (var e in list) if (e.Avatar.BeginSkin(out _)) ready.Add(e);
+        if (ready.Count == 0) return;
+        using (s_mSkin.Auto())
+            Parallel.For(0, ready.Count, i => { var a = ready[i].Avatar; var rig = a.Rig!; foreach (var p in a._pieces) SkinPiece(rig, p); });
+        foreach (var e in ready) e.Avatar.Submit(e.Model);
+    }
+
+    /// <summary>Hauptthread-Teil vor dem Häuten (Licht, Gesicht, Knochenmatrizen, welche Teile). false = nichts zu zeichnen.</summary>
+    bool BeginSkin(out int total)
+    {
+        total = 0;
+        if (!Ready || !Visible || EditorHidden || Rig == null) return false;
+        if (_lightVersion != AvatarLight.Version) { _lightVersion = AvatarLight.Version; Refresh(); }
+        ApplyFace();
+        Rig.UpdateSkin();
+        foreach (var p in _pieces)
+        {
+            p.SkinnedThisFrame = p.Prim.Pos.Length > 0 && p.Indices.Length > 0 && !(p.Head && _headHidden);   // Cockpit-Kamera: Kopfteile nicht zeichnen
+            if (p.SkinnedThisFrame) total += p.Prim.Pos.Length;
+        }
+        return true;
+    }
+
+    /// <summary>Gehäutete Teile zeichnen (Hauptthread).</summary>
+    void Submit(Matrix4x4 model)
+    {
+        EditorLastModel = model; EditorDrawnTick = System.Environment.TickCount64;   // Szenen-Editor: Lage/Markierung
+        // Avatar-Licht (Spec §2.1–2.5): Sammelpunkt = Skelettpunkt des Originals (FUN b87100, nicht lesbar in der Spec) – hier Avatar-Ursprung
+        // + 1 m [vermutet]; Anker des Kameralichts = Lage + (0, 1, 0) (Spec §2.4). Beide im Render-Raum.
+        if (Paradise.Core.Render.GraphicsSettings.RenderUseOriginal)
+        {
+            var p1 = Vector3.Transform(new Vector3(0f, 1f, 0f), model);
+            Light.Update(p1, model.Translation + Vector3.UnitY);
         }
         using (s_mDraw.Auto())
             foreach (var p in _pieces)

@@ -335,12 +335,11 @@ namespace Paradise.Core.Vehicles
                 _hud.SetVariable("/:nb_players", PlayerCount.ToString());
                 _appliedOnline = OnlineStatus; _appliedPlayers = PlayerCount; _lastOnlineVar = _lastPlayersVar = null;   // UpdateOnlineDisplay ab hier
                 //_hud.Visible = false;
-                Log.Info("Flash: hud.bnk (Minimap) geladen");
             }
             catch (Exception ex)
             {
                 Error = "hud.bnk nicht nutzbar: " + ex.Message;
-                Log.Warn("Minimap: " + Error);
+                Log.Error("Minimap: " + Error);
                 if (_hud != null) { FlashHost.Remove(_hud); _hud = null; }
                 _hudBank = null;
             }
@@ -686,14 +685,12 @@ namespace Paradise.Core.Vehicles
         {
             if (_task != null && _task.IsCompleted)
             {
-                if (_task.IsFaulted) { Error = _task.Exception?.GetBaseException().Message; Log.Warn("Minimap: " + Error); }
+                if (_task.IsFaulted) { Error = _task.Exception?.GetBaseException().Message; Log.Error("Minimap: " + Error); }
                 else
                 {
                     var res = _task.Result;
                     _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads;
                     RoadsRebuilt?.Invoke(_hudRoads);
-                    Log.Info($"Minimap: {res.segs} Straßensegmente, {_lines.Length} Linien, {_areas.Length} Kreuzungsflächen; " +
-                             $"HudMap: {_hudRoads.Strips.Count} Streifen, {_hudRoads.Rings.Count} Kreisverkehre");
                 }
                 _task = null;
             }
@@ -1160,7 +1157,6 @@ namespace Paradise.Core.Vehicles
                     Color = c.r | ((uint)c.g << 8) | ((uint)c.b << 16) | ((uint)c.a << 24)
                 };
             }
-            Log.Info($"Karte: Straßennetz {verts.Count} Vertices, {idx.Count / 3} Dreiecke (Breite x{widthMul:0.##})");
             return (ov, idx.ToArray());
         }
 

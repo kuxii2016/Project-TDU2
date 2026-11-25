@@ -94,18 +94,10 @@ public sealed class Birds : IDisposable
     public bool Load(string path, GlobalTextureCache textures, IRenderer renderer)
     {
         Dispose();
-        string[] args = Environment.GetCommandLineArgs();
-        foreach (var a in args)
-        {
-            if (string.Equals(a, "-nobirds", StringComparison.OrdinalIgnoreCase)) return false;
-            if (string.Equals(a, "-logbirds", StringComparison.OrdinalIgnoreCase)) _log = true;
-            if (string.Equals(a, "-birdsnear", StringComparison.OrdinalIgnoreCase)) _near = true;
-            if (string.Equals(a, "-birdsfront", StringComparison.OrdinalIgnoreCase)) _front = true;
-        }
-        if (!GameFiles.Exists(path)) { Log.Info($"Vögel: {path} nicht vorhanden (keine Vögel)"); return false; }
+        if (!GameFiles.Exists(path)) { Log.Warn($"Birds: {path} not found (no birds)"); return false; }
         var bank = BnkArchive.Open(path);
         var dmEntry = bank.All(".2dm").FirstOrDefault();
-        if (dmEntry == null) { Log.Warn($"Vögel: {path} hat kein birds.2dm"); return false; }
+        if (dmEntry == null) { Log.Warn($"Birds: {path} does not contain birds.2dm"); return false; }
         var materials = Material2DM.Parse(bank.Read(dmEntry));
         textures.IndexBank(bank);   // die 2db-Sprites liegen in derselben Bank
 
@@ -114,7 +106,7 @@ public sealed class Birds : IDisposable
             if (_species.Count >= MaxSpecies) break;
             if (!def.TryGetLayer(MaterialDef.SemColor, out var layer)) continue;
             var tex = textures.Get(layer.TextureKey, TextureWrap.Clamp, TextureWrap.Clamp);
-            if (tex == null) { Log.Warn($"Vögel: Material '{def.Name}': Textur 0x{layer.TextureKey:X16} fehlt"); continue; }
+            if (tex == null) { Log.Warn($"Birds: Material ‘{def.Name}’: Texture 0x{layer.TextureKey:X16} is missing"); continue; }
             float fade = 1f;
             if (def.TryGetParam("FADEALFA", out var p) && p.X > 0f) fade = Sat(p.X);
             var mat = renderer.CreateMaterial(new MaterialDesc
@@ -128,17 +120,14 @@ public sealed class Birds : IDisposable
                 Color = Vector4.One,
             });
             _species.Add(new Species { Name = def.Name, Wingspan = Span(def.Name), FadeAlpha = fade, Texture = tex, Material = mat });
-            Log.Info($"Vögel: Art '{def.Name}' -> 0x{layer.TextureKey:X16}, Spannweite {Span(def.Name):F2} m");
         }
-        if (_species.Count == 0) { Log.Warn($"Vögel: {path} hat keine benutzbaren Arten"); return false; }
+        if (_species.Count == 0) { Log.Warn($"Birds: {path} has no usable species"); return false; }
         for (int i = 0; i < MaxSpecies; i++)
         {
             _vertices[i] = new List<ObjectVertex>(256);
             _indices[i] = new List<uint>(384);
         }
         _loaded = true;
-        Log.Info($"Vögel: {_species.Count} Arten, maximal {MaxBirds} in {MaxFlocks} Schwärmen, Sichtweite {DrawRadius:F0} m" +
-                 $"{(_near ? " [near]" : "")}{(_front ? " [front]" : "")}");
         return true;
     }
 
@@ -191,9 +180,6 @@ public sealed class Birds : IDisposable
             flock.GroundTimer = 0f;
             flock.Species = _random.Next(_species.Count);
             flock.Alive = true;
-            if (_log)
-                Log.Info($"Vögel: Schwarm {index} bei ({flock.Centre.X:F0}, {flock.Centre.Y:F0}, {flock.Centre.Z:F0}), " +
-                         $"{_species[flock.Species].Name}, Höhe {flock.Altitude:F0} m{(pathFlock ? " (Straße)" : "")}");
             return;
         }
         flock.Alive = false;   // kein Terrain in der Nähe: nächstes Frame erneut versuchen
@@ -286,7 +272,6 @@ public sealed class Birds : IDisposable
         _logTimer = 0f;
         if (_drawn == _loggedDrawn && _flocks.Count == _loggedFlocks) return;
         _loggedDrawn = _drawn; _loggedFlocks = _flocks.Count;
-        Log.Info($"Vögel: {_drawn} gezeichnet von {_birds.Count}, {_flocks.Count} Schwärme, Regen {_rain:F2}, Sonne {0.35f + 0.65f * _sun:F2}");
     }
 
     /// <summary>

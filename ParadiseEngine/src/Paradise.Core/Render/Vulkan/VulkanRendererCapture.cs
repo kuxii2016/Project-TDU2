@@ -149,7 +149,7 @@ public sealed unsafe partial class VulkanRenderer
             }
             r = new SceneCapture { Width = _capW, Height = _capH, Rgba = px };
         }
-        try { done(r); } catch (Exception ex) { Log.Warn("Bildaufnahme: " + ex.Message); }
+        try { done(r); } catch (Exception ex) { Log.Error("Image Capture: " + ex.Message); }
     }
 
     /// <summary>Host-sichtbarer Lese-Puffer (möglichst mit CPU-Cache, sonst wie CreateHostBuffer).</summary>

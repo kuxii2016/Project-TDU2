@@ -208,6 +208,11 @@ public sealed class Texture2D : Texture
     public TextureWrapMode wrapMode = TextureWrapMode.Clamp;
 
     public Texture2D(int w, int h) { width = w; height = h; }
+    /// <summary>Unity new Texture2D(w, h, fmt, mips, linear): linear = Werte ungewandelt (UNORM). Für Bilder, die wie die Datei
+    /// erscheinen sollen (Fotos): Flash schreibt den gelesenen Wert unkodiert ins Bild – eine sRGB-Textur würde dort um die
+    /// Gammakurve abgedunkelt (Foto-Vorschau im Test 24.11. 08:52: mittlere Helligkeit 63 -> 19).</summary>
+    public Texture2D(int w, int h, bool linear) { width = w; height = h; _linear = linear; }
+    readonly bool _linear;
 
     static Texture2D? _white;
     /// <summary>1×1 white (UnityEngine.Texture2D.whiteTexture).</summary>
@@ -240,7 +245,7 @@ public sealed class Texture2D : Texture
         }
         var wrap = wrapMode == TextureWrapMode.Repeat ? TextureWrap.Repeat : TextureWrap.Clamp;
         Gpu?.Dispose();
-        Gpu = r.CreateTexture(new TextureUpload { Width = width, Height = height, Format = GpuTextureFormat.Rgba8, Mips = 1, Blocks = data, WrapU = wrap, WrapV = wrap, Name = "Flash", Deferred = true });
+        Gpu = r.CreateTexture(new TextureUpload { Width = width, Height = height, Format = GpuTextureFormat.Rgba8, Mips = 1, Blocks = data, WrapU = wrap, WrapV = wrap, Name = "Flash", Deferred = true, Linear = _linear });
         _pixels = null;   // nicht lesbar halten (wie Apply(false, true) im Unity-Projekt)
     }
 

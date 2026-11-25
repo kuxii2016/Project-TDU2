@@ -35,10 +35,9 @@ public sealed class FxLibrary : IDisposable
             var bank = BnkArchive.Open(path);
             var lib = new FxLibrary();
             lib.Read(r, bank);
-            Log.Info($"FX: {relativeBank}: {lib.Count} Effekte");
             return lib;
         }
-        catch (Exception ex) { Log.Warn("FX " + relativeBank + ": " + ex.Message); return null; }
+        catch (Exception ex) { Log.Error("FX " + relativeBank + ": " + ex.Message); return null; }
     }
 
     void Read(IRenderer r, BnkArchive bank)
@@ -143,7 +142,6 @@ public sealed class FxLibrary : IDisposable
                 }
             if (eff.Nodes.Count > 0) _fx[name] = eff;
         }
-        Log.Info($"FX: Partikelmaterialien beleuchtet {_lit}, additiv {_additive}");
     }
 
     int _lit, _additive;

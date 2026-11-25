@@ -17,90 +17,13 @@ namespace Paradise.Core.World;
 /// </summary>
 public sealed partial class MapStreamer : IDisposable
 {
-    #region Settings (values from the Unity scene TDU2Main.unity, TDU2MapStreamer component)
-    public string Island = "ibiza";
-    public float AreaLoadDistance = 900f;
-    public float AreaUnloadMargin = 1000f;
-    public float SectorLoadDistance = 900f;   // Unity: 900 (1500 kostete ~2,8x Gelände-Dreiecke im Bild, Schatten und Spiegelung)
-    public float SectorUnloadMargin = 300f;
-    public int MaxParallelLoads = 4;
-    public bool ShowIslandLod = true;
-    public bool LoadAreaObjects = true;
-    public bool LoadSectorObjects = true;
-    public bool LoadVegetation = true;
-    public bool LoadOtherPlacements = true;
-    public bool LoadActors = true;
-    public bool LoadWorldActors = true;
-    public bool LoadSpotExteriors = true;
-    public float VegetationDistance = 1100f;   // Unity: 1000
-    /// <summary>Tunnelportale: HMAP-Loch-Kacheln auslassen und das Sektormodell BLOCK als Gelände zeichnen (wie das Original).</summary>
-    public bool CutTunnelPortals = true;
-    public bool ShowSignText = true;
-    public bool ShowWater = true;
-    /// <summary>Wolkenkuppel des Originals (fx/clouds.bnk, World/TDU2Clouds).</summary>
-    public bool ShowClouds = true;
-    /// <summary>Sternenhimmel des Originals (Dom-Mesh der exe, World/TDU2Stars).</summary>
-    public bool ShowStars = true;
-    /// <summary>Stromleitungen aus den Sektor-.pen (Durchhang/Aufhängepunkte angenähert, siehe PowerWires).</summary>
-    public bool ShowPowerWires = true;
-    /// <summary>Rotierende Windrad-Rotoren aus den verschachtelten _sc-Bänken der Sektoren (fu_eolea_act).</summary>
-    public bool LoadRotors = true;
-    public float SeaLevel = 0f;
-    /// <summary>Höhe der Meeresfläche relativ zu SeaLevel (Unity-Projekt: −1,5 m; Original-Spiel: 0).</summary>
-    public float WaterOffset = -0.15f;
-    /// <summary>Wasserhöhe der Insel wie im Original (unpacked.exe 0xcb36a0: Insel-ID 1 = HAWAI → −1,8, sonst 0;
-    /// Inseltabelle IBIZA/HAWAI/CASINO bei .data 0x164a820). Die Sektor-Meer-Meshes von Hawaii liegen bereits auf −1,8 (BBox im -o.3dd).</summary>
-    public float IslandWaterHeight => (_index?.IslandName ?? Island ?? "").StartsWith("hawai", StringComparison.OrdinalIgnoreCase) ? -1.8f : 0f;
-    /// <summary>Höhe der großen Meeresfläche und der Spiegelebene.</summary>
-    public float WaterLevel => SeaLevel + IslandWaterHeight + WaterOffset;
-    public bool LoadGrass = true;
-    // Werte wie in der Unity-Szene TDU2Main.unity (TDU2MapStreamer: GrassRadius 120, GrassDensity 0.9, GrassSpacing 1.2)
-    public float GrassRadius = 120f;
-    public float GrassDensity = 0.9f;
-    public float GrassSpacing = 1.2f;
-    public bool LoadInteriors = true;
-    public bool CenterWorld = true;
-    public bool StartFromGamePc = true;
-    public Vector3 StartPositionGame = new(97f, 8f, 363f);
-    public float DetailTiling = 0.098f;
-    public float DetailStrength = 1f;
-    public float ShadowMapStrength = 0.6f;
-    public float LodDistanceScale = 4f;   // Unity: 3 (LOD-Wechsel später)
-    public bool CullLastLod = false;   // Unity: true – letzte LOD bleibt sichtbar statt zu verschwinden
-    public bool OriginalLighting = true;
-    public float ObjectBrightness = .5f;
-    public float WrapLighting = 0.35f;
-    public bool ShowGlowMaterials = true;
-    public float WindStrength = 1f;
-    public float VertexColorStrength = 0.5f;
-    public float SectorSkirt = 12f, AreaSkirt = 40f, IslandSkirt = 150f;
-    public float TerrainLower = 0.1f;
-    public float TerrainDepthPush = 0.0015f;
-    #endregion
 
-    /// <summary>Corresponds to a GameObject in the Unity project: custom meshes and/or objects that can be enabled or disabled.</summary>
-    public sealed class Node
-    {
-        public string Name = "";
-        public bool Active = true;
-        public readonly List<(IGpuMesh Mesh, IGpuMaterial Material, Matrix4x4 Model)> Meshes = new();
-        public readonly List<RenderObject> Objects = new();
-        public bool Disposed;
-        public Vector3 BoundsMin = new(float.MaxValue), BoundsMax = new(float.MinValue);
-        public bool HasBounds => BoundsMin.X <= BoundsMax.X;
-        public void Encapsulate(Vector3 min, Vector3 max) { BoundsMin = Vector3.Min(BoundsMin, min); BoundsMax = Vector3.Max(BoundsMax, max); }
-    }
-
-    // --- Laufzeit ---
-    sealed class AreaPayload { public double LoadMs; public BankModel Model = null!; public List<TerrainPiece> Pieces = new(); public List<(Spot spot, BankModel model)> Exteriors = new(); }
     sealed class SectorPayload
     {
         public double LoadMs;
         public BankModel Model = null!;
         public MeshData? Terrain;
-        // Skirt-Stücke (Engine-Zusatz zum LOD1, siehe TerrainMeshBuilder.BuildSectorSkirts) – nicht in der Kollision
         public List<(MeshData Mesh, Vector2 Probe)>? Skirts;
-        // Loch-Kacheln des HMAP als Zellen [z * cells + x]: dort liefert TryGetGroundHeight keine Rasterhöhe (BLOCK gilt).
         public bool[]? DriveHoles;
         public PowerWires.PenFile? Pen;
         public WindTurbines.SectorData? Rotors;
@@ -136,13 +59,86 @@ public sealed partial class MapStreamer : IDisposable
         public WindTurbines.SectorRuntime? Rotors;
         public readonly List<StaticCollider> Colliders = new();
         public SectorPayload? Data;
-        // Loch-Kacheln des HMAP (Raster [z * cells + x], cells = Heights.Size - 1): Rückfall-Bodenhöhe meidet sie.
         public bool[]? DriveHoles;
-        // Skirt-Stücke mit Probe-Punkt (Welt) jenseits der Kante: aus, solange dort ein LOD0-Sektor steht
         public readonly List<(Node Node, Vector3 Probe)> Skirts = new();
         public float WireWait;
         public double WireNextTry;
     }
+
+    public sealed class Node
+    {
+        public string Name = "";
+        public bool Active = true;
+        public readonly List<(IGpuMesh Mesh, IGpuMaterial Material, Matrix4x4 Model)> Meshes = new();
+        public readonly List<RenderObject> Objects = new();
+        public bool Disposed;
+        public Vector3 BoundsMin = new(float.MaxValue), BoundsMax = new(float.MinValue);
+        public bool HasBounds => BoundsMin.X <= BoundsMax.X;
+        public void Encapsulate(Vector3 min, Vector3 max) { BoundsMin = Vector3.Min(BoundsMin, min); BoundsMax = Vector3.Max(BoundsMax, max); }
+    }
+
+    #region Settings (values from the Unity scene TDU2Main.unity, TDU2MapStreamer component)
+    public string Island = "ibiza";
+    public float AreaLoadDistance = 900f;
+    public float AreaUnloadMargin = 1000f;
+    public float SectorLoadDistance = 900f;   // Unity: 900 (1500 kostete ~2,8x Gelände-Dreiecke im Bild, Schatten und Spiegelung)
+    public float SectorUnloadMargin = 300f;
+    public int MaxParallelLoads = 3;
+    public bool ShowIslandLod = true;
+    public bool LoadAreaObjects = true;
+    public bool LoadSectorObjects = true;
+    public bool LoadVegetation = true;
+    public bool LoadOtherPlacements = true;
+    public bool LoadActors = true;
+    public bool LoadWorldActors = true;
+    public bool LoadSpotExteriors = true;
+    public float VegetationDistance = 1100f;   // Unity: 1000
+    /// <summary>Tunnelportale: HMAP-Loch-Kacheln auslassen und das Sektormodell BLOCK als Gelände zeichnen (wie das Original).</summary>
+    public bool CutTunnelPortals = true;
+    public bool ShowSignText = true;
+    public bool ShowWater = true;
+    /// <summary>Wolkenkuppel des Originals (fx/clouds.bnk, World/TDU2Clouds).</summary>
+    public bool ShowClouds = true;
+    /// <summary>Sternenhimmel des Originals (Dom-Mesh der exe, World/TDU2Stars).</summary>
+    public bool ShowStars = true;
+    /// <summary>Stromleitungen aus den Sektor-.pen (Durchhang/Aufhängepunkte angenähert, siehe PowerWires).</summary>
+    public bool ShowPowerWires = true;
+    /// <summary>Rotierende Windrad-Rotoren aus den verschachtelten _sc-Bänken der Sektoren (fu_eolea_act).</summary>
+    public bool LoadRotors = true;
+    public float SeaLevel = 0f;
+    /// <summary>Höhe der Meeresfläche relativ zu SeaLevel (Unity-Projekt: −1,5 m; Original-Spiel: 0).</summary>
+    public float WaterOffset = -0.15f;
+    /// <summary>Wasserhöhe der Insel wie im Original (unpacked.exe 0xcb36a0: Insel-ID 1 = HAWAI → −1,8, sonst 0;
+    /// Inseltabelle IBIZA/HAWAI/CASINO bei .data 0x164a820). Die Sektor-Meer-Meshes von Hawaii liegen bereits auf −1,8 (BBox im -o.3dd).</summary>
+    public float IslandWaterHeight => (_index?.IslandName ?? Island ?? "").StartsWith("hawai", StringComparison.OrdinalIgnoreCase) ? -1.8f : 0f;
+    /// <summary>Höhe der großen Meeresfläche und der Spiegelebene.</summary>
+    public float WaterLevel => SeaLevel + IslandWaterHeight + WaterOffset;
+    public bool LoadGrass = true;
+    // default: GrassRadius 120, GrassDensity 0.9, GrassSpacing 1.2
+    public float GrassRadius = 120f;
+    public float GrassDensity = 0.9f;
+    public float GrassSpacing = 1.2f;
+    public bool LoadInteriors = true;
+    public bool CenterWorld = true;
+    public bool StartFromGamePc = true;
+    public Vector3 StartPositionGame = new(97f, 8f, 363f);
+    public float DetailTiling = 0.098f;
+    public float DetailStrength = 1f;
+    public float ShadowMapStrength = 0.9f;
+    public float LodDistanceScale = 4f;
+    public bool CullLastLod = false;
+    public bool OriginalLighting = true;
+    public float ObjectBrightness = .5f;
+    public float WrapLighting = 0.35f;
+    public bool ShowGlowMaterials = true;
+    public float WindStrength = 1f;
+    public float VertexColorStrength = 0.5f;
+    public float SectorSkirt = 12f, AreaSkirt = 40f, IslandSkirt = 150f;
+    public float TerrainLower = 0.0f;
+    public float TerrainDepthPush = 0;//0.0015f;
+    #endregion
+
+    sealed class AreaPayload { public double LoadMs; public BankModel Model = null!; public List<TerrainPiece> Pieces = new(); public List<(Spot spot, BankModel model)> Exteriors = new(); }
 
     private readonly IRenderer _renderer;
     private IslandIndex? _index;
@@ -165,8 +161,8 @@ public sealed partial class MapStreamer : IDisposable
     private volatile RoadSignLayout? _signLayout;
     private IGpuMaterial? _signMat;
     private IGpuMesh? _waterMesh;
-    private OceanNoise? _oceanNoise;        // NoiseNMap des Meeres (TD_Ocean)
-    private IGpuMaterial? _oceanIsland;     // Meer der Inselebene (ibiza-o / Border: Insel-Colormap) für die große Wasserfläche
+    private OceanNoise? _oceanNoise;
+    private IGpuMaterial? _oceanIsland; 
     private Vector3 _waterPos;
     private Clouds? _clouds;
     private Stars? _stars;
@@ -174,20 +170,17 @@ public sealed partial class MapStreamer : IDisposable
     private GrassTypes? _grassTypes;
     private IGpuTexture? _grassAtlas, _bushAtlas;
     private int _grassCells = 16, _bushCells = 4;
-    private GrassMap? _grassNoise;   // tallgrass.bnk noise.rle (Größenrauschen, exe 0xc68c28)
+    private GrassMap? _grassNoise;
     private bool _waterNormalSet;
     private double _time, _nextScan, _nextTexRetry, _nextLodCheck;
     private Vector3 _viewerGame;
     private string _status = "";
-
     public IslandIndex? Index => _index;
     public SpotsFile? Spots => _spots;
     public GlobalTextureCache Textures => _textures;
     public string Status => _status;
-    /// <summary>Spielkoordinaten -> Render-Raum (Unity: _root).</summary>
     public Matrix4x4 RootMatrix { get; private set; } = Matrix4x4.Identity;
     public Vector3 RootOffset => RootMatrix.Translation;
-    /// <summary>Startposition im Render-Raum (Unity: Viewer.position = _root.TransformPoint(start)).</summary>
     public Vector3 StartPosition { get; private set; }
     public Vector3 ViewerGame => _viewerGame;
 
@@ -197,6 +190,9 @@ public sealed partial class MapStreamer : IDisposable
 
     /// <summary>Zusätzliche Lichter dieses Bilds (Render-Raum), z.B. Scheinwerfer der Autos. Vor Render() füllen.</summary>
     public readonly List<LampLight> ExtraLamps = new();
+    /// <summary>Scheinwerfer-Projektoren des Originals (einer je Auto, Spieler zuerst) für den Lichtpuffer s15; je Bild neu gefüllt.</summary>
+    public readonly List<HeadlightProjector> HeadlightProjectors = new();
+    HeadlightProjector[] _projMerge = Array.Empty<HeadlightProjector>();
     LampLight[] _lampMerge = Array.Empty<LampLight>();
 
     /// <summary>Floating Origin für das Zeichnen (Unity: FloatingOrigin verschiebt _root): ist die Kamera weiter als
@@ -228,17 +224,16 @@ public sealed partial class MapStreamer : IDisposable
             var house = gp.FindHouse(SpotsFile.Parse(GameFiles.ReadAllBytes(_index.SpotsFile)).Spots);
             if (house == null) return false;
             start = house.Position + Vector3.UnitY * 30f;
-            Log.Info("Startpunkt (GamePC.cpr): Haus " + string.Join("/", gp.Houses) + " bei " + house.Position);
             return true;
         }
-        catch (Exception ex) { Log.Error("GamePC.cpr Startpunkt: " + ex.Message); return false; }
+        catch (Exception ex) { Log.Error("GamePC.cpr entrypoint: " + ex.Message); return false; }
     }
 
     public bool Initialize(string root)
     {
         try
         {
-            Log.Info("MapStreamer: Initialisierung gestartet.");
+            Log.Info("MapStreamer started.");
             MaterialFactory.Renderer = _renderer;
             MaterialFactory.ShadowMapStrength = ShadowMapStrength;
             MaterialFactory.ObjectBrightness = ObjectBrightness;
@@ -246,8 +241,6 @@ public sealed partial class MapStreamer : IDisposable
             MaterialFactory.WrapLighting = WrapLighting;
             if (OriginalLighting)
             {
-                // Original-Beleuchtung: Ambient + (Sonne − Ambient) x N.L, ohne Wrap. Helligkeit der Objekte aus der Config
-                // (LightingConfig.ObjectBrightness, 1 = unverändert)
                 MaterialFactory.WrapLighting = 0f;
             }
             MaterialFactory.VertexColorStrength = VertexColorStrength;
@@ -259,8 +252,6 @@ public sealed partial class MapStreamer : IDisposable
             _textures = new GlobalTextureCache(_renderer);
 
             _index = IslandIndex.Scan(root, Island);
-            Log.Info("Island-Index: " + _index);
-
             var center = new Vector3(_index.AreasX * WorldLayout.AreaSize * 0.5f, 0, _index.AreasZ * WorldLayout.AreaSize * 0.5f);
             RootMatrix = CenterWorld ? Matrix4x4.CreateTranslation(-center.X, 0f, -center.Z) : Matrix4x4.Identity;
 
@@ -319,6 +310,7 @@ public sealed partial class MapStreamer : IDisposable
             if (ShowClouds) _clouds = Clouds.Load(_index.FxDir, _renderer, _textures);
             if (ShowStars) _stars = Stars.Create(_index.BnkDir, _renderer, _textures);
             _wetGround = WetGround.Create(_index.BnkDir, _textures);   // Regen auf der Straße (WFX_WetGrd)
+            LoadHeadlightCookie();
             if (LoadGrass)
             {
                 Log.Debug("Initialize Grass...");
@@ -326,15 +318,26 @@ public sealed partial class MapStreamer : IDisposable
             }
 
             _status = "ready";
-            Log.Info("MapStreamer: Initialisierung abgeschlossen.");
+            Log.Info("MapStreamer: Initialization complete.");
             return true;
         }
         catch (Exception ex)
         {
             _status = "error: " + ex.Message;
-            Log.Error("MapStreamer: Initialisierung fehlgeschlagen", ex);
+            Log.Error("MapStreamer: Initialization failed.", ex);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Cookie der Scheinwerfer-Projektoren (gProjTexture der edrender_pfx_lightness-Spots): projectivespotlighttexture aus
+    /// fx/weatherfx.bnk (512x512 DXT1, im Shader nur .y). Die Bank hat WetGround.Create schon in den Textur-Index gelegt.
+    /// </summary>
+    void LoadHeadlightCookie()
+    {
+        var tex = _textures.Get(_textures.KeyByName("projectivespotlighttexture.2db"), TextureWrap.Clamp, TextureWrap.Clamp);
+        RenderFx.HeadlightCookie = tex;
+        Log.Info($"Cookie projectivespotlighttexture {(tex != null ? "ok" : "fehlt (fx/weatherfx.bnk)")}");
     }
 
     void BuildIslandLod()
@@ -370,7 +373,7 @@ public sealed partial class MapStreamer : IDisposable
         return m;
     }
 
-    /// <summary>Sea area (300 km, 128x128 quads, world UVs) at WaterLevel = SeaLevel + island height + WaterOffset (Unity: BuildWater).</summary>
+    /// <summary>Sea area (300 km, 128x128 quads, world UVs) at WaterLevel = SeaLevel + island height + WaterOffset</summary>
     void BuildWater(Vector3 center)
     {
         const float half = 150000f;
@@ -398,8 +401,6 @@ public sealed partial class MapStreamer : IDisposable
         _waterMesh = _renderer.CreateMesh(verts, tris);
         _islandRes.Owned.Add(_waterMesh);
         _waterPos = new Vector3(center.X, WaterLevel, center.Z);
-        // Ocean like TD_Ocean: NoiseNMap + island colormap (ibiza-o vs_2: colormap UV = Welt.xz / (6144 · AreaSize), border clipped
-        // like the border meshes). Sector and Area oceans (…-o) use their own colormaps from the banks (OceanFor).
         try
         {
             _oceanNoise = new OceanNoise(_renderer);
@@ -410,7 +411,7 @@ public sealed partial class MapStreamer : IDisposable
             _oceanIsland = MaterialFactory.CreateOceanMaterial(islandColor, Vector2.Zero, new Vector2(ax * WorldLayout.AreaSize, az * WorldLayout.AreaSize), 2);
             if (_oceanIsland != null) _islandRes.Owned.Add(_oceanIsland);
         }
-        catch (Exception ex) { Log.Warn("Meer (TD_Ocean): " + ex.Message); }
+        catch (Exception ex) { Log.Error("TD_Ocean: " + ex.Message); }
     }
 
     /// <summary>Load grass types (fx/grasstypes.xml) and atlases (fx/tallgrass.bnk).</summary>
@@ -443,9 +444,8 @@ public sealed partial class MapStreamer : IDisposable
             }
             if (_grassAtlas != null) _grassCells = iniGrass > 0 ? iniGrass : System.Math.Max(1, _grassAtlas.Width / System.Math.Max(1, _grassAtlas.Height));
             if (_bushAtlas != null) _bushCells = iniBush > 0 ? iniBush : System.Math.Max(1, _bushAtlas.Width / System.Math.Max(1, _bushAtlas.Height));
-            Log.Info($"Gras: {_grassTypes.Ordered.Count} Typen, Atlas {_grassCells}/{_bushCells}, Rauschen {(_grassNoise != null ? _grassNoise.Width + "x" + _grassNoise.Height : "fehlt")}");
         }
-        catch (Exception ex) { Log.Warn("Gras konnte nicht geladen werden: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("Unable to load “Gras”: " + ex.Message); }
     }
 
     /// <summary>Call per frame. viewerRender = camera position in the render space.</summary>
@@ -462,62 +462,44 @@ public sealed partial class MapStreamer : IDisposable
         RenderFx.OceanOn = ShowWater && _oceanIsland != null && !WorldWeather.Inside;
         RenderFx.OceanY = GameToRender(new Vector3(0f, WaterLevel, 0f)).Y;
         if (_time >= _nextTexRetry) { _nextTexRetry = _time + 1.0; MaterialFactory.RetryPendingTextures((k, u, v) => _textures?.Get(k, u, v)); }
-        tp = Lap("Streamer: Texturen nachladen", tp);
+
         PollLibrary();
-        tp = Lap("Streamer: Bibliothek", tp);
+
         PollAircraft(dt);
-        tp = Lap("Streamer: Flugzeuge", tp);
+
         PollActors();
         _actorBodies?.Sync();
-        tp = Lap("Streamer: Akteure", tp);
+
         TextureAnimations.Update(_renderer, (float)_time);
-        tp = Lap("Streamer: Textur-Animationen", tp);
+
         TrafficLights.Tick();
         UpdatePowerWires(dt);
-        tp = Lap("Streamer: Ampeln/Stromleitungen", tp);
+
         // Rotorwinkel laufen in Spielkoordinaten weiter; RootMatrix/RootOffset werden erst beim Zeichnen angewandt.
         foreach (var st in _sectors.Values) st.Rotors?.Tick((float)_time);
-        tp = Lap("Streamer: Windräder", tp);
-        long tc = System.Diagnostics.Stopwatch.GetTimestamp();
+
         UpdateColliders();
-        PerfLog.Add("Kollider eintragen", System.Diagnostics.Stopwatch.GetElapsedTime(tc).TotalMilliseconds);
-        tp = System.Diagnostics.Stopwatch.GetTimestamp();
-        // Gras: Stücke aller Sektoren teilen sich ein Zeitbudget je Bild (mehrere neue Sektoren bauten sonst im selben Bild je 6 Stücke)
+
         foreach (var st in _sectors.Values)
         {
             if (!st.Built || st.Grass == null) continue;
             if (System.Diagnostics.Stopwatch.GetElapsedTime(tp).TotalMilliseconds > GrassBudgetMs) break;
             st.Grass.Update(_renderer, _viewerGame, _time);
         }
-        tp = Lap("Streamer: Gras", tp);
         if (_time >= _nextScan)
         {
             _nextScan = _time + 0.25;
             ScanAreas();
             ScanSectors();
         }
-        tp = Lap("Streamer: Bereiche/Sektoren prüfen", tp);
         if (_time >= _nextLodCheck) { _nextLodCheck = _time + 1.0; EnforceLod1(); if (_lod1Blocked) ApplyIslandLod(); }
-        Lap("Streamer: LOD prüfen", tp);
-        long tb = System.Diagnostics.Stopwatch.GetTimestamp();
+
         BuildCompleted();
-        PerfLog.Add("Kacheln bauen (GPU-Upload)", System.Diagnostics.Stopwatch.GetElapsedTime(tb).TotalMilliseconds);
-        tb = System.Diagnostics.Stopwatch.GetTimestamp();
+
         ProcessVegetationWork();
-        PerfLog.Add("Streamer: Platzierungen einbauen", System.Diagnostics.Stopwatch.GetElapsedTime(tb).TotalMilliseconds);
-        // Kartengelände im Hintergrund vorbereiten, sobald die Welt um den Spieler steht (dann ist die Karte beim ersten Öffnen scharf)
-        tp = System.Diagnostics.Stopwatch.GetTimestamp();
+
         if (PreloadMapTerrain && _mapTask == null && _time > 15.0) RequestMapTerrain();   // ein Hintergrund-Thread
         PollMapTerrain();
-        Lap("Streamer: Kartengelände", tp);
-    }
-
-    /// <summary>Measurement point for [DIAG Perf]: Enter time since t0; return a new starting point.</summary>
-    static long Lap(string name, long t0)
-    {
-        long now = System.Diagnostics.Stopwatch.GetTimestamp();
-        PerfLog.Add(name, (now - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-        return now;
     }
 
     /// <summary>
@@ -762,7 +744,6 @@ public sealed partial class MapStreamer : IDisposable
             if (terrain != null && holes != null && model.Objects != null)
             {
                 int bt = TerrainMeshBuilder.AppendTerrainBlock(terrain, model.Objects, model.Heights!);
-                if (bt == 0) Log.Warn($"Sektor {k}: Loch-Kacheln ohne BLOCK-Gelände");
             }
             var skirts = model.Heights != null ? TerrainMeshBuilder.BuildSectorSkirts(model.Heights, skirt, holes) : null;
             var payload = new SectorPayload
@@ -983,7 +964,6 @@ public sealed partial class MapStreamer : IDisposable
         st.DriveHoles = data.DriveHoles;        // Rückfall-Bodenhöhe (TryGetGroundHeight) meidet die Löcher
         if (Physics != null) st.Data = data;   // Geländenetz für die Kollision (UpdateColliders)
         var origin = WorldLayout.SectorOrigin(st.Key);
-        long tbs = System.Diagnostics.Stopwatch.GetTimestamp();
 
         IGpuTexture? groundColor = null, groundSplat = null;
         if (data.Terrain != null)
@@ -998,7 +978,11 @@ public sealed partial class MapStreamer : IDisposable
                 if (m.TerrainMaterial.TryGetLayer(MaterialDef.SemDetail1, out var l1)) d1 = m.GetTexture(l1.TextureKey, TextureWrap.Repeat, TextureWrap.Repeat, _textures, _renderer);
                 if (m.TerrainMaterial.TryGetLayer(MaterialDef.SemDetail2, out var l2)) d2 = m.GetTexture(l2.TextureKey, TextureWrap.Repeat, TextureWrap.Repeat, _textures, _renderer);
             }
-            var mat = MaterialFactory.CreateTerrainMaterial(color, splat, d1, d2, DetailTiling, DetailStrength);
+            // Original-Renderer: TD_HeightMap des Sektor-Materials; COLOR = Farbkarte, SHADOW = Splat-/Schattenkarte des Sektors [vermutet]
+            var orig = Paradise.Core.Render.Original.OriginalMaterial.For(m.TerrainMaterial, (k, u, v) => m.GetTexture(k, u, v, _textures, _renderer));
+            orig?.SetSlot(MaterialDef.SemColor, color);
+            orig?.SetSlot(MaterialDef.SemShadow, splat);
+            var mat = MaterialFactory.CreateTerrainMaterial(color, splat, d1, d2, DetailTiling, DetailStrength, orig);
             st.Res.Owned.Add(mat);
             st.Nodes.Add(CreateMeshNode("Terrain", origin, data.Terrain, mat, st.Res));
             if (data.Skirts != null)
@@ -1010,16 +994,16 @@ public sealed partial class MapStreamer : IDisposable
                     st.Skirts.Add((sn, origin + new Vector3(probe.X, 0f, probe.Y)));
                 }
         }
-        tbs = Lap("Sektor bauen: Gelände", tbs);
 
         if (LoadSectorObjects && st.Model.Objects != null)
         {
+            // Original 0xc50d10: Sektortextur + SECTROFF in TD_Road/TD_Ground/BLOCK-Materialien des Sektors (vor dem Anlegen)
+            SectorMaterials.Apply(st.Model.Objects.Materials, st.Model.SplatMapKey, origin, st.Key.ToString());
             var node = new Node { Name = "Objects" };
             node.Objects.AddRange(ObjectBuilder.BuildObjects(st.Model, origin, _textures, st.Res, (Physics != null ? _collOpt : _opt).WithOcean(OceanFor(st.Model, origin, 0, st.Res)), _renderer));
             TextureAnimations.Apply(st.Model.Bank?.FilePath, node.Objects);   // Textur-Animationen wie im Spiel
             st.Nodes.Add(node);
         }
-        tbs = Lap("Sektor bauen: Objekte", tbs);
 
         // Windrad-Rotoren: eigene, pro Frame bewegte RenderObjects im selben Spielkoordinatensystem.
         // Der Node wird wie jeder andere Sektor-Node gezeichnet; CollectSector/Render hängen RootMatrix dran.
@@ -1029,14 +1013,12 @@ public sealed partial class MapStreamer : IDisposable
             if (st.Rotors != null)
             {
                 st.Nodes.Add(st.Rotors.Node);
-                Log.Info($"Sektor {st.Key}: {st.Rotors.Count} Windrad-Rotoren");
             }
             else
             {
                 foreach (var b in data.Rotors.Banks) b.Model.Release();
             }
         }
-        tbs = Lap("Sektor bauen: Windräder", tbs);
 
         if (LoadGrass && st.Model.Grass != null && _grassTypes != null && _grassAtlas != null && st.Model.Heights != null)
         {
@@ -1065,27 +1047,23 @@ public sealed partial class MapStreamer : IDisposable
             };
         }
 
-        tbs = Lap("Sektor bauen: Gras", tbs);
         foreach (var (spot, em) in data.Exteriors)
         {
             st.ExtraModels.Add(em);
             var node = BuildExterior(spot, em, st.Res, "");
             if (node != null) { TextureAnimations.Apply(em.Bank?.FilePath, node.Objects); st.Nodes.Add(node); }   // dieselbe Bank steht oft mehrfach
         }
-        tbs = Lap("Sektor bauen: Spots/Außenmodelle", tbs);
         if (data.Pen != null && data.Pen.Links.Count > 0)
             st.Wires = new PowerWires.SectorWires { Pen = data.Pen, Origin = WorldLayout.SectorOrigin(st.Key) };
         st.Built = true;
         SetLod1Visible(st.Key);
         UpdateSkirts();
         TryAddVegetation(st);
-        tbs = Lap("Sektor bauen: Vegetation/LOD", tbs);
         // Leitungen der Nachbarn, deren Masten hier stehen, neu auflösen
         foreach (var o in _sectors.Values)
             if (o != st && o.Wires is { Resolved: true, HadMissing: true }) { o.Wires.Resolved = false; o.WireWait = 0f; }
         TryAddActors(st);
         if (Physics != null) _colliderQueue.Enqueue(st);
-        Lap("Sektor bauen: Akteure", tbs);
     }
 
 
@@ -1150,7 +1128,7 @@ public sealed partial class MapStreamer : IDisposable
             AddSignMesh(st, node, signV, signI, Matrix4x4.Identity);
             st.Nodes.Add(node);
         }
-        catch (Exception ex) { Log.Warn("World Actors " + st.Key + ": " + ex.Message); }
+        catch (Exception ex) { Log.Error("World Actors " + st.Key + ": " + ex.Message); }
     }
 
     void PollLibrary()
@@ -1237,16 +1215,13 @@ public sealed partial class MapStreamer : IDisposable
             var list = new List<Matrix4x4>(g.Instances.Count);
             foreach (var inst in g.Instances)
             {
-                // Unity: MathUtil.TRS(origin + pos, rot, scale)
                 var m = inst.Matrix * Matrix4x4.CreateTranslation(origin);
                 if (skin && inst.Bones != null && inst.Bones.Length > 0)
                 {
-                    // Leitplanke: Mesh mit den Knochenmatrizen dieser Instanz biegen (Pre steckt in Knochen 0)
                     var baked = BakeRail(obj, inst.Bones, res!);
                     if (baked != null)
                     {
                         veg.Add(baked, new List<Matrix4x4> { m });
-                        // Kollision der gebogenen Planke (eigenes Netz je Instanz)
                         if (coll != null && Physics != null && baked.Lods.Length > 0)
                         {
                             _collTris.Clear(); _collSurf.Clear();
@@ -1482,12 +1457,19 @@ public sealed partial class MapStreamer : IDisposable
         var node = new Node { Name = $"Spot_{spot.Code}{suffix}" };
         // Unity: localRotation = Euler(0, Value1*Rad2Deg, 0), localPosition = spot.Position (relativ zum Parent-Ursprung)
         var parent = Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Vector3.UnitY, spot.Value1)) * Matrix4x4.CreateTranslation(spot.Position);
-        foreach (var obj in ObjectBuilder.BuildObjects(em, parent, _textures, res, suffix.Length == 0 && Physics != null ? _collOpt : _opt, _renderer,
-                     null, SpecialObjects.Contains))
+        // s309: Materialien der Spot-Exteriors kennzeichnen (Original-Renderer: NIGHTLMAP aus spot_exterior_lightmap_day_night)
+        bool spotWas = MaterialFactory.SpotExterior;
+        MaterialFactory.SpotExterior = true;
+        try
         {
-            node.Objects.Add(obj);
-            node.Encapsulate(obj.BoundsMin, obj.BoundsMax);
+            foreach (var obj in ObjectBuilder.BuildObjects(em, parent, _textures, res, suffix.Length == 0 && Physics != null ? _collOpt : _opt, _renderer,
+                         null, SpecialObjects.Contains))
+            {
+                node.Objects.Add(obj);
+                node.Encapsulate(obj.BoundsMin, obj.BoundsMax);
+            }
         }
+        finally { MaterialFactory.SpotExterior = spotWas; }
         return node;
     }
 
@@ -1730,7 +1712,12 @@ public sealed partial class MapStreamer : IDisposable
             if (n0 > 0) Array.Copy(globals.Lamps!, 0, _lampMerge, ExtraLamps.Count, n0);
             globals.Lamps = _lampMerge;
             globals.LampCount = n;
+            globals.VehicleLampCount = ExtraLamps.Count;
         }
+        if (_projMerge.Length < HeadlightProjectors.Count) _projMerge = new HeadlightProjector[HeadlightProjectors.Count];
+        HeadlightProjectors.CopyTo(_projMerge, 0);
+        globals.Projectors = _projMerge;
+        globals.ProjectorCount = HeadlightProjectors.Count;
         _renderer.SetFrameGlobals(globals);
 
         var planes = Frustum(viewProj);
@@ -2238,6 +2225,7 @@ public sealed partial class MapStreamer : IDisposable
         _stars = null;
         _wetGround?.Dispose();
         _wetGround = null;
+        RenderFx.HeadlightCookie = null;
         DestroyMapTerrain();
         _powerWires.Dispose();
         DisposeAircraft();

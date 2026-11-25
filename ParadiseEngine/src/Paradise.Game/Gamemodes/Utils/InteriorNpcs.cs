@@ -155,8 +155,7 @@ public static class InteriorNpcs
             a.Rig.BeginPose();
             if (n.Clip != null)
             {
-                float len = MathF.Max(0.05f, n.Clip.Length);
-                a.Rig.ApplyClip(n.Clip, n.T - MathF.Floor(n.T / len) * len, 1f, true);
+                a.Rig.ApplyClipLoop(n.Clip, n.T, 1f, true);   // Schleife mit Überblendung (kein Sprung Ende -> Anfang)
             }
             a.Draw(n.Pose * sceneToRender);
         }

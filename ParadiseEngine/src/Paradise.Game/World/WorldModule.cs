@@ -23,28 +23,21 @@ public sealed class WorldModule : GameModule
         Root = ResolveRoot();
         if (Root == null)
         {
-            Log.Warn("WorldModule: kein Euro/StreamingAssets-Ordner gefunden. " +
-                     "Mit --root <Pfad> angeben oder Euro neben die exe legen.");
+            Log.Warn("WorldModule: No “Euro/StreamingAssets” folder found. Specify it using --root <path>, or place the “Euro” folder next to the exe file.");
             return;
         }
 
         Paradise.Core.Config.GameData.Root = Root;
         IslandsDir = IslandIndex.FindIslandsDir(Root);
-        Log.Info($"WorldModule: Root = {Root}");
-        Log.Info($"WorldModule: Daten = {(Paradise.Core.Files.GameFiles.IsPacked ? "gepackt (Bigfiles)" : "lose")}, " +
-                 $"{Paradise.Core.Files.GameFiles.ArchiveCount} Archive");
-        Log.Info($"WorldModule: islands = {IslandsDir}");
-
         foreach (var island in IslandIndex.ListIslands(Root))
         {
             try
             {
                 var idx = IslandIndex.Scan(Root, island);
-                Log.Info("  " + idx);
             }
             catch (Exception ex)
             {
-                Log.Warn($"  Insel '{island}' konnte nicht gescannt werden: {ex.Message}");
+                Log.Error($"The island ‘{island}’ could not be scanned: {ex.Message}");
             }
         }
     }

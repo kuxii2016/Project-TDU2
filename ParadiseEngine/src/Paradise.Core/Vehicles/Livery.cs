@@ -187,7 +187,7 @@ public static class Liveries
                 }
             }
         }
-        catch (Exception ex) { Log.Warn("Lackierungen (lokal): " + ex.Message); }
+        catch (Exception ex) { Log.Error("Lackierungen (lokal): " + ex.Message); }
         // 2) Spielstand ergänzt nur, was lokal fehlt (lokal ist maßgeblich)
         var sv = TDU2Session.Save;
         if (sv != null)
@@ -213,7 +213,7 @@ public static class Liveries
         foreach (var kv in _map) if (!kv.Value.IsEmpty) p.liveries.Add(new LiveryEntry { car = kv.Key, data = kv.Value.ToBase64() });
         p.boards.AddRange(_boards); p.fav.AddRange(_fav);
         try { Directory.CreateDirectory(UserPaths.Config); File.WriteAllText(PrefsPath, JsonSerializer.Serialize(p, Json)); }
-        catch (Exception ex) { Log.Warn("Lackierungen speichern (lokal): " + ex.Message); }
+        catch (Exception ex) { Log.Error("Lackierungen speichern (lokal): " + ex.Message); }
         if (TDU2Session.Save != null) WriteSave(TDU2Session.Save);
     }
 
@@ -232,7 +232,7 @@ public static class Liveries
         if (l == null || l.IsEmpty) _map.Remove(carFile); else _map[carFile] = l.Clone();
         _blob.Remove(carFile);
         Persist();
-        try { Changed?.Invoke(carFile); } catch (Exception ex) { Log.Warn("Lackierung geändert: " + ex.Message); }
+        try { Changed?.Invoke(carFile); } catch (Exception ex) { Log.Error("Lackierung geändert: " + ex.Message); }
     }
 
     /// <summary>Codierte Lackierung (für die Online-Synchronisation), null = keine.</summary>
@@ -315,7 +315,7 @@ public static class StickerLibrary
                 };
                 if (!row.B("_isvalid", true) || b.Id <= 0 || b.Id > 255 || string.IsNullOrEmpty(b.BankFile)) continue;
                 var path = CarDatabase.FindFile(dir, b.BankFile + ".bnk");
-                if (string.IsNullOrEmpty(path) || !Paradise.Core.Files.GameFiles.Exists(path)) { Log.Warn("Sticker-Planche fehlt: " + b.BankFile + ".bnk"); continue; }
+                if (string.IsNullOrEmpty(path) || !Paradise.Core.Files.GameFiles.Exists(path)) { Log.Warn("Sticker bank Missing: " + b.BankFile + ".bnk"); continue; }
                 b.Path = path;
                 list.Add(b);
             }
@@ -330,7 +330,6 @@ public static class StickerLibrary
             }
         lock (Boards) { Boards.Clear(); Boards.AddRange(list); }
         Ready = true;
-        Log.Info("Sticker-Planchen: " + list.Count + " (Arbeit $" + LabourPrice + ", Lack $" + PaintPrice + ", Entfernen $" + ErasePrice + ")");
     }
 
     /// <summary>Je Bild: fertig geladene Planchen übernehmen, wartende Ansichten neu zusammensetzen (Unity Pump.Update + LateUpdate).</summary>
@@ -359,7 +358,6 @@ public static class StickerLibrary
             }
             b.Stickers = list; b.Loaded = true;
             Version++;
-            Log.Info("Sticker-Planche " + b.BankFile + ": " + list.Length + " Sticker");
         }
         LiveryView.UpdateAll();
     }

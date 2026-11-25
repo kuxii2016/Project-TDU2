@@ -35,6 +35,7 @@ namespace Paradise.Core.Vehicles
         string? _key;
         float _shown = -1f, _shownScr = -1f, _written = -1f, _writtenScr = -1f;
         bool _wetShown;
+        int _diagStep = -1; bool _diagOff;
 
         public void Setup(Vehicle veh, CarModel? model)
         {
@@ -155,6 +156,13 @@ namespace Paradise.Core.Vehicles
                 else if (Raining)
                     Level -= CleanRain * RateScale * dt;
                 Level = Mathf.Clamp01(Level);
+                // s316 Prüf-Log: je 5 % Dreckstufe bzw. Wechsel Gelände/Straße einmal
+                int step = (int)(Level * 20f);
+                bool offNow = n > 0 && off > 0;
+                if (step != _diagStep || offNow != _diagOff)
+                {
+                    _diagStep = step; _diagOff = offNow;
+                }
             }
             Apply(false);
             Store(false);

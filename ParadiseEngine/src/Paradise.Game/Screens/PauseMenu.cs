@@ -13,31 +13,6 @@ using AudioEngine = Paradise.Core.Audio.AudioEngine;
 
 namespace Paradise.Game.Screens;
 
-/// <summary>
-/// Original-Pausemenü (ESC) aus frontend/&lt;res&gt;/main.bnk – Port von Unity TDU2PauseMenu:
-///   - Öffnen: _root-Zustand setzen (Spielmodus, Sperren je Menüpunkt, Geld/Profil/Auto, Uhr, Inselkarte) und "pause_in" abspielen.
-///     Die Menülogik (Quadrat-Menü, Optionen, Dialoge) steckt im Film selbst (ActionScript, VmfScript-VM).
-///   - Eingabe wie die Spiel-Engine: Move("up"/"down"/"left"/"right"), A() (Enter), B() (ESC/Rücktaste), X/Y am obersten Clip.
-///   - FSCommands: "paou" (Pause beendet), "exit:vali"/"quit"/"egam" (Spiel verlassen, vorher speichern), "dbxo" (Ja/Nein-Dialog).
-///   - Spielerlisten (Lobby/Zuletzt gesehen …) aus TDU2GameData.
-/// Während das Menü offen ist, steht das Spiel (Unity Time.timeScale = 0): Fahrzeuge werden angehalten.
-/// Optionsseiten: Options (TDU2Options). Spielerkarte (pcrd:open), Freunde (frre/delf), Beitreten/Einladen (join:wait, pjoi,
-/// pcrd:pinv -> Game/Online/Party). Spielerlisten Freunde/Club/Lobby/Zuletzt gesehen mit MyTDULife-Fotos (TDU2GameData.ListFor,
-/// FetchLife), eigenes Foto im Ausweis. Renn-Modus (WhatGameMode 2: Neu starten/Beenden) über RegisterRace.
-/// </summary>
-
-/// <summary>
-/// Eine sichtbare Zeile der gameprogress_fl (Cruising-/Road-Discovery). Das ist bewusst ein
-/// eigenständiger Typ und KEIN Teil von wreckinfo: Wrack-Fundstand und Gebietszeile sind zwei
-/// verschiedene Dinge. Die Liste zeigt Gebiete/Inseln mit Straßenfortschritt, niemals Wrackzeilen.
-/// </summary>
-
-
-/// <summary>
-/// Datenpaket des Wrecks-Moduls für das native Pausemenü (frontend/&lt;res&gt;/main.bnk).
-/// Nur Wrack-Fundstand: Retail-Zeilen (/:Wreck%d_*, exe 0x9915D0), Zähler, PercentTreasure.
-/// Gebietszeilen (AreaRow) sind bewusst NICHT enthalten – die Straßenliste kommt aus Discovery.
-/// </summary>
 #pragma warning disable CS8981   // kleingeschrieben wie die geforderte Signatur PauseMenu.InsertWrecks(wreckinfo)
 public sealed class wreckinfo
 {
@@ -89,7 +64,8 @@ public sealed class PauseMenu
     // Menüpunkte, die hier funktionieren (alles andere ist im Film gesperrt dargestellt)
     static readonly string[] Unlocked = { "LockResume", "LockOptions", "LockExitGame", "LockQuit", "LockControls", "LockVideo", "LockDisplay",
         "LockAudio", "LockGameSettings", "LockDevice", "LockMouse", "LockWheel", "LockLanguage", "LockSave", "LockPlayers", "LockJoin", "LockGameProgress", "LockInvite" };
-    static readonly string[] Locked = { "LockSnapshot", "LockChangePosition", "LockInviteParty", "LockManageParty",
+    // LockSnapshot ("Foto machen") setzt Open() nach der exe-Regel (PhotoMode.CanTake, 0x9eb142)
+    static readonly string[] Locked = { "LockChangePosition", "LockInviteParty", "LockManageParty",
         "LockRestart", "LockEditor", "LockBookmarks", "LockProfiles", "LockNewGame", "LockContinueGame", "LockAchiev", "LockRankings",
         "LockOnline", "LockSocial", "LockStatus" };
 
@@ -742,6 +718,7 @@ public sealed class PauseMenu
         ui.ForceVisible("/pause_menu/data_extd/objective", false);
         foreach (var n in Unlocked) ui.SetValue("/:" + n, false);
         foreach (var n in Locked) ui.SetValue("/:" + n, true);
+        ui.SetValue("/:LockSnapshot", !PhotoMode.CanTake(_ctx, _raceMode));
         if (_raceMode) { ui.SetValue("/:LockRestart", false); ui.SetValue("/:LockQuit", false); }
 
         ui.SetValue("/:LockEditor", StoryProgress.Get(TDU2Session.Nick) < 11);
@@ -788,6 +765,7 @@ public sealed class PauseMenu
         _escAt = -1f;
         if (!_open) return;
         _open = false;
+        PhotoMode.End();   // Notausgang/Schließen während des Fotomodus: Kamera zurück
         if (_ui != null) { _ui.Visible = false; _ui.GotoLabel("/", "default", false); }
         if (_ctx.Vehicles != null) _ctx.Vehicles.Frozen = false;
         AudioEngine.Paused = false;
@@ -807,10 +785,12 @@ public sealed class PauseMenu
         if (UpdateBinder()) return;   // "Taste zuweisen" wartet auf eine Taste
         if (_pendingDialog) AnswerDialog();
         if (Paradise.Game.Gamemodes.FlashDialog.Active) return;   // Bestätigungsbox offen: Tasten gehören ihr
+        // Fotomodus: Kamera/Aufnahme; in der Konsole gehören die Richtungen der Kamera, A/B/X gehen weiter an den Film
+        bool photoCam = PhotoMode.Update(dt);
 
         // Texteingabe (setInputFocus, z.B. "Spieler suchen"): Buchstaben gehören dem Feld, nur Enter bestätigt, ESC bricht ab
         bool typing = ui.InputFocus != null;
-        if (!typing)
+        if (!typing && !photoCam)
         {
             // Menü-Belegung (Game/Config/KeyConfig.cs, Unity TDU2Controls "menu_*")
             // Tasten-Buttons des Films zuerst, sonst Move (Gamemodes/Utils/FlashNav, wie der Flash Player des Spiels)
@@ -824,7 +804,7 @@ public sealed class PauseMenu
         {
             // Zurück; reagiert der Film nicht (keine B-Funktion), Menü direkt schließen – nie im Pausenzustand hängen bleiben
             if (!FlashNav.Send(ui, FlashKey.Back)) { Log.Info("Pausemenü: B nicht verarbeitet -> schließen"); Close(); return; }
-            if (esc) _escAt = _clock;
+            if (esc && !PhotoMode.Active) _escAt = _clock;   // im Fotomodus führt B zurück ins Pausemenü, kein paou
         }
         // ESC im Hauptmenü muss nach der Schließ-Animation "paou" liefern; blockiert der Film, trotzdem schließen
         // (im Optionsmenü führt ESC nur zurück und bleibt offen)
@@ -935,6 +915,7 @@ public sealed class PauseMenu
         LastCommand = cmd + (string.IsNullOrEmpty(args) ? "" : " " + args);
         string c = (cmd ?? "").Trim().ToLowerInvariant();
         if (c.StartsWith("sndp:")) return;                 // Menü-Sounds (FrontendSounds)
+        if (ui != null && PhotoMode.Command(c, args, _ctx, ui, Loc, CurrentArea)) return;   // Fotomodus (phmo/phsa/phop, exe MngPhotoMode)
         if (c == "dbxo") { _pendingDialog = true; return; }
         if (c.StartsWith("mylf:scrl:")) return;            // Scrollbalken der Liste: behandelt VmfPlayer
         if (c == "pcrd:open") { OpenPlayerCard(); return; }  // Spielerkarte: Daten liefern

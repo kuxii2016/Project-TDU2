@@ -110,7 +110,6 @@ public class GAME_MODE_AIRPORT : InteriorUtils
         ui.GotoLabel("/", "airport", true);
         ResetUiAim();
         LoadCinematics();
-        Log.Info("Flughafen: Oberfläche airport, Ziel " + IslandTravel.DisplayName(_destination));
     }
 
     /// <summary>Hostess (Typ 32) bestätigt: wie im Spiel _root.cursor.ItemAction("valid") -> ItemType -> camn + "ai_open".</summary>
@@ -245,7 +244,6 @@ public class GAME_MODE_AIRPORT : InteriorUtils
         _phase = Phase.Landed;
         _t.Input.CursorLocked = true;
         GameMode.Set(Gamemode.GAME_MODE_AIRPORT);
-        Log.Info("Flughafen: Ankunft " + arrival.Code + " – C_LANDED");
         return true;
     }
 

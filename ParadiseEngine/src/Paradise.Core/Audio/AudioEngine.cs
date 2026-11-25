@@ -243,7 +243,7 @@ public static class AudioEngine
         }
         catch (Exception ex)
         {
-            Log.Warn("Audio: " + ex.Message);
+            Log.Error("Audio: " + ex.Message);
         }
         finally
         {

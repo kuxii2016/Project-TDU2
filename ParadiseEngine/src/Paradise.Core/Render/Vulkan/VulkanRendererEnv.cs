@@ -14,7 +14,7 @@ namespace Paradise.Core.Render.Vulkan;
 /// </summary>
 public sealed unsafe partial class VulkanRenderer
 {
-    private const uint ProbeSize = 256;
+    private const uint ProbeSize = 128;
 
     private RenderPass _envPass;
     // Bodenspiegelung

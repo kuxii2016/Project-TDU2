@@ -82,6 +82,7 @@ public static class GameFiles
 
             _packed = Archives.Count > 0;
             LoadNames();
+            LoadArchiveFileLists();
             BuildDirs();
 
             if (_packed)
@@ -184,6 +185,54 @@ public static class GameFiles
         {
             Log.Error("GameFiles: Names are unreadable: " + ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Ergänzt Namen aus <c>filelist.txt</c>-Einträgen der geladenen Bigfiles. XMBEdit/ModPacker legt
+    /// diese Datei in jedes Custom-Archiv; die eingebettete TSV bleibt primär und wird nicht überschrieben.
+    /// </summary>
+    private static void LoadArchiveFileLists()
+    {
+        if (Entries.Count == 0) return;
+        // XMBEdit: MapHash.GenerateHash("filelist.txt") – identisch mit BigHash.Hash().
+        ulong listHash = BigHash.Hash("filelist.txt");
+        int added = 0;
+
+        // Bewusst pro Archiv: mehrere Custom-Bigfiles enthalten denselben filelist.txt-Hash,
+        // das globale Entries-Dictionary würde nur das letzte Archiv behalten.
+        foreach (var archive in Archives)
+        {
+            if (!archive.TryFind(listHash, out int index)) continue;
+
+            string text;
+            try { text = Encoding.UTF8.GetString(archive.ReadEntry(index)); }
+            catch (Exception ex)
+            {
+                Log.Warn($"GameFiles: filelist.txt in {Path.GetFileName(archive.MapPath)} unreadable: {ex.Message}");
+                continue;
+            }
+
+            foreach (var raw in text.Split('\n'))
+            {
+                var line = raw.Trim().TrimStart('\uFEFF');
+                if (line.Length == 0 || line[0] == '#') continue;
+                int q1 = line.IndexOf('"');
+                if (q1 <= 0) continue;
+                int q2 = line.IndexOf('"', q1 + 1);
+                if (q2 <= q1 + 1) continue;
+                if (!ulong.TryParse(line[..q1].Trim(), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var hash)) continue;
+
+                var path = line[(q1 + 1)..q2].Replace('\\', '/').ToLowerInvariant();
+                if (path.StartsWith("bnk/", StringComparison.Ordinal)) path = "euro/" + path;
+                if (!path.StartsWith("euro/bnk/", StringComparison.Ordinal)) continue;
+                if (!Entries.ContainsKey(hash) || Names.ContainsKey(hash)) continue;
+
+                Names[hash] = path;
+                added++;
+            }
+        }
+
+        if (added > 0) Log.Info($"GameFiles: {added} additional names from archive filelists");
     }
 
     private static void BuildDirs()
