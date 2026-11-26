@@ -118,11 +118,11 @@ public static class OriginalShaderSystem
     public static int Resolved, Exact, Approx, Missing, NoSpec;
     public static volatile string ScanStatus = "";
     // DevMenu-Schrift hat keine Umlaute -> ASCII
-    public static string Stats => (s_libs == null ? "Saetze nicht geladen" : s_libs.Count + " Saetze") +
-        $" - Materialien {Resolved}: exakt {Exact}, angenaehert {Approx}, ohne {Missing}, ohne Schalter {NoSpec}" + (ScanStatus.Length > 0 ? " - " + ScanStatus : "") +
-        $" - Renderer: {OriginalMaterial.Created} Mat., {OriginalMaterial.DrawnLastFrame} Draws/Bild, {OriginalMaterial.Pipelines} Pipelines" +
-        (OriginalMaterial.LastError.Length > 0 ? " - Fehler: " + OriginalMaterial.LastError : "") +
-        (OriginalConstants.Missing.Length > 0 ? " - ohne Wert: " + OriginalConstants.Missing : "");
+    public static string Stats => (s_libs == null ? "sets not loaded" : s_libs.Count + " sets") +
+        $" - materials {Resolved}: exact {Exact}, approximate {Approx}, missing {Missing}, no switch {NoSpec}" + (ScanStatus.Length > 0 ? " - " + ScanStatus : "") +
+        $" - renderer: {OriginalMaterial.Created} materials, {OriginalMaterial.DrawnLastFrame} draws per frame, {OriginalMaterial.Pipelines} pipelines" +
+        (OriginalMaterial.LastError.Length > 0 ? " - error: " + OriginalMaterial.LastError : "") +
+        (OriginalConstants.Missing.Length > 0 ? " - no value: " + OriginalConstants.Missing : "");
     static readonly Dictionary<string, int[]> s_perSet = new();   // Satz -> {exakt, angenähert}
     static readonly System.Text.StringBuilder s_examples = new();
     static readonly Dictionary<string, int> s_exampleCount = new();
@@ -152,7 +152,7 @@ public static class OriginalShaderSystem
             foreach (var f in files)
             {
                 fi++;
-                ScanStatus = $"Baenke {fi}/{files.Length}";
+                ScanStatus = $"banks {fi}/{files.Length}";
                 BnkArchive bank;
                 try { bank = BnkArchive.Open(f); } catch { continue; }
                 foreach (var e in bank.Entries)
@@ -164,16 +164,16 @@ public static class OriginalShaderSystem
                     {
                         if (!seen.Add(def.Key ^ def.ShaderSet)) continue;
                         if (Resolve(def) == null && def.Spec != null && ++noMatch <= 20)
-                            Log.Debug($"Original-Shader: ohne Treffer: {def.Name} Satz {def.ShaderSet:x16} Schalter {Convert.ToHexString(def.Spec)}");
+                            Log.Debug($"Original-Shader: no match: {def.Name} set {def.ShaderSet:x16} switches {Convert.ToHexString(def.Spec)}");
                     }
                 }
             }
-            ScanStatus = $"Scan fertig ({files.Length} Baenke)";
+            ScanStatus = $"scan complete, {files.Length} banks";
             var rep = new System.Text.StringBuilder(Stats).Append("\n\nSatz: exakt / angenaehert\n");
             lock (s_lock)
                 foreach (var kv in s_perSet.OrderByDescending(k => k.Value[1]))
                     rep.Append(kv.Key).Append(": ").Append(kv.Value[0]).Append(" / ").Append(kv.Value[1]).Append('\n');
-            rep.Append("\nBeispiele angenaehert (Material, Satz, abweichende Schalter Shader/Material):\n").Append(s_examples);
+            rep.Append("\nApproximate examples, material, set, deviating shader and material switches:\n").Append(s_examples);
             try
             {
                 string path = Path.Combine(Paradise.Core.Config.UserPaths.Logs, "original_scan_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt");
@@ -182,7 +182,7 @@ public static class OriginalShaderSystem
             }
             catch (Exception ex) { Log.Warn("Original-Shader-Scan: Bericht: " + ex.Message); }
         }
-        catch (Exception ex) { ScanStatus = "Scan-Fehler: " + ex.Message; Log.Error("Original-Shader-Scan: " + ex); }
+        catch (Exception ex) { ScanStatus = "scan error: " + ex.Message; Log.Error("Original-Shader-Scan: " + ex); }
     }
 
     public static IReadOnlyList<ShaderLibrary> Libraries { get { EnsureLoaded(); return s_libs!; } }

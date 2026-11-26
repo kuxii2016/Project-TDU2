@@ -98,18 +98,18 @@ public sealed class TerrainModule : GameModule
         _physics = new PhysicsWorld();
         if (!BuildIsland("ibiza")) return;
         var s = _streamer!;
-        _overlay?.AddSection("Welt", () => _streamer?.DebugLines() ?? Array.Empty<string>());
+        _overlay?.AddSection("World", () => _streamer?.DebugLines() ?? Array.Empty<string>());
         if (_weather != null)
-            _overlay?.AddSection("Tag/Wetter", () => new[]
+            _overlay?.AddSection("Day and weather", () => new[]
             {
                 $"Time {(int)WorldWeather.Hour:00}:{(int)(WorldWeather.Hour % 1f * 60f):00}   {WorldWeather.Kind}   Night {WorldWeather.Night:0.00}",
                 $"Rain {WorldWeather.Rain:0.00}   Wetness {WorldWeather.GroundWet:0.00}   Lights {_globals.LampCount}   Traffic Lights {TrafficLights.Count}",
             });
-        _overlay?.AddSection("Auswahl (F10: Objekt in Blickmitte)", () => _pick);
-        _overlay?.AddSection("Physik", () => new[]
+        _overlay?.AddSection("Selection, F10 object under crosshair", () => _pick);
+        _overlay?.AddSection("Physics", () => new[]
         {
-            $"Colliders {_physics?.StaticCount ?? 0}   Triangles {(_physics?.TriangleCount ?? 0):N0}   Last build {_streamer?.ColliderBuildMs ?? 0:0.0} ms (background), Add {_streamer?.ColliderAddMs ?? 0:0.0} ms",
-            _groundHit ? $"Boden unter Kamera: y {_groundY:0.00}  (Abstand {(_streamer?.ViewerGame.Y ?? 0f) - _groundY:0.0} m)" : "Boden unter Kamera: kein Kollider",
+            $"Colliders {_physics?.StaticCount ?? 0}   Triangles {(_physics?.TriangleCount ?? 0):N0}   Last build {_streamer?.ColliderBuildMs ?? 0:0.0} ms, background, Add {_streamer?.ColliderAddMs ?? 0:0.0} ms",
+            _groundHit ? $"Ground under camera: y {_groundY:0.00}, distance {(_streamer?.ViewerGame.Y ?? 0f) - _groundY:0.0} m" : "Ground under camera: no collider",
         });
         _cam = new FlyCamera(s.StartPosition, 0f, -35f * MathF.PI / 180f);
     }

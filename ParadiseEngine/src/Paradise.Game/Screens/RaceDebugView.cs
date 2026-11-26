@@ -144,7 +144,7 @@ public sealed class RaceDebugView
     {
         if (_selected == null) return "no race selected";
         if (_selected.Checkpoints.Count == 0) return "race has no checkpoints";
-        if (!GAME_MODE_SCHOOL.Instance.StartTestDirect(_selected)) return "race could not be started (world / vehicles not ready yet?)";
+        if (!GAME_MODE_SCHOOL.Instance.StartTestDirect(_selected)) return "race could not be started, world or vehicles not ready yet";
         return "starting " + _selected.Title;
     }
 
@@ -196,7 +196,7 @@ public sealed class RaceDebugView
             RaceRoadPath.Lanes = v.Traffic?.Lanes;
             RaceRoadPath.Compute(_selected);
             int n = _selected.RoadPath?.Count ?? 0;
-            return n > 1 ? "road route: " + n + " points" : "no road route found (using checkpoint line)";
+            return n > 1 ? "road route: " + n + " points" : "no road route found, using checkpoint line";
         }
         catch (Exception ex) { return "route failed: " + ex.Message; }
     }
@@ -299,7 +299,7 @@ public sealed class RaceDebugView
             DebugLines.Line(start, start + fwd * 12f, y);
             DebugLines.Line(start + fwd * 12f, start + fwd * 9f + right * 2.5f, y);
             DebugLines.Line(start + fwd * 12f, start + fwd * 9f - right * 2.5f, y);
-            if (ShowOverlay && ShowLabels) DebugLines.Label(start + Vector3.UnitY * 6f, def.Title + "  (" + SelectedGroupName + ")", C(1f, 1f, 1f));
+            if (ShowOverlay && ShowLabels) DebugLines.Label(start + Vector3.UnitY * 6f, def.Title + "  - " + SelectedGroupName, C(1f, 1f, 1f));
         }
 
         if (ShowOverlay && ShowLabels)

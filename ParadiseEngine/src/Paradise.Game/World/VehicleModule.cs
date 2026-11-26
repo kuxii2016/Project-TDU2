@@ -53,7 +53,7 @@ public sealed class VehicleModule : GameModule
         _traffic = new Paradise.Game.Gameplay.Traffic(_renderer, _terrain, () => _vm);
         Paradise.Game.Racing.RaceOpponents.Renderer = _renderer;   // Gegner im Rennen (Racing/RaceOpponents)
         Paradise.Game.Racing.RaceOpponents.World = _terrain.Physics;
-        _overlay?.AddSection("Vehicle (Keys: F2 to get in/out, F3/F4 for car, F8 for color, F9 to reset)", () => _vm.DebugLines());
+        _overlay?.AddSection("Vehicle, keys F2 enter or exit, F3 F4 car, F8 color, F9 reset", () => _vm.DebugLines());
     }
 
 

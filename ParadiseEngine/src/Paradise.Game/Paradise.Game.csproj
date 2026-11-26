@@ -54,6 +54,16 @@
     <EmbeddedResource Include="..\..\startup.png" LogicalName="startup.png" />
   </ItemGroup>
 
+  <!-- AMD FidelityFX ffx_api: Loader + Upscaler-Provider müssen neben der exe liegen. -->
+  <ItemGroup Condition="Exists('..\..\third_party\fidelityfx\amd_fidelityfx_loader_vk.dll')">
+    <None Include="..\..\third_party\fidelityfx\amd_fidelityfx_loader_vk.dll" Link="amd_fidelityfx_loader_vk.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\third_party\fidelityfx\amd_fidelityfx_upscaler_vk.dll" Link="amd_fidelityfx_upscaler_vk.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- game.ico (liegt im ParadiseEngine-Hauptordner) als Fallback neben die exe. -->
   <ItemGroup Condition="Exists('..\..\game.ico')">
     <None Include="..\..\game.ico" Link="game.ico">

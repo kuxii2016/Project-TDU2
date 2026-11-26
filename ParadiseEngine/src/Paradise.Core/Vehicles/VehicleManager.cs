@@ -77,8 +77,8 @@ namespace Paradise.Core.Vehicles
         /// </summary>
         public Func<float>? TerrainVisualLower;
         float _terrainDrop;
-        /// <summary>Gelände-Kollider (MapStreamer: "&lt;Sektor&gt; Gelände").</summary>
-        public static bool IsTerrain(StaticCollider? c) => c != null && c.Name != null && c.Name.EndsWith(" Gelände", StringComparison.Ordinal);
+        /// <summary>Terrain collider (MapStreamer: "&lt;sector&gt; Terrain").</summary>
+        public static bool IsTerrain(StaticCollider? c) => c != null && c.Name != null && c.Name.EndsWith(" Terrain", StringComparison.Ordinal);
         /// <summary>Verschmutzung des aktuellen Autos (Waschanlage: Wash()).</summary>
         public CarDirt? Dirt => _dirt;
         VehicleGauges? _gauges;
@@ -132,9 +132,9 @@ namespace Paradise.Core.Vehicles
         {
             if (_dbTask != null) return;
             _bnkDir = bnkDir;
-            if (string.IsNullOrEmpty(_bnkDir)) { _status = "Bnk-Ordner nicht gefunden"; return; }
+            if (string.IsNullOrEmpty(_bnkDir)) { _status = "bank folder not found"; return; }
             string bnk = _bnkDir;
-            _status = "Lade Fahrzeugdatenbank ...";
+            _status = "loading vehicle database";
             _dbTask = Task.Run(() =>
             {
                 var dbFile = CarDatabase.FindDatabase(bnk) ?? throw new System.IO.FileNotFoundException("database/db_data.cpr is missing");
@@ -173,7 +173,7 @@ namespace Paradise.Core.Vehicles
             }
             if (_dbTask != null && _dbTask.IsFaulted)
             {
-                _status = "Datenbank-Fehler: " + _dbTask.Exception?.GetBaseException().Message;
+                _status = "database error: " + _dbTask.Exception?.GetBaseException().Message;
                 Log.Error(_status);
                 _dbTask = Task.CompletedTask; Database = null;
             }
@@ -535,7 +535,7 @@ namespace Paradise.Core.Vehicles
             int rim = 0, interior = 0;
             if (CarChoices.TryGet(car.FileName, out var ch)) { color = _colorIndex = ch.Color; rim = ch.Rim; interior = ch.Interior; _colorFromChoice = true; }
             else if (_colorFromChoice) { color = _colorIndex = 0; _colorFromChoice = false; }   // Lack eines anderen Autos nicht übernehmen
-            _status = "Lade " + car.ModelName + " ...";
+            _status = "loading " + car.ModelName;
             _loadTask = Task.Run(() => CarAssets.Load(bnk, db, car, color, snd, rim, interior));
         }
 
@@ -545,7 +545,7 @@ namespace Paradise.Core.Vehicles
             var t = _loadTask; _loadTask = null;
             if (t.IsFaulted)
             {
-                _status = "Fehler: " + t.Exception?.GetBaseException().Message;
+                _status = "error: " + t.Exception?.GetBaseException().Message;
                 Log.Error(t.Exception?.GetBaseException().ToString() ?? _status);
                 return;
             }
@@ -553,7 +553,7 @@ namespace Paradise.Core.Vehicles
             foreach (var l in a.Log) Log.Info(a.Car.FileName + ": " + l);
             Despawn();
             try { BuildVehicle(a); }
-            catch (Exception ex) { _status = "Fehler beim Aufbau: " + ex.Message; Log.Error(ex.ToString()); }
+            catch (Exception ex) { _status = "spawn error: " + ex.Message; Log.Error(ex.ToString()); }
         }
 
         /// <summary>Knotenposition im Fahrzeugraum (Unity: go.transform.InverseTransformPoint(node.position)).</summary>
@@ -736,7 +736,7 @@ namespace Paradise.Core.Vehicles
             _assets = a;
             Current = veh;
             SnapPose();
-            _status = $"{car.ModelName}  ({a.Color?.Name ?? "Standardfarbe"})";
+            _status = $"{car.ModelName}, {a.Color?.Name ?? "standard color"}";
         }
 
         /// <summary>Maße/Räder ins Log (Abgleich Physik vs. Modell: Luft zwischen Rad und Straße, Lenkrichtung).</summary>
@@ -869,7 +869,7 @@ namespace Paradise.Core.Vehicles
             string bnk = _bnkDir; var db = Database; bool snd = LoadSound;
             if (_colorFromChoice) { _colorIndex = 0; _colorFromChoice = false; }
             int color = _colorIndex;
-            _status = "Lade " + car.ModelName + " ...";
+            _status = "loading " + car.ModelName;
             _loadTask = Task.Run(() => CarAssets.Load(bnk, db, car, color, snd, 0, 0));
             return true;
         }
@@ -935,9 +935,9 @@ namespace Paradise.Core.Vehicles
             if (v != null)
             {
                 string gear = v.Gear < 0 ? "R" : v.Gear == 0 ? "N" : v.Gear.ToString();
-                yield return $"{v.SpeedKmh:0} km/h   Gang {gear}   {v.Rpm:0} U/min   Gas {v.Throttle:0.00} Bremse {v.Brake:0.00}   Lenkung {v.SteeringAngle:0.0}°   Fahrhilfe {v.Aids}   {(v.AutomaticGearbox ? "Automatik" : "Manuell")}";
-                var sb = new System.Text.StringBuilder("Räder:");
-                foreach (var w in v.Wheels) sb.Append($"  {w.Name} {(w.Grounded ? "" : "(Luft) ")}Fz {w.Fz / 1000f:0.0}kN Schlupf {w.SlipRatio:0.00}/{w.SlipAngle * Mathf.Rad2Deg:0}°");
+                yield return $"{v.SpeedKmh:0} km/h   gear {gear}   {v.Rpm:0} rpm   throttle {v.Throttle:0.00} brake {v.Brake:0.00}   steering {v.SteeringAngle:0.0}°   aids {v.Aids}   {(v.AutomaticGearbox ? "automatic" : "manual")}";
+                var sb = new System.Text.StringBuilder("Wheels:");
+                foreach (var w in v.Wheels) sb.Append($"  {w.Name} {(w.Grounded ? "" : "air ")}load {w.Fz / 1000f:0.0}kN slip {w.SlipRatio:0.00}/{w.SlipAngle * Mathf.Rad2Deg:0}°");
                 yield return sb.ToString();
             }
         }

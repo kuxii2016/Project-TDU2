@@ -321,8 +321,8 @@ namespace Paradise.Core.Vehicles
         public static int SurfaceOf(StaticCollider? c)
         {
             if (c == null) return 0;
-            // Engine: Kollider je Sektor "… Gelände" (Heightmap) und "… Objekte" (Straßen/Plätze/Gebäude)
-            if (c.Name.IndexOf("Terrain", StringComparison.OrdinalIgnoreCase) >= 0 || c.Name.IndexOf("Gelände", StringComparison.OrdinalIgnoreCase) >= 0) return 2;
+            // Engine: one collider per sector, "… Terrain" (heightmap) and "… Objects" (roads, plazas, buildings)
+            if (c.Name.IndexOf("Terrain", StringComparison.OrdinalIgnoreCase) >= 0) return 2;
             return 0;
         }
 

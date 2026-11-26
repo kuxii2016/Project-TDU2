@@ -356,7 +356,7 @@ public sealed partial class MapStreamer : IDisposable
     {
         var tex = _textures.Get(_textures.KeyByName("projectivespotlighttexture.2db"), TextureWrap.Clamp, TextureWrap.Clamp);
         RenderFx.HeadlightCookie = tex;
-        Log.Info($"Cookie projectivespotlighttexture {(tex != null ? "ok" : "fehlt (fx/weatherfx.bnk)")}");
+        Log.Info($"Cookie projectivespotlighttexture {(tex != null ? "ok" : "missing, fx/weatherfx.bnk")}");
     }
 
     void BuildIslandLod()
@@ -578,13 +578,13 @@ public sealed partial class MapStreamer : IDisposable
             foreach (var d in it.model.Textures.Defs.Values) d.Data = null;   // übrige Rohdaten der Bank nicht festhalten
             if (color == null) return;
             // unbeleuchteter Karten-Shader (Tageszeit/Licht/Spiegelung der Welt spielen auf der Karte keine Rolle)
-            var mat = _renderer.CreateMaterial(new MaterialDesc { Kind = MaterialKind.MapTerrain, Name = "TDU2 Karte " + it.key, Main = color, Brightness = 1f, Relief = 0.35f });
+            var mat = _renderer.CreateMaterial(new MaterialDesc { Kind = MaterialKind.MapTerrain, Name = "TDU2 map " + it.key, Main = color, Brightness = 1f, Relief = 0.35f });
             var (v, i) = TerrainMeshBuilder.ToVertices(it.mesh);
             var mesh = _renderer.CreateMesh(v, i);
             _mapTiles.Add(new MapTile { Key = it.key, Mesh = mesh, Material = mat, Color = color, Origin = WorldLayout.AreaOrigin(it.key) });
-            if (_mapTask != null && _mapTask.IsCompleted && _mapQueue.IsEmpty) Log.Debug("Kartengelände: " + _mapTiles.Count + " Areas");
+            if (_mapTask != null && _mapTask.IsCompleted && _mapQueue.IsEmpty) Log.Debug("Map terrain: " + _mapTiles.Count + " areas");
         }
-        catch (Exception ex) { Log.Warn("Kartengelände " + it.key + ": " + ex.Message); }
+        catch (Exception ex) { Log.Warn("Map terrain " + it.key + ": " + ex.Message); }
     }
 
     /// <summary>The entire area raster as a grid, with every step-te cell (UV coordinates like the LOD1 pieces: 0..1 across the area colormap).</summary>
@@ -781,7 +781,7 @@ public sealed partial class MapStreamer : IDisposable
             if (rotors)
             {
                 try { payload.Rotors = WindTurbines.Load(model, path, tex); }
-                catch (Exception ex) { Log.Warn($"Windräder {k}: {ex.Message}"); }
+                catch (Exception ex) { Log.Warn($"Wind turbines {k}: {ex.Message}"); }
             }
             if (wires && model.Bank != null)
             {
@@ -1165,7 +1165,7 @@ public sealed partial class MapStreamer : IDisposable
             return;
         }
         _library = _libraryTask.Result;
-        Log.Debug($"Library geladen: {_library.Scene?.InsHash.Count ?? 0} Objekte, {_textures.Count} Texturen");
+        Log.Debug($"Library loaded: {_library.Scene?.InsHash.Count ?? 0} objects, {_textures.Count} textures");
         foreach (var st in _sectors.Values) if (st.Built) TryAddVegetation(st);
         // Meer: Normalmap aus commonworld (water_n.2db)
         if (!_waterNormalSet)
@@ -1664,23 +1664,23 @@ public sealed partial class MapStreamer : IDisposable
         foreach (var a in _areas.Values) { nodes += a.Nodes.Count; foreach (var n in a.Nodes) objs += n.Objects.Count; cols += a.Colliders.Count; }
         foreach (var s in _sectors.Values) { nodes += s.Nodes.Count; foreach (var n in s.Nodes) objs += n.Objects.Count; cols += s.Colliders.Count; }
         int lodKeys = 0; foreach (var l in _lod1BySector.Values) lodKeys += l.Count;
-        return $"Areas {_areas.Count}, Sektoren {_sectors.Count}, Knoten {nodes}, Objekte {objs}, Kollider der Kacheln {cols}, Kollider-Aufträge {ColliderJobs}, " +
-               $"LOD1-Listen {_lod1BySector.Count}/{lodKeys}/{_lod1Keys.Count}, Texturen global {_textures?.LoadedCount ?? 0}/{_textures?.Count ?? 0}, " +
-               $"Bibliothek {_library?.BuiltCount ?? 0}, Kollisionsnetze Bibliothek {_libColl.Count}, " +
-               $"Textur-Animationen {TextureAnimations.ActiveCount}, Ampeln {TrafficLights.Count}, Material-Nachladen {MaterialFactory.PendingTextures}";
+        return $"Areas {_areas.Count}, sectors {_sectors.Count}, nodes {nodes}, objects {objs}, tile colliders {cols}, collider jobs {ColliderJobs}, " +
+               $"LOD1 lists {_lod1BySector.Count}/{lodKeys}/{_lod1Keys.Count}, global textures {_textures?.LoadedCount ?? 0}/{_textures?.Count ?? 0}, " +
+               $"library {_library?.BuiltCount ?? 0}, library collision meshes {_libColl.Count}, " +
+               $"texture animations {TextureAnimations.ActiveCount}, traffic lights {TrafficLights.Count}, pending material textures {MaterialFactory.PendingTextures}";
     }
 
     public IEnumerable<string> DebugLines()
     {
         var g = _viewerGame;
         yield return $"Pos {g.X:0} / {g.Y:0} / {g.Z:0}";
-        yield return $"Areas {_areas.Count}   Sektoren {_sectors.Count}   Jobs {RunningJobs()}/{MaxParallelLoads}";
-        yield return $"Objekte gezeichnet {DrawnObjects}   PMI-Instanzen {PlacementInstances}";
-        yield return $"Area   geladen {AreaStats.Loaded} entladen {AreaStats.Unloaded}";
-        yield return $"       Laden {AreaStats.LastLoadMs:0} ms (Ø {AreaStats.AvgLoadMs:0})  Bauen {AreaStats.LastBuildMs:0.0} ms (Ø {AreaStats.AvgBuildMs:0.0}, max {AreaStats.MaxBuildMs:0})";
-        yield return $"Sektor geladen {SectorStats.Loaded} entladen {SectorStats.Unloaded}";
-        yield return $"       Laden {SectorStats.LastLoadMs:0} ms (Ø {SectorStats.AvgLoadMs:0})  Bauen {SectorStats.LastBuildMs:0.0} ms (Ø {SectorStats.AvgBuildMs:0.0}, max {SectorStats.MaxBuildMs:0})";
-        yield return $"Library {(_library != null ? "ok" : "lädt")}   Actors {(_actors != null ? "ok" : "lädt")}   Texturen global {_textures?.Count ?? 0}  fehlend {MaterialFactory.PendingTextures}";
+        yield return $"Areas {_areas.Count}   sectors {_sectors.Count}   jobs {RunningJobs()}/{MaxParallelLoads}";
+        yield return $"Objects drawn {DrawnObjects}   PMI instances {PlacementInstances}";
+        yield return $"Area   loaded {AreaStats.Loaded} unloaded {AreaStats.Unloaded}";
+        yield return $"       Load {AreaStats.LastLoadMs:0} ms, average {AreaStats.AvgLoadMs:0}  build {AreaStats.LastBuildMs:0.0} ms, average {AreaStats.AvgBuildMs:0.0}, max {AreaStats.MaxBuildMs:0}";
+        yield return $"Sector loaded {SectorStats.Loaded} unloaded {SectorStats.Unloaded}";
+        yield return $"       Load {SectorStats.LastLoadMs:0} ms, average {SectorStats.AvgLoadMs:0}  build {SectorStats.LastBuildMs:0.0} ms, average {SectorStats.AvgBuildMs:0.0}, max {SectorStats.MaxBuildMs:0}";
+        yield return $"Library {(_library != null ? "ok" : "loading")}   Actors {(_actors != null ? "ok" : "loading")}   global textures {_textures?.Count ?? 0}  missing {MaterialFactory.PendingTextures}";
     }
     public int LoadedSectors => _sectors.Count;
     public int LoadedAreas => _areas.Count;
@@ -1867,15 +1867,15 @@ public sealed partial class MapStreamer : IDisposable
             var job = _colliderJobs[i];
             if (!job.Task.IsCompleted) continue;
             _colliderJobs.RemoveAt(i);
-            if (job.Task.IsFaulted) { Log.Warn($"Kollider {job.St.Key}: {job.Task.Exception?.GetBaseException().Message}"); continue; }
+            if (job.Task.IsFaulted) { Log.Warn($"Collider {job.St.Key}: {job.Task.Exception?.GetBaseException().Message}"); continue; }
             var (terrain, objects) = job.Task.Result;
             var st = job.St;
             bool alive = st.Built && _sectors.TryGetValue(st.Key, out var cur) && ReferenceEquals(cur, st);
             if (!alive) { phys.Discard(terrain); phys.Discard(objects); continue; }
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var c = phys.AddPrepared(terrain, st.Key + " Gelände");
-            if (c != null) { c.Surface = 2; st.Colliders.Add(c); }   // Unity SurfaceOf: "Terrain" = Erde
-            var co = phys.AddPrepared(objects, st.Key + " Objekte");
+            var c = phys.AddPrepared(terrain, st.Key + " Terrain");
+            if (c != null) { c.Surface = 2; st.Colliders.Add(c); }   // Unity SurfaceOf: "Terrain" = soil
+            var co = phys.AddPrepared(objects, st.Key + " Objects");
             if (co != null) st.Colliders.Add(co);
             ColliderAddMs = sw.Elapsed.TotalMilliseconds;
             ColliderBuildMs = (terrain?.BuildMs ?? 0) + (objects?.BuildMs ?? 0);
@@ -2178,20 +2178,20 @@ public sealed partial class MapStreamer : IDisposable
         for (int h = 0; h < hits.Count && h < 4; h++)
         {
             var (best, where, bestT, _) = hits[h];
-            lines.Add($"{best.Name}  ({where}, {bestT:0.0} m, LODs {best.Lods.Length})");
+            lines.Add($"{best.Name}  - {where}, {bestT:0.0} m, LODs {best.Lods.Length}");
             foreach (var lod in best.Lods)
                 foreach (var p in lod.Parts)
                 {
                     if (!seen.Add(p.Material)) continue;
-                    if (!MaterialFactory.TryGetInfo(p.Material, out var mi)) { lines.Add($"- {p.Material.Kind} (ohne Info)"); continue; }
+                    if (!MaterialFactory.TryGetInfo(p.Material, out var mi)) { lines.Add($"- {p.Material.Kind}, no info"); continue; }
                     var d = mi.Desc;
                     lines.Add($"- {mi.Def.Name}  {d.Kind}/{mi.Blend}  Shader {mi.Def.ShaderSet:x16}  Flags {Convert.ToHexString(mi.Def.Flags)}");
-                    lines.Add($"  COLOR {mi.MainTexture ?? "-"}{(mi.Lightmap ? " (Lightmap)" : "")}  DETAIL {mi.DetailTexture ?? "-"}{(mi.Packed ? " (packed)" : "")}");
-                    lines.Add($"  SHADOW {mi.ShadowTexture ?? "-"}  TINT {mi.TintTexture ?? "-"}  Straße {mi.Def.IsRoad} Boden {mi.Def.IsGround}");
-                    lines.Add($"  DetailUV {(d.DetailUvLast ? "letzter" : "2")}  Boost {d.DetailBoost:0.00} Gray {d.DetailGray} ColorStr {d.ColorStrength:0.00} Unlit {d.Unlit:0} Cutoff {d.Cutoff:0.00} AlphaDetail {d.AlphaFromDetail} Lit {d.Lit:0}");
+                    lines.Add($"  COLOR {mi.MainTexture ?? "-"}{(mi.Lightmap ? " Lightmap" : "")}  DETAIL {mi.DetailTexture ?? "-"}{(mi.Packed ? " packed" : "")}");
+                    lines.Add($"  SHADOW {mi.ShadowTexture ?? "-"}  TINT {mi.TintTexture ?? "-"}  road {mi.Def.IsRoad} ground {mi.Def.IsGround}");
+                    lines.Add($"  DetailUV {(d.DetailUvLast ? "last" : "2")}  Boost {d.DetailBoost:0.00} Gray {d.DetailGray} ColorStr {d.ColorStrength:0.00} Unlit {d.Unlit:0} Cutoff {d.Cutoff:0.00} AlphaDetail {d.AlphaFromDetail} Lit {d.Lit:0}");
                 }
         }
-        foreach (var l in lines) Log.Info("[Auswahl] " + l);
+        foreach (var l in lines) Log.Info("[Selection] " + l);
         return lines;
     }
 

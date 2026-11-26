@@ -618,9 +618,13 @@ public sealed unsafe partial class VulkanRenderer
     private void RecordAo(CommandBuffer cmd)
     {
         float ax = 1f / _pfxAoW, ay = 1f / _pfxAoH;
+        // Die Tiefe liegt bei aktivem Upscaler in SceneExtent (intern), das AO-Ziel in halber Displaygröße.
+        // Ohne diese Skalierung liest AO falsche Tiefenpunkte und erzeugt Kantenartefakte am Fahrzeug.
+        float depthScaleX = (float)SceneExtent.Width / _pfxAoW;
+        float depthScaleY = (float)SceneExtent.Height / _pfxAoH;
         var pc = new PfxPush
         {
-            Vars = new(ax, ay, 0f, 0f),
+            Vars = new(ax, ay, depthScaleX, depthScaleY),
             Params = new(_proj.M33, _proj.M43, _proj.M11, _proj.M22),
             Shadows = new(System.Math.Max(0.05f, PostFx.AoRadius), System.Math.Clamp(PostFx.AoBias, 0f, 0.5f), System.Math.Max(5f, PostFx.AoMaxDistance), 1f)
         };

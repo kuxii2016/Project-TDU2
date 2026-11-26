@@ -23,6 +23,9 @@ public interface IRenderer : IDisposable
     /// <summary>Name des aktiven Grafikgeräts (für Crash-Report/Diagnose).</summary>
     string DeviceName { get; }
 
+    /// <summary>Tatsächlich aktiver Upscaler-Pfad: native, FSR3, spatial oder error.</summary>
+    string UpscalerStatus => "native";
+
     /// <summary>Seitenverhältnis der Swapchain (Breite/Höhe) für die Projektionsmatrix.</summary>
     float AspectRatio { get; }
 

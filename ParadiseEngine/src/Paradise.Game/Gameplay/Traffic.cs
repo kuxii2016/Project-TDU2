@@ -124,7 +124,7 @@ public sealed partial class Traffic : IDisposable
     void EnsureLoaded(VehicleManager vm)
     {
         var st = _terrain.Streamer;
-        if (st?.Index == null || vm.Database == null) { _status = "warte auf Welt/Datenbank"; return; }
+        if (st?.Index == null || vm.Database == null) { _status = "waiting for world and data"; return; }
         string island = st.Index.IslandName;
         if (_loadedIsland == island && ReferenceEquals(_world, _terrain.Physics) && (_load != null || _lanes != null)) return;
         ClearAll();
@@ -133,7 +133,7 @@ public sealed partial class Traffic : IDisposable
         _idSalt = (ushort)_rng.Next(1, 65535);
         _world = _terrain.Physics;
         var idx = st.Index; var db = vm.Database; string bnk = vm.BnkDir;
-        _status = "lade Verkehrsnetz …";
+        _status = "loading traffic network";
         _load = Task.Run(() => LoadData(idx, db, bnk));
     }
 
@@ -143,7 +143,7 @@ public sealed partial class Traffic : IDisposable
         var net = IaNetwork.LoadFromBank(idx.IslandBank!);
         res.Lanes = new TrafficLanes(net);
         int rings = 0; foreach (var j in net.Junctions.Values) if (res.Lanes.IsRoundabout(j.NodeId, out _)) rings++;
-        string log = net + $", {rings} Kreisverkehre";
+        string log = net + $", {rings} roundabouts";
 
         // Mischung aus aiconfig.cpr
         var weights = new Dictionary<int, float>();
@@ -175,7 +175,7 @@ public sealed partial class Traffic : IDisposable
                     }
                 }
                 if (zones > 0) for (int i = 0; i < 13; i++) res.Density[i] /= zones;
-                log += $", aiconfig: {zones} Zonen, {weights.Count} Autos";
+                log += $", aiconfig: {zones} zones, {weights.Count} cars";
             }
         }
         catch (Exception ex) { log += ", aiconfig: " + ex.Message; }
@@ -198,7 +198,7 @@ public sealed partial class Traffic : IDisposable
             var snd = CarDatabase.FindFile(soundDir, name + "_high.bnk") ?? generic;
             res.Types.Add(new TypeInfo { DbId = c.Id, Car = c, Name = name, Bank = bank, Sound = snd, Weight = w });
         }
-        log += $", {res.Types.Count} Modelle";
+        log += $", {res.Types.Count} models";
 
         // Lackfarben TR_01..TR_11
         try
@@ -218,7 +218,7 @@ public sealed partial class Traffic : IDisposable
                 }
             }
         }
-        catch (Exception ex) { log += ", Farben: " + ex.Message; }
+        catch (Exception ex) { log += ", colors: " + ex.Message; }
         res.Log = log;
         return res;
     }
@@ -231,7 +231,7 @@ public sealed partial class Traffic : IDisposable
         var t = _load; _load = null;
         if (t.IsFaulted)
         {
-            _status = "Fehler: " + t.Exception?.GetBaseException().Message;
+            _status = "error: " + t.Exception?.GetBaseException().Message;
             Log.Warn("Verkehr: " + t.Exception?.GetBaseException().Message);
             return;
         }
@@ -1689,8 +1689,8 @@ public sealed partial class Traffic : IDisposable
 
     static string TargetText(Car c)
     {
-        if (c.Phase == 1 && c.Junction != null) return "junction #" + c.Junction.Node + (c.Junction.Ring ? " (roundabout)" : "");
-        if (c.Next != null) return "next lane L" + c.Next.Lane + " (road " + c.Next.RoadId + ")";
+        if (c.Phase == 1 && c.Junction != null) return "junction #" + c.Junction.Node + (c.Junction.Ring ? " roundabout" : "");
+        if (c.Next != null) return "next lane L" + c.Next.Lane + ", road " + c.Next.RoadId;
         if (c.Lane != null) return "end of lane L" + c.Lane.Lane;
         return "-";
     }
@@ -1769,6 +1769,6 @@ public sealed partial class Traffic : IDisposable
         yield return "Status: " + _status;
         int phys = 0, crash = 0, park = 0;
         foreach (var c in _cars.Values) { if (c.Kin != null) phys++; if (c.Mode == 1) crash++; if (c.Mode == 2) park++; }
-        yield return $"Autos {_cars.Count} (Physik {phys}, Unfall {crash}, stehen {park}), Modelle {_types.Count}";
+        yield return $"cars {_cars.Count}, physics {phys}, crash {crash}, parked {park}, models {_types.Count}";
     }
 }

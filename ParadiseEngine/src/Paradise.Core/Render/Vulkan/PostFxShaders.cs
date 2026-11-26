@@ -229,7 +229,8 @@ void main() {
     /// <summary>
     /// Zusatz AO (halbe Auflösung): Bildschirmraum-Verdeckung aus der Weltdurchgang-Tiefe (Reversed-Z, bei MSAA Abtastung 0).
     /// Sichtraum aus der Tiefe: z = B / (d + A) mit A = proj.M33, B = proj.M43; x = ndc.x·z/P00, y = ndc.y·z/P11.
-    /// Push: vars.xy = 1/Zielgröße, params = (A, B, P00, P11), shadows = (Radius m, Neigung, Ausblend-Entfernung, Stärke 1).
+    /// Push: vars.xy = 1/Zielgröße, vars.zw = Tiefenauflösung / Zielauflösung (bei FSR nicht 2),
+    /// params = (A, B, P00, P11), shadows = (Radius m, Neigung, Ausblend-Entfernung, Stärke 1).
     /// Ergebnis r = Sichtbarkeit (1 = frei). sA ist hier die Tiefe; MSAA-Variante ersetzt sampler2D durch sampler2DMS.
     /// </summary>
     public const string AoFrag = @"#version 450
@@ -254,7 +255,9 @@ vec3 ViewPos(ivec2 q) {
 }
 void main() {
     gSize = textureSize(sA AO_LOD);
-    ivec2 px = ivec2(gl_FragCoord.xy * 2.0);
+    // AO-Ziel ist halbe Display-Größe, die Tiefe bei aktivem Upscaler aber interne Rendergröße.
+    // p.vars.zw skaliert deshalb AO-Pixel -> Tiefenpixel (native: exakt 2, FSR: z.B. 853/640).
+    ivec2 px = ivec2(floor(gl_FragCoord.xy * p.vars.zw));
     vec3 P = ViewPos(px);
     if (P.z >= p.shadows.z || Depth(px) <= 0.0) { outColor = vec4(1.0); return; }
     // Normale aus den Nachbarn (jeweils die nähere Seite, damit Kanten keine falschen Normalen bekommen)

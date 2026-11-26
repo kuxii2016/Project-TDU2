@@ -49,7 +49,7 @@ public static class OriginalShaders
     public static void SelfTest()
     {
         string dir = ShaderDir;
-        if (!Directory.Exists(dir)) { Status = "Ordner fehlt: " + dir; Log.Warn("Original-Shader: " + Status); return; }
+        if (!Directory.Exists(dir)) { Status = "folder missing: " + dir; Log.Warn("Original-Shader: " + Status); return; }
         var report = new StringBuilder();
         int total = 0, ok = 0, failT = 0, failC = 0;
         var opMiss = new Dictionary<string, int>();
@@ -89,7 +89,7 @@ public static class OriginalShaders
             }
             report.Insert(0, $"{set}: {setOk}/{setN}\n");
         }
-        string sum = $"{ok}/{total} Shader uebersetzt+kompiliert, {failT} nicht uebersetzbar, {failC} Compilerfehler";
+        string sum = $"{ok}/{total} shaders translated and compiled, {failT} not translatable, {failC} compiler errors";
         foreach (var kv in opMiss.OrderByDescending(k => k.Value)) sum += $"\n  {kv.Value}x {kv.Key}";
         try
         {
@@ -98,6 +98,6 @@ public static class OriginalShaders
             File.WriteAllText(path, sum + "\n\n" + report);
             Status = sum.Split('\n')[0] + " – " + Path.GetFileName(path);
         }
-        catch (Exception ex) { Status = sum.Split('\n')[0] + " (Bericht nicht geschrieben: " + ex.Message + ")"; }
+        catch (Exception ex) { Status = sum.Split('\n')[0] + " - report not written: " + ex.Message; }
     }
 }

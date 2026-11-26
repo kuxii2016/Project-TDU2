@@ -55,7 +55,7 @@ public sealed class PostFxConfig
 
     /// <summary>Height + distance fog reconstructed from scene depth. Off in the original; off by default here too because it
     /// changed the car brightness from frame to frame. Can be switched on again at runtime in F1 > Rendering.</summary>
-    public bool HeightFog { get; set; } = false;
+    public bool HeightFog { get; set; } = true;
     /// <summary>Fog strength 0–1 (1 = full fog colour at the far distance).</summary>
     public float FogIntensity { get; set; } = 0.35f;
     /// <summary>Distance in meters where fog starts.</summary>

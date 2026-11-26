@@ -127,8 +127,12 @@ public sealed class FontAtlas : IDisposable
     /// </summary>
     public (float u0, float v0, float u1, float v1) WhiteUv()
     {
-        float u = (Width - 1f) / Width;
-        float v = (Height - 1f) / Height;
+        // WICHTIG: Texelzentrum, nicht der Rand! Der Sampler ist linear (GetSampler):
+        // (Width-1)/Width läge genau auf der Grenze zum Nachbartexel (Alpha 0) und
+        // würde die weiße Zelle zur Hälfte ausblenden -> alle Panel-Flächen werden
+        // halbtransparent, obwohl ihre Vertexfarbe Alpha 255 hat.
+        float u = (Width - 0.5f) / Width;
+        float v = (Height - 0.5f) / Height;
 
         return (u, v, u, v);
     }

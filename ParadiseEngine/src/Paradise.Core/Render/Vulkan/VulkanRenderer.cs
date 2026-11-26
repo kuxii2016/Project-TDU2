@@ -338,6 +338,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         TakeGraphicsSettings();
         CreateSwapchain();
         CreateImageViews();
+        ComputeFsrExtents();
         CreateDepthResources();
         CreateRenderPass();
         CreateCommandPool();
@@ -346,6 +347,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreateTimestamps();
         CreateShadowResources();
         CreateFrameBuffers();
+        CreateFsr();
         CreateDefaultTextures();
         CreatePipelines();
         CreateFramebuffers();
@@ -365,6 +367,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     public void BeginFrame()
     {
         _skipFrame = false;
+        // Einstellungen müssen vor dem Frame und unabhängig von Present übernommen werden.
+        // Sonst kann ein dauerhaft Suboptimal/OutOfDate die Umschaltung auf FSR verhindern.
+        if (GraphicsSettingsChanged()) ApplyGraphicsSettings();
         long waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         using (s_mFence.Auto())
             fixed (Fence* pFence = &_inFlight[_currentFrame])
@@ -407,6 +412,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _instUsed = 0; _rCount = 0; _rMesh = null; _rMat = null;
         _cDraw = _cTris = _cBinds = _cTransp = _cAdditive = _cOverlay = _cShadow = 0;
         _inFrame = true;
+        if (UpscaleScene && _activeUpscaler == UpscalerMode.Fsr3) _fsrJitterIndex = (_fsrJitterIndex + 1) % 1024;
         UpdateRainDescriptors(_currentFrame);
         _activeFrameSet = _frameSets[_currentFrame];
         _background.Clear();
@@ -415,8 +421,14 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
     public void SetCamera(Matrix4x4 view, Matrix4x4 projection)
     {
+        // Sprung der Kamera (Teleport, Menü, anderer Kameramodus) -> FSR-Historie verwerfen.
+        if (_fsrHadFrame && UpscaleScene)
+        {
+            var pos = new Vector3(view.M41, view.M42, view.M43);
+            if ((pos - _prevCamPos).LengthSquared() > 25f) _fsrResetThisFrame = true;
+        }
         _view = view; _proj = projection;
-        SetViewProj(view * projection);
+        SetViewProj(view * ApplyFsrJitter(view, projection));
         // UNITY_MATRIX_V[0]/[1]: Kamera rechts/oben in Weltkoordinaten (Zeilenvektor-View -> Spalten)
         _viewRight = new Vector3(view.M11, view.M21, view.M31);
         _viewUp = new Vector3(view.M12, view.M22, view.M32);
@@ -1233,21 +1245,24 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             SType = StructureType.RenderPassBeginInfo,
             RenderPass = _renderPass,
-            Framebuffer = _framebuffers[_imageIndex],
-            RenderArea = new Rect2D { Offset = new Offset2D(0, 0), Extent = _extent },
+            Framebuffer = UpscaleScene ? _fsrSceneFb : _framebuffers[_imageIndex],
+            RenderArea = new Rect2D { Offset = new Offset2D(0, 0), Extent = SceneExtent },
             ClearValueCount = Msaa ? 3u : 2u,
             PClearValues = clears
         };
         _vk.CmdBeginRenderPass(cmd0, in rpBegin, SubpassContents.Inline);
         var viewport = new Viewport { X = 0, Y = 0, Width = _extent.Width, Height = _extent.Height, MinDepth = 0, MaxDepth = 1 };
-        _vk.CmdSetViewport(cmd0, 0, 1, &viewport);
+        var sceneViewport = new Viewport { X = 0, Y = 0, Width = SceneExtent.Width, Height = SceneExtent.Height, MinDepth = 0, MaxDepth = 1 };
+        _vk.CmdSetViewport(cmd0, 0, 1, &sceneViewport);
         var scissor = new Rect2D { Offset = new Offset2D(0, 0), Extent = _extent };
+        var sceneScissor = new Rect2D { Offset = new Offset2D(0, 0), Extent = SceneExtent };
+        _vk.CmdSetScissor(cmd0, 0, 1, &sceneScissor);
         _vk.CmdSetScissor(cmd0, 0, 1, &scissor);
         // GPU-Diagnose (F1 > Performance): Szene in ein Viertel der Pixel (Viewport halbiert), danach wieder volle Größe
         bool quarterPixels = RenderFx.DiagQuarterPixels;
         if (quarterPixels)
         {
-            var qv = viewport;
+            var qv = sceneViewport;
             qv.Width *= 0.5f; qv.Height *= 0.5f;
             _vk.CmdSetViewport(cmd0, 0, 1, &qv);
         }
@@ -1326,7 +1341,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             SegMark(cmd0, s_gTransparent, _cTransp);
         }
         s_mEfTransp.End();
-        if (quarterPixels) _vk.CmdSetViewport(cmd0, 0, 1, &viewport);   // Overlay/UI wieder in voller Größe
+        if (quarterPixels) _vk.CmdSetViewport(cmd0, 0, 1, &sceneViewport);   // Overlay/UI wieder in voller Größe
         Ts(cmd0, 3);
         // Overlay (Debug-UI): Pixel -> NDC, ohne Tiefentest
         void DrawOverlay()
@@ -1344,9 +1359,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (uiPassUsed)
         {
             // Flash wie Unity-IMGUI (Color Space Linear): eigener Durchgang auf der UNORM-Sicht, Mischen ohne sRGB-Umrechnung.
-            // Das Debug-Overlay bleibt im Welt-Durchgang (liegt damit unter der Flash-Oberfläche).
-            DrawOverlay();
+            // Bei FSR würde das Debug-Overlay im reduzierten Ziel landen und mit hochskaliert werden -> erst im UI-Pass zeichnen.
+            if (!UpscaleScene) DrawOverlay();
             _vk.CmdEndRenderPass(cmd0);
+            RecordFsr(cmd0);   // FSR vor PostFx/Flash: reduciertes Weltbild -> Display-Größe im Swapchain-Bild
             if (Msaa) CopyResolveToSwapchain(cmd0, true);
             RecordSceneCapture(cmd0);   // Weltbild auf die CPU (Foto), vor Photoshop/Flash (VulkanRendererCapture)
             bool photoshop = RecordPhotoshop(cmd0);   // Nachbearbeitung wie das Original vor dem HUD (VulkanRendererPostFx)
@@ -1364,6 +1380,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _boundPipeline = null;
             _uiActive = true;
             DrawFlashBatches();
+            if (UpscaleScene) DrawOverlay();   // Debug-Text in Display-Auflösung, nach dem Upscaler
             DrawOverlayTopList(PipeId.OverlayUi);   // Entwicklermenü über HUD/Minimap
             _uiActive = false;
         }
@@ -1389,6 +1406,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         var cmd = _commandBuffers[_currentFrame];
         _vk.CmdEndRenderPass(cmd);
+        if (!uiPassUsed) RecordFsr(cmd);   // ohne UI-Pass läuft Flash/HUD im Weltbild; FSR danach auf das Swapchain-Bild
         if (Msaa && !uiPassUsed) CopyResolveToSwapchain(cmd, false);
         Ts(cmd, 6);   // letzter Zeitstempel (Index 4/5 liegen im Volumen-Durchgang, 6 = Ende des Bildes)
         if (_vk.EndCommandBuffer(cmd) != Result.Success)
@@ -1438,9 +1456,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             _framebufferResized = false;
             RecreateSwapchain();
         }
-        else if (pr == Result.Success && GraphicsSettingsChanged()) ApplyGraphicsSettings();
         else if (pr != Result.Success)
             throw new Exception($"QueuePresent failed: {pr}");
+
+        // Grafikeinstellungen müssen auch dann übernommen werden, wenn Present Suboptimal/OutOfDate
+        // war: sonst bleibt der Upscaler dauerhaft auf Off, obwohl das Menü bereits den kleineren
+        // Render-Scale anzeigt. ApplyGraphicsSettings recreatet die Swapchain bei Bedarf selbst.
+        if (GraphicsSettingsChanged()) ApplyGraphicsSettings();
 
         _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
         _frameCounter++;
@@ -1449,6 +1471,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
     SampleCountFlags WantedMsaa()
     {
+        // FSR braucht ein einfaches Farbziel als Input; MSAA würde ein Resolve vor dem Upscaler erzwingen.
+        if (GraphicsSettings.Upscaler != UpscalerMode.Off) return SampleCountFlags.Count1Bit;
         int want = GraphicsSettings.Msaa;
         foreach (var (n, f) in new[] { (8, SampleCountFlags.Count8Bit), (4, SampleCountFlags.Count4Bit), (2, SampleCountFlags.Count2Bit) })
             if (want >= n && (_msaaCounts & f) != 0) return f;
@@ -1461,7 +1485,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
     bool GraphicsSettingsChanged()
         => WantedMsaa() != _msaa || GraphicsSettings.VSync != _vsync || WantedShadowSize() != ShadowSize
-           || System.Math.Clamp(GraphicsSettings.TextureMipLimit, 0, 3) != _texMipLimit;
+           || System.Math.Clamp(GraphicsSettings.TextureMipLimit, 0, 3) != _texMipLimit
+           || UpscalerSettingsChanged();
 
     void TakeGraphicsSettings()
     {
@@ -1469,6 +1494,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _vsync = GraphicsSettings.VSync;
         ShadowSize = WantedShadowSize();
         _texMipLimit = System.Math.Clamp(GraphicsSettings.TextureMipLimit, 0, 3);
+        TakeUpscalerSettings();
         _stats.VSync = _vsync;
     }
 
@@ -1476,9 +1502,13 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     void ApplyGraphicsSettings()
     {
         var oldMsaa = _msaa; bool oldVsync = _vsync; uint oldShadow = ShadowSize; int oldTex = _texMipLimit;
+        var oldUpscaler = _wantedUpscaler; var oldQuality = _wantedQuality;
         TakeGraphicsSettings();
-        bool rebuild = oldMsaa != _msaa || oldVsync != _vsync || oldShadow != ShadowSize;
+        bool rebuild = oldMsaa != _msaa || oldVsync != _vsync || oldShadow != ShadowSize
+                       || oldUpscaler != _wantedUpscaler || oldQuality != _wantedQuality;
         if (!rebuild) return;
+        if (oldUpscaler != _wantedUpscaler || oldQuality != _wantedQuality)
+            Log.Info($"FSR: setting {_wantedUpscaler}/{_wantedQuality} applied");
         _vk.DeviceWaitIdle(_device);
         if (oldShadow != ShadowSize)
         {
@@ -1666,20 +1696,37 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             SamplerAnisotropy = supported.SamplerAnisotropy,
             TextureCompressionBC = supported.TextureCompressionBC,
+            // FFX-Upscaler-Shader nutzen 16-Bit-Integer-Arithmetik.
+            ShaderInt16 = supported.ShaderInt16,
         };
         var extList = new List<string> { KhrSwapchain.ExtensionName };
         _mutableSwap = HasDeviceExtension(_physical, MutableFormatExt);
         if (_mutableSwap) extList.Add(MutableFormatExt);
+        // FFX-Vulkan-Backend prüft die Extension und aktiviert fp16, falls verfügbar.
+        bool float16Ext = HasDeviceExtension(_physical, "VK_KHR_shader_float16_int8");
+        if (float16Ext) extList.Add("VK_KHR_shader_float16_int8");
         var deviceExts = extList.ToArray();
+        var f16 = new PhysicalDeviceShaderFloat16Int8Features
+        {
+            SType = StructureType.PhysicalDeviceShaderFloat16Int8Features
+        };
+        var features2 = new PhysicalDeviceFeatures2
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = (void*)(&f16)
+        };
+        if (float16Ext) _vk.GetPhysicalDeviceFeatures2(_physical, &features2);
+        features2.Features = features;
         var createInfo = new DeviceCreateInfo
         {
             SType = StructureType.DeviceCreateInfo,
             QueueCreateInfoCount = (uint)unique.Length,
             PQueueCreateInfos = queueInfos,
-            PEnabledFeatures = &features,
+            PEnabledFeatures = float16Ext ? null : &features,
             EnabledExtensionCount = (uint)deviceExts.Length,
             PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExts)
         };
+        if (float16Ext) createInfo.PNext = (void*)(&features2);
         if (_vk.CreateDevice(_physical, in createInfo, null, out _device) != Result.Success)
             throw new Exception("The logical device could not be created.");
         _vk.GetDeviceQueue(_device, _graphicsFamily, 0, out _graphicsQueue);
@@ -1802,7 +1849,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     {
         _depthFormat = Format.D32Sfloat;
         // SampledBit: Tiefe wird nach dem Weltdurchgang von der AO-Nachbearbeitung gelesen (VulkanRendererPostFx, PostFx.AoEnabled)
-        CreateImage(_extent.Width, _extent.Height, 1, _depthFormat, ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit, out _depthImage, out _depthMem, _msaa);
+        CreateImage(SceneExtent.Width, SceneExtent.Height, 1, _depthFormat, ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit, out _depthImage, out _depthMem, _msaa);
         _depthView = CreateImageView(_depthImage, _depthFormat, ImageAspectFlags.DepthBit, 1);
         if (Msaa)
         {
@@ -1886,6 +1933,43 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             Usage = usage,
             Samples = samples,
             SharingMode = SharingMode.Exclusive
+        };
+        if (_vk.CreateImage(_device, in info, null, out image) != Result.Success)
+            throw new Exception("The image could not be created.");
+        _vk.GetImageMemoryRequirements(_device, image, out var req);
+        mem = _alloc.Allocate(req, MemoryPropertyFlags.DeviceLocalBit, linear: false);
+        _vk.BindImageMemory(_device, image, mem.Memory, mem.Offset);
+    }
+
+    /// <summary>
+    /// Bild mit sRGB- und UNORM-Ansicht. Der Weltdurchgang rendert in die sRGB-Ansicht (Hardware-Kodierung),
+    /// FFX liest dieselben Bytes über die UNORM-Ansicht und macht die sRGB-Umrechnung selbst.
+    /// </summary>
+    private void CreateMutableFormatImage(uint w, uint h, Format format, Format viewFormat, ImageUsageFlags usage,
+        out Image image, out GpuAllocator.Allocation mem)
+    {
+        var viewFormats = stackalloc Format[2] { format, viewFormat };
+        var fmtList = new ImageFormatListCreateInfo
+        {
+            SType = StructureType.ImageFormatListCreateInfo,
+            ViewFormatCount = 2,
+            PViewFormats = viewFormats
+        };
+        var info = new ImageCreateInfo
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Extent = new Extent3D(w, h, 1),
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Format = format,
+            Tiling = ImageTiling.Optimal,
+            InitialLayout = ImageLayout.Undefined,
+            Usage = usage,
+            Samples = SampleCountFlags.Count1Bit,
+            SharingMode = SharingMode.Exclusive,
+            Flags = ImageCreateFlags.CreateMutableFormatBit,
+            PNext = &fmtList
         };
         if (_vk.CreateImage(_device, in info, null, out image) != Result.Success)
             throw new Exception("The image could not be created.");
@@ -3254,16 +3338,18 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         for (int i = 0; i < _imageViews.Length; i++)
         {
             var attachments = stackalloc ImageView[3];
-            if (Msaa) { attachments[0] = _msaaView; attachments[1] = _depthView; attachments[2] = _resolveView; }
+            // FSR: Welt in das eigene, reduzierte Farbziel rendern; Swapchain erst nach dem Upscaler beschreiben.
+            if (UpscaleScene) { attachments[0] = _fsrSceneView; attachments[1] = _depthView; }
+            else if (Msaa) { attachments[0] = _msaaView; attachments[1] = _depthView; attachments[2] = _resolveView; }
             else { attachments[0] = _imageViews[i]; attachments[1] = _depthView; }
             var info = new FramebufferCreateInfo
             {
                 SType = StructureType.FramebufferCreateInfo,
                 RenderPass = _renderPass,
-                AttachmentCount = Msaa ? 3u : 2u,
+                AttachmentCount = UpscaleScene || !Msaa ? 2u : 3u,
                 PAttachments = attachments,
-                Width = _extent.Width,
-                Height = _extent.Height,
+                Width = SceneExtent.Width,
+                Height = SceneExtent.Height,
                 Layers = 1
             };
             if (_vk.CreateFramebuffer(_device, in info, null, out _framebuffers[i]) != Result.Success)
@@ -3335,9 +3421,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CleanupSwapchain();
         CreateSwapchain();
         CreateImageViews();
+        ComputeFsrExtents();
         CreateDepthResources();
         CreateRenderPass();
         CreatePipelines();
+        CreateFsr();
         CreateFramebuffers();
         CreateCommandBuffers();
         _imagesInFlight = new Fence[_images.Length];
@@ -3345,6 +3433,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
     private void CleanupSwapchain()
     {
+        DestroyFsr();
         DestroyPostFx();
         DestroyEnvTargets();
         foreach (var fb in _framebuffers) _vk.DestroyFramebuffer(_device, fb, null);
