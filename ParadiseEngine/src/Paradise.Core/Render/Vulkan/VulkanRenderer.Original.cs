@@ -1,5 +1,6 @@
 using Paradise.Core.Diagnostics;
 using Paradise.Core.Render.Original;
+using System.Buffers;
 using Silk.NET.Core.Native;
 using Silk.NET.Shaderc;
 using Silk.NET.Vulkan;
@@ -10,7 +11,10 @@ namespace Paradise.Core.Render.Vulkan;
 public sealed unsafe partial class VulkanRenderer
 {
     private const int OrigVsBytes = 256 * 16 + 16 + 64, OrigPsBytes = 224 * 16 + 16;   // VS: c[256], ext, Weltmatrix (Lichtpuffer)
-    private const ulong OrigRingPerFrame = 32UL << 20;
+    // Ein Original-Draw braucht ~8 KB (VS 4352 + PS 3840, auf 256 ausgerichtet); 128 MB fassen
+    // 16384 Draws und damit genau OrigMaxSets. 32 MB (4096 Draws) liefen bei voller Szene über:
+    // späte draws fielen auf den eigenen Shader zurück (Auto: hell/dunkel/Texturen weg).
+    private const ulong OrigRingPerFrame = 128UL << 20;
     private const int OrigMaxSets = 16384;
 
     private DescriptorSetLayout _origSetLayout;
@@ -177,18 +181,19 @@ public sealed unsafe partial class VulkanRenderer
 
     private void BuildOriginalSet(VulkanMaterial mat, OriginalMaterial om)
     {
+        if (Profiler.Enabled) s_cOrigSetRebuilds.Add(1);
         var old = mat.OrigSet;
         mat.OrigSet = default;
         if (old.Handle != 0) { var pool = _origPool; DeferDestroy(() => _vk.FreeDescriptorSets(_device, pool, 1, in old)); }
         var cubeView = OriginalCubeView;
-        bool cubeSrgb = cubeView.Handle == _prCubeView.Handle && _format.ToString().EndsWith("Srgb", StringComparison.Ordinal);
+        bool cubeSrgb = cubeView.Handle == _prCubeView.Handle && _formatSrgb;
         om.CubeBound = 0;
         om.ProjBound = 0;
         om.RippleBound = 0;
         // TD_Road-Regen (exe 0xa630f0/0xa63440): s6 = aktuelles RIPPLE_xx, s8 = PUDDLES (WFX_WetGrd, World/WetGround)
         var rainRip = om.RainProgram != null && RenderFx.RainRipple is VulkanTexture rr && !rr.Disposed ? rr : null;
         var rainPud = om.RainProgram != null && RenderFx.RainPuddles is VulkanTexture rp && !rp.Disposed ? rp : null;
-        bool plSrgb = _format.ToString().EndsWith("Srgb", StringComparison.Ordinal);
+        bool plSrgb = _formatSrgb;
         var layout = _origSetLayout;
         var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _origPool, DescriptorSetCount = 1, PSetLayouts = &layout };
         if (_vk.AllocateDescriptorSets(_device, in alloc, out var set) != Result.Success)
@@ -244,6 +249,33 @@ public sealed unsafe partial class VulkanRenderer
         _vk.UpdateDescriptorSets(_device, 18, writes, 0, null);
         mat.OrigSet = set;
         mat.OrigMask = mask;
+    }
+
+    /// <summary>
+    /// Nur das RIPPLE-Bild (Slot 6 -> Binding 2+6) austauschen, wenn WetGround alle 25 ms das nächste Animationsframe
+    /// liefert. Bildgleich zu BuildOriginalSet, aber ohne Set freizugeben/neu anzulegen und ohne 16 Sampler-Abfragen.
+    /// </summary>
+    private void UpdateOriginalRipple(VulkanMaterial mat, OriginalMaterial om, VulkanTexture ripple)
+    {
+        var set = mat.OrigSet;
+        if (set.Handle == 0 || ripple.Disposed) return;
+        var img = new DescriptorImageInfo
+        {
+            ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
+            ImageView = ripple.View,
+            Sampler = GetSampler(ripple.WrapU, ripple.WrapV)
+        };
+        var write = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 2 + 6, DstArrayElement = 0,
+            DescriptorCount = 1, DescriptorType = DescriptorType.CombinedImageSampler, PImageInfo = &img
+        };
+        _vk.UpdateDescriptorSets(_device, 1, &write, 0, null);
+        if (Profiler.Enabled) s_cOrigRippleBinds.Add(1);
+        om.RippleBound = ripple.View.Handle;
+        // Wie in BuildOriginalSet: gesetztes Bit = sRGB-Textur (Shader rechnet auf die gespeicherten Werte zurück).
+        if (ripple.Linear) mat.OrigMask &= ~(1u << 6);
+        else mat.OrigMask |= 1u << 6;
     }
 
     private void FreeOriginalSet(VulkanMaterial mat)
@@ -447,11 +479,18 @@ public sealed unsafe partial class VulkanRenderer
         // Karosserie). D3D-Clip = Engine-Clip mit z' = w - z; der übersetzte VS rechnet für den Tiefenpuffer zurück (DxsoToGlsl, v9).
         var toD3dDepth = new Matrix4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 1, 1);
         var proj = flipZ * _proj * flipY * toD3dDepth;
+        var viewProj = view * proj;
+        // Invertierte Kamera-/Projektionsmatrizen einmal je Bild (vorher in OriginalConstants.Fill je Konstante und je
+        // VS/PS-Aufruf – bei ~10k Original-Draws der teuerste wiederholte Matrix-Aufruf).
+        if (!Matrix4x4.Invert(view, out var invView)) invView = Matrix4x4.Identity;
+        if (!Matrix4x4.Invert(proj, out var invProj)) invProj = Matrix4x4.Identity;
+        if (!Matrix4x4.Invert(viewProj, out var invViewProj)) invViewProj = Matrix4x4.Identity;
         var fwd = -new Vector3(_view.M13, _view.M23, _view.M33);
         float t = g.Time > 0 ? g.Time : (float)_clock.Elapsed.TotalSeconds;
         return new OriginalScene
         {
-            View = view, Proj = proj, ViewProj = view * proj,
+            View = view, Proj = proj, ViewProj = viewProj,
+            InvView = invView, InvProj = invProj, InvViewProj = invViewProj,
             CameraPosition = g.CameraPosition,
             CameraDirection = fwd.LengthSquared() > 0 ? Vector3.Normalize(fwd) : Vector3.UnitZ,
             SunDirection = -Vector3.Normalize(g.SunDirection),   // Engine: zur Sonne; Original "sundirection": Lichtrichtung
@@ -486,11 +525,25 @@ public sealed unsafe partial class VulkanRenderer
     /// Setzt auch Szene und Ring des Bildes zurück – die transparenten Original-Aufrufe (<see cref="DrawOriginalNow"/>) folgen danach.</summary>
     private void DrawOriginals(CommandBuffer cmd)
     {
+        bool measure = Profiler.Enabled;
+        long a0 = measure ? AllocNow() : 0;
         _origUsed = 0;
-        _origScene = BuildOriginalScene();
+        using (s_mOrigScene.Auto())
+            _origScene = BuildOriginalScene();
+        long a1 = measure ? AllocNow() : 0;
+        _origViewFlipped = Det3(_viewProj) > 0f;
+        int count = _origDraws.Count;
         int drawn = 0;
         foreach (var (mesh, mat, model) in _origDraws)
             if (DrawOriginalNow(cmd, mesh, mat, model)) drawn++;
+        long a2 = measure ? AllocNow() : 0;
+        if (measure)
+        {
+            s_cOrigDraws.Add(count);
+            s_cOrigAllocScene.Add(a1 - a0);
+            s_cOrigAllocDraws.Add(a2 - a1);
+            s_cOrigAlloc.Add(a2 - a0);
+        }
         _origDraws.Clear();
         OriginalMaterial.DrawnLastFrame = drawn;
         EndOriginal();
@@ -510,10 +563,16 @@ public sealed unsafe partial class VulkanRenderer
     private Pipeline _origBound;
     private ulong _origLastVb;
     private bool _origLastHm;
+    private bool _origViewFlipped;   // Det3(viewProj) > 0: einmal je Bild, nicht je Original-Draw
 
     /// <summary>Ein Original-Aufruf (false = mit dem eigenen Shader gezeichnet: Pipeline fehlt oder Ring voll).</summary>
     private bool DrawOriginalNow(CommandBuffer cmd, VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model, bool sorted = false)
     {
+        // Grobe Summen pro Bild statt eines Profiler-Events je Draw (das hatte den Profiler mit ~945 KB/Bild überlastet).
+        // Ohne laufende Aufnahme kosten die Stamps nur einen bool-Test.
+        bool measure = Profiler.Enabled;
+        long t0 = measure ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        long a0 = measure ? AllocNow() : 0;
         var om = mat.Orig!;
         // Würfel-Sampler: Sonde wurde gültig bzw. neu angelegt (Größenänderung) -> Set neu schreiben
         // TD_Road bei Regen (RainSpecs.x = rain_ground_global_intensity > 0, exe 0xa630f0): Regen-Permutation; das RIPPLE-Bild wechselt
@@ -521,19 +580,35 @@ public sealed unsafe partial class VulkanRenderer
         bool wet = om.RainProgram != null && _origScene.RainSpecs.X > 0f;
         var prog = wet ? om.RainProgram! : om.Program;
         ulong ripNow = wet && RenderFx.RainRipple is VulkanTexture rq && !rq.Disposed ? rq.View.Handle : 0;
-        if ((om.CubeBound != 0 && om.CubeBound != OriginalCubeView.Handle) || (om.ProjBound != 0 && om.ProjBound != _plView.Handle)
-            || (ripNow != 0 && om.RippleBound != ripNow)) BuildOriginalSet(mat, om);
-        int cull = mat.TwoSided ? 0 : (Det3(_viewProj) > 0f) ^ (Det3(model) < 0f) ? 2 : 1;
+        bool cubeChanged = om.CubeBound != 0 && om.CubeBound != OriginalCubeView.Handle;
+        bool projChanged = om.ProjBound != 0 && om.ProjBound != _plView.Handle;
+        if (cubeChanged || projChanged) BuildOriginalSet(mat, om);
+        else if (ripNow != 0 && om.RippleBound != ripNow) UpdateOriginalRipple(mat, om, (VulkanTexture)RenderFx.RainRipple!);
+        int cull = mat.TwoSided ? 0 : _origViewFlipped ^ (Det3(model) < 0f) ? 2 : 1;
         bool hm = om.HeightMapInput && !mesh.IsObjectFormat;
         int states = om.States | (mesh.IsObjectFormat ? 0 : 0x800) | (hm ? 0x1000 : 0) | (mesh.IsObjectFormat && mesh.FourUvSets ? 0x2000 : 0);
-        var pipe = _origFailed ? default : GetOriginalPipeline(prog, cull, states);
+        prog.VsEntries ??= OriginalConstants.EntriesOf(prog.Vs.Parsed!);
+        prog.PsEntries ??= OriginalConstants.EntriesOf(prog.Ps.Parsed!);
+        // Pipeline und Konstanten-Cache hängen am Material – zwei Dictionary-Lookups je Draw entfallen.
+        var pipeKey = (prog, cull, states);
+        Pipeline pipe;
+        if (!_origFailed && mat.OrigPipeGen == _origGen && mat.OrigPipe.Handle != 0 && mat.OrigPipeKey == pipeKey) pipe = mat.OrigPipe;
+        else
+        {
+            pipe = _origFailed ? default : GetOriginalPipeline(prog, cull, states);
+            if (pipe.Handle != 0) { mat.OrigPipeGen = _origGen; mat.OrigPipeKey = pipeKey; mat.OrigPipe = pipe; }
+            else { mat.OrigPipe = default; }
+        }
         bool tanOk = !om.NeedsTangents || EnsureTangents(mesh);
         bool hmOk = !hm || EnsureHeightMapStream(mesh);
         //if (RoadDiagWanted(om, prog))
         //    RoadDiag(mesh, om, prog, states, wet, pipe.Handle == 0 ? "Pipeline noch nicht fertig" : !tanOk ? "Tangenten fehlen" : !hmOk ? "HeightMap-Strom fehlt"
         //        : mat.OrigSet.Handle == 0 ? "kein Descriptor-Set" : _origUsed + _origVsSize + _origPsSize > OrigRingPerFrame ? "Ring voll" : null);
+        long a1 = measure ? AllocNow() : 0;
+        if (measure) { s_cOrigPipeline.Add(Ms(System.Diagnostics.Stopwatch.GetTimestamp() - t0)); s_cOrigAllocSetup.Add(a1 - a0); }
         if (pipe.Handle == 0 || !tanOk || !hmOk || mat.OrigSet.Handle == 0 || _origUsed + _origVsSize + _origPsSize > OrigRingPerFrame)
         {
+            if (measure) s_cOrigAllocFallback.Add(AllocNow() - a1);
             EndOriginal();
             if (sorted) DrawNow(mesh, mat, model);
             else { Batch(mesh, mat, model, PipeFor(mat), false, _viewProj); FlushBatch(); }
@@ -545,13 +620,38 @@ public sealed unsafe partial class VulkanRenderer
         _origUsed += _origVsSize + _origPsSize;
         byte* ring = (byte*)_origRingMem.Mapped;
         byte* vsp = ring + frameBase + vsOff, psp = ring + frameBase + psOff;
+        long t2 = measure ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var fam = om.Avatar != null ? om.Family : OriginalMaterial.AvatarFamily.None;
-        OriginalConstants.Fill((float*)vsp, 256, OriginalConstants.EntriesOf(prog.Vs.Parsed!), om.Def, model, _origScene, om.Over, om.Avatar, fam, om.GlossFct, om);
-        OriginalConstants.Fill((float*)psp, 224, OriginalConstants.EntriesOf(prog.Ps.Parsed!), om.Def, model, _origScene, om.Over, om.Avatar, fam, om.GlossFct, om);
+        // Einmal je Draw statt einmal je VS- und PS-Konstantenblock (und dort je Eintrag): Inverse, Matrixprodukte,
+        // normalisierte Richtungen und Licht x Material. Beide Blöcke teilen sich denselben Cache.
+        // inverse(model*View) = View^-1 * model^-1; InvView liegt bereits je Bild bereit (eine Matrix-Inversion weniger je Draw).
+        // Die restlichen Werte werden nur berechnet, wenn VS oder PS sie tatsächlich lesen.
+        var vsEntries = prog.VsEntries!;
+        var psEntries = prog.PsEntries!;
+        if (!prog.MaskReady) { prog.ConstantMask = OriginalConstants.OriginalDrawCache.MaskOf(vsEntries, psEntries); prog.MaskReady = true; }
+        ulong mask = prog.ConstantMask;
+        Matrix4x4 invWorld = default, invWorldView = default;
+        if (OriginalConstants.OriginalDrawCache.NeedsInverse(mask))
+        {
+            if (!Matrix4x4.Invert(model, out invWorld)) invWorld = Matrix4x4.Identity;
+            if (OriginalConstants.OriginalDrawCache.NeedsInvWorldView(mask)) invWorldView = _origScene.InvView * invWorld;
+        }
+        var dc = OriginalConstants.OriginalDrawCache.Create(model, _origScene, invWorld, invWorldView, om.Def, om.Avatar, om, mask);
+        if (mat.OrigConstProgram != prog)
+        {
+            mat.OrigConstProgram = prog;
+            mat.OrigConstCache = OriginalConstants.GetProgramCached(prog, om.Def, om.Over, om);
+        }
+        var constCache = mat.OrigConstCache ?? OriginalConstants.GetProgramCached(prog, om.Def, om.Over, om);
+        OriginalConstants.Fill((float*)vsp, 256, vsEntries, om.Def, model, _origScene, dc, invWorld, invWorldView, constCache.Vs, om.Avatar, fam, om.GlossFct, om);
+        OriginalConstants.Fill((float*)psp, 224, psEntries, om.Def, model, _origScene, dc, invWorld, invWorldView, constCache.Ps, om.Avatar, fam, om.GlossFct, om);
         var ve = (uint*)(vsp + 256 * 16); ve[0] = mat.OrigMask; ve[1] = hm ? 1u : 0u; ve[2] = om.Color1; ve[3] = 0;
         *(Matrix4x4*)(vsp + 256 * 16 + 16) = model;   // Weltlage für den Lichtpuffer (Render-Raum wie die Schattenkaskaden)
         // PS ext: x sRGB-Sampler, y Ergebnis nach linear, z Alpha-Referenz (float), w Alpha-Test an (D3DRS_ALPHATESTENABLE)
         var pe = (uint*)(psp + 224 * 16); pe[0] = mat.OrigMask; pe[1] = 1; pe[2] = BitConverter.SingleToUInt32Bits(om.AlphaRef); pe[3] = om.AlphaTest ? 1u : 0u;
+        long a2 = measure ? AllocNow() : 0;
+        long t3 = measure ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (measure) { s_cOrigConstants.Add(Ms(t3 - t2)); s_cOrigAllocConstants.Add(a2 - a1); }
 
         if (pipe.Handle != _origBound.Handle) { _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, pipe); _origBound = pipe; }
         var sets = stackalloc DescriptorSet[2] { mat.OrigSet, _activeFrameSet };
@@ -570,6 +670,12 @@ public sealed unsafe partial class VulkanRenderer
             _origLastHm = hm;
         }
         _vk.CmdDrawIndexed(cmd, (uint)mesh.IndexCount, 1, 0, 0, 0);
+        long a3 = measure ? AllocNow() : 0;
+        if (measure)
+        {
+            s_cOrigSubmit.Add(Ms(System.Diagnostics.Stopwatch.GetTimestamp() - t3));
+            s_cOrigAllocSubmit.Add(a3 - a2);
+        }
         _cDraw++; _cTris += mesh.IndexCount / 3;
         // der eigene Renderer muss danach neu binden
         _boundPipeline = null; _lastSet = default; _lastVb = default;
@@ -665,25 +771,55 @@ public sealed unsafe partial class VulkanRenderer
     }
 
     /// <summary>
-    /// TANGENT/BINORMAL für die Original-Shader (die Engine-Formate haben keine): je Dreieck aus Position und UV0, je Vertex
-    /// gemittelt und zur Normalen orthogonalisiert; Binormale = Normale x Tangente · Vorzeichen [vermutet: im Original vorberechnet
-    /// in den .3DG-Daten]. Einmal je Mesh beim ersten Zeichnen (dynamische Meshes: Stand dieses Bildes).
+    /// TANGENT/BINORMAL für die Original-Shader. Bevorzugt die im .3dg gespeicherte Tangente (UV-Satz des Detail-/Gloss-Maps);
+    /// nur wenn dort keine vorliegt, finite Differences aus Position und UV0. Binormale = Normale x Tangente. Einmal je Mesh
+    /// beim ersten Zeichnen (dynamische Meshes: Stand dieses Bildes).
     /// </summary>
     // Tangenten im Hintergrund (vorher im Render-Thread je neuem Mesh -> Ruckler beim Streamen); Daten vorher kopiert, damit ein
-    // inzwischen freigegebenes Mesh nicht gelesen wird
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<VulkanMesh, Task<Vector4[]?>> _tanJobs = new();
+    // inzwischen freigegebenes Mesh nicht gelesen wird. Die Beispielpuffer kommen aus dem ArrayPool: beim Streaming neuer Kacheln
+    // lagen hier bisher mehrere hundert KB GC pro Bild (Profiler: EndFrame.Opaque.Original), obwohl die Werte identisch sind.
+    // Statt Task+Result je neuem Mesh nur noch ein kleiner Job auf dem ThreadPool (ArrayPool-Puffer bleiben ohne GC).
+    private sealed class MeshJob
+    {
+        public byte[] Vb = Array.Empty<byte>();
+        public uint[] Ib = Array.Empty<uint>();
+        public Vector4[] Data = Array.Empty<Vector4>();
+        public int Count, N, Stride, UvOff;
+        public bool HeightMap;
+        public Exception? Error;
+        public volatile bool Done;
+    }
+    private static readonly Action<MeshJob> s_runMeshJob = RunMeshJob;
+    private static void RunMeshJob(MeshJob j)
+    {
+        try
+        {
+            if (j.HeightMap)
+            {
+                var r = ComputeHeightMapStreamPooled(j.Vb, j.N, j.Stride);
+                if (r.HasValue) { j.Data = r.Value.Data; j.Count = r.Value.Count; }
+            }
+            else
+            {
+                var r = ComputeTangentsPooled(j.Vb, j.Ib, j.N, j.Stride, j.UvOff);
+                if (r.HasValue) { j.Data = r.Value.Data; j.Count = r.Value.Count; }
+            }
+        }
+        catch (Exception ex) { j.Error = ex; }
+        finally { j.Done = true; }
+    }
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<VulkanMesh, MeshJob> _tanJobs = new();
 
     private bool EnsureTangents(VulkanMesh m)
     {
         if (m.TanBuf.Handle != 0) return true;
         if (_tanJobs.TryGetValue(m, out var job))
         {
-            if (!job.IsCompleted) return false;
+            if (!job.Done) return false;
             _tanJobs.Remove(m);
-            var res = job.IsCompletedSuccessfully ? job.Result : null;
-            if (res == null) return false;
-            CreateHostBuffer((ulong)(res.Length * 16), BufferUsageFlags.VertexBufferBit, out m.TanBuf, out m.TanMem);
-            fixed (Vector4* src = res) System.Buffer.MemoryCopy(src, m.TanMem.Mapped, res.Length * 16, res.Length * 16);
+            if (job.Error != null || job.Data.Length == 0) return false;
+            UploadTanBuffer(m, job.Data, job.Count);
+            ArrayPool<Vector4>.Shared.Return(job.Data);
             return true;
         }
         if (m.TanTried) return false;
@@ -691,13 +827,51 @@ public sealed unsafe partial class VulkanRenderer
         int n = m.VCount;
         if (n <= 0 || m.VMem.Mapped == null || m.IMem.Mapped == null) return false;
         int stride = m.IsObjectFormat ? (int)ObjectVertex.SizeInBytes : (int)MeshVertex.SizeInBytes;
+        // Gespeicherte .3dg-Tangente hat Vorrang: sie gehört zum Detail-UV-Satz, nicht zu UV0.
+        if (m.SourceTangents != null && m.SourceTangents.Length == n)
+        {
+            var saved = ArrayPool<Vector4>.Shared.Rent(n * 2);
+            if (TangentsFromSourceInto(saved, m.SourceTangents, (byte*)m.VMem.Mapped, n, stride))
+            {
+                UploadTanBuffer(m, saved, n * 2);
+                ArrayPool<Vector4>.Shared.Return(saved);
+                return true;
+            }
+            ArrayPool<Vector4>.Shared.Return(saved);
+        }
         int uvOff = m.IsObjectFormat ? 28 : 24;
-        var vb = new byte[n * stride];
-        var ib = new uint[m.IndexCount];
-        fixed (byte* d = vb) System.Buffer.MemoryCopy(m.VMem.Mapped, d, vb.Length, vb.Length);
-        fixed (uint* d = ib) System.Buffer.MemoryCopy(m.IMem.Mapped, d, ib.Length * 4L, ib.Length * 4L);
-        _tanJobs.AddOrUpdate(m, Task.Run(() => ComputeTangents(vb, ib, n, stride, uvOff)));
+        var vb = ArrayPool<byte>.Shared.Rent(n * stride);
+        var ib = ArrayPool<uint>.Shared.Rent(m.IndexCount);
+        new ReadOnlySpan<byte>(m.VMem.Mapped, n * stride).CopyTo(vb);
+        new ReadOnlySpan<uint>(m.IMem.Mapped, m.IndexCount).CopyTo(ib);
+        var newJob = new MeshJob { Vb = vb, Ib = ib, N = n, Stride = stride, UvOff = uvOff };
+        _tanJobs.AddOrUpdate(m, newJob);
+        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(s_runMeshJob, newJob, false);
         return false;
+    }
+
+    /// <summary>Aus den .3dg-Tangenten den TANGENT/BINORMAL-Strom des Originals bauen (Normale x Tangente).</summary>
+    private static bool TangentsFromSourceInto(Vector4[] o, Vector4[] src, byte* vb, int n, int stride)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            var t = new Vector3(src[i].X, src[i].Y, src[i].Z);
+            if (t.LengthSquared() < 0.5f) return false;   // vertex ohne gespeicherte Tangente -> UV0-Fallback fürs ganze Mesh
+            var nr = *(Vector3*)(vb + i * stride + 12);
+            if (nr.LengthSquared() < 1e-12f) nr = Vector3.UnitY; else nr = Vector3.Normalize(nr);
+            t -= nr * Vector3.Dot(nr, t);
+            if (t.LengthSquared() < 1e-12f) t = Vector3.Cross(MathF.Abs(nr.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX, nr);
+            t = Vector3.Normalize(t);
+            o[i * 2] = new Vector4(t, 1f);
+            o[i * 2 + 1] = new Vector4(Vector3.Cross(nr, t), 0f);
+        }
+        return true;
+    }
+
+    private void UploadTanBuffer(VulkanMesh m, Vector4[] res, int count)
+    {
+        CreateHostBuffer((ulong)(count * 16), BufferUsageFlags.VertexBufferBit, out m.TanBuf, out m.TanMem);
+        fixed (Vector4* src = res) System.Buffer.MemoryCopy(src, m.TanMem.Mapped, count * 16L, count * 16L);
     }
 
     /// <summary>
@@ -705,19 +879,19 @@ public sealed unsafe partial class VulkanRenderer
     /// Sektor-lokal): (Höhe = Position.y, Index x = Position.x / 3, Index z = Position.z / 3, 0). Gilt ebenso für die eingesetzten
     /// BLOCK-Teile und Schürzen (beliebige Lage: der VS rechnet Index · 3 zurück). Einmal je Mesh, im Hintergrund wie die Tangenten.
     /// </summary>
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<VulkanMesh, Task<Vector4[]?>> _hmJobs = new();
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<VulkanMesh, MeshJob> _hmJobs = new();
 
     private bool EnsureHeightMapStream(VulkanMesh m)
     {
         if (m.HmBuf.Handle != 0) return true;
         if (_hmJobs.TryGetValue(m, out var job))
         {
-            if (!job.IsCompleted) return false;
+            if (!job.Done) return false;
             _hmJobs.Remove(m);
-            var res = job.IsCompletedSuccessfully ? job.Result : null;
-            if (res == null) return false;
-            CreateHostBuffer((ulong)(res.Length * 16), BufferUsageFlags.VertexBufferBit, out m.HmBuf, out m.HmMem);
-            fixed (Vector4* src = res) System.Buffer.MemoryCopy(src, m.HmMem.Mapped, res.Length * 16, res.Length * 16);
+            if (job.Error != null || job.Data.Length == 0) return false;
+            CreateHostBuffer((ulong)(job.Count * 16), BufferUsageFlags.VertexBufferBit, out m.HmBuf, out m.HmMem);
+            fixed (Vector4* src = job.Data) System.Buffer.MemoryCopy(src, m.HmMem.Mapped, job.Count * 16L, job.Count * 16L);
+            ArrayPool<Vector4>.Shared.Return(job.Data);
             return true;
         }
         if (m.HmTried) return false;
@@ -725,29 +899,43 @@ public sealed unsafe partial class VulkanRenderer
         int n = m.VCount;
         if (n <= 0 || m.VMem.Mapped == null) return false;
         int stride = (int)MeshVertex.SizeInBytes;
-        var vb = new byte[n * stride];
-        fixed (byte* d = vb) System.Buffer.MemoryCopy(m.VMem.Mapped, d, vb.Length, vb.Length);
-        _hmJobs.AddOrUpdate(m, Task.Run(() => ComputeHeightMapStream(vb, n, stride)));
+        var vb = ArrayPool<byte>.Shared.Rent(n * stride);
+        new ReadOnlySpan<byte>(m.VMem.Mapped, n * stride).CopyTo(vb);
+        var newJob = new MeshJob { Vb = vb, N = n, Stride = stride, HeightMap = true };
+        _hmJobs.AddOrUpdate(m, newJob);
+        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(s_runMeshJob, newJob, false);
         return false;
     }
 
-    private static Vector4[]? ComputeHeightMapStream(byte[] vbData, int n, int stride)
+    private static (Vector4[] Data, int Count)? ComputeHeightMapStreamPooled(byte[] vbData, int n, int stride)
     {
-        var o = new Vector4[n];
-        const float inv = 1f / OriginalMaterial.HeightMapSpacing;
-        fixed (byte* vb = vbData)
-            for (int i = 0; i < n; i++)
-            {
-                var p = *(Vector3*)(vb + i * stride);
-                o[i] = new Vector4(p.Y, p.X * inv, p.Z * inv, 0f);
-            }
-        return o;
+        var o = ArrayPool<Vector4>.Shared.Rent(n);
+        try
+        {
+            const float inv = 1f / OriginalMaterial.HeightMapSpacing;
+            fixed (byte* vb = vbData)
+                for (int i = 0; i < n; i++)
+                {
+                    var p = *(Vector3*)(vb + i * stride);
+                    o[i] = new Vector4(p.Y, p.X * inv, p.Z * inv, 0f);
+                }
+            return (o, n);
+        }
+        catch { ArrayPool<Vector4>.Shared.Return(o); throw; }
+        finally { ArrayPool<byte>.Shared.Return(vbData); }
     }
 
-    private static Vector4[]? ComputeTangents(byte[] vbData, uint[] ib, int n, int stride, int uvOff)
+    private static (Vector4[] Data, int Count)? ComputeTangentsPooled(byte[] vbData, uint[] ib, int n, int stride, int uvOff)
     {
-        var tan = new Vector3[n]; var bit = new Vector3[n];
-        var o = new Vector4[n * 2];
+        var o = ArrayPool<Vector4>.Shared.Rent(n * 2);
+        try { ComputeTangentsInto(o, vbData, ib, n, stride, uvOff); return (o, n * 2); }
+        catch { ArrayPool<Vector4>.Shared.Return(o); throw; }
+        finally { ArrayPool<byte>.Shared.Return(vbData); ArrayPool<uint>.Shared.Return(ib); }
+    }
+
+    private static void ComputeTangentsInto(Vector4[] o, byte[] vbData, uint[] ib, int n, int stride, int uvOff)
+    {
+        new Span<Vector4>(o, 0, n * 2).Clear();
         fixed (byte* vb = vbData)
         {
             for (int t = 0; t + 2 < ib.Length; t += 3)
@@ -763,22 +951,29 @@ public sealed unsafe partial class VulkanRenderer
                 float r = 1f / det;
                 var sdir = (e1 * d2.Y - e2 * d1.Y) * r;
                 var tdir = (e2 * d1.X - e1 * d2.X) * r;
-                tan[a] += sdir; tan[b] += sdir; tan[c] += sdir;
-                bit[a] += tdir; bit[b] += tdir; bit[c] += tdir;
+                // Die ersten drei Floats jedes Eintrags sind die akkumulierte Tangente/Binormale (w bleibt bis zur Normalisierung 0).
+                o[a * 2].X += sdir.X; o[a * 2].Y += sdir.Y; o[a * 2].Z += sdir.Z;
+                o[b * 2].X += sdir.X; o[b * 2].Y += sdir.Y; o[b * 2].Z += sdir.Z;
+                o[c * 2].X += sdir.X; o[c * 2].Y += sdir.Y; o[c * 2].Z += sdir.Z;
+                o[a * 2 + 1].X += tdir.X; o[a * 2 + 1].Y += tdir.Y; o[a * 2 + 1].Z += tdir.Z;
+                o[b * 2 + 1].X += tdir.X; o[b * 2 + 1].Y += tdir.Y; o[b * 2 + 1].Z += tdir.Z;
+                o[c * 2 + 1].X += tdir.X; o[c * 2 + 1].Y += tdir.Y; o[c * 2 + 1].Z += tdir.Z;
             }
             for (int i = 0; i < n; i++)
             {
+                var ct = o[i * 2]; var cb = o[i * 2 + 1];
+                var tan = new Vector3(ct.X, ct.Y, ct.Z);
+                var bit = new Vector3(cb.X, cb.Y, cb.Z);
                 var nr = *(Vector3*)(vb + i * stride + 12);
                 if (nr.LengthSquared() < 1e-12f) nr = Vector3.UnitY; else nr = Vector3.Normalize(nr);
-                var t = tan[i] - nr * Vector3.Dot(nr, tan[i]);
+                var t = tan - nr * Vector3.Dot(nr, tan);
                 if (t.LengthSquared() < 1e-12f) t = Vector3.Cross(MathF.Abs(nr.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX, nr);
                 t = Vector3.Normalize(t);
-                float w = Vector3.Dot(Vector3.Cross(nr, t), bit[i]) < 0f ? -1f : 1f;
+                float w = Vector3.Dot(Vector3.Cross(nr, t), bit) < 0f ? -1f : 1f;
                 o[i * 2] = new Vector4(t, w);
                 o[i * 2 + 1] = new Vector4(Vector3.Cross(nr, t) * w, 0f);
             }
         }
-        return o;
     }
 
     private void DestroyOriginal()

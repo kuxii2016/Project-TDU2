@@ -22,6 +22,11 @@ public sealed class OriginalMaterial
     public MaterialDef Def = null!;
     /// <summary>Parameter, die vor denen von <see cref="Def"/> gelten (Autolack aus &lt;car&gt;_color.2dm).</summary>
     public MaterialDef? Over;
+    /// <summary>Einmal je Shader und Material aufgelöste, szenenunabhängige Konstanten (siehe <see cref="OriginalConstants.Fill"/>).</summary>
+    internal readonly Dictionary<OriginalConstants.Entry[], OriginalConstants.CachedMaterialConstants> ConstantValues =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    /// <summary>Ein Look-up je Draw für VS+PS statt zwei (mit fertigen Material-Fallbackwerten).</summary>
+    internal readonly Dictionary<OriginalProgram, OriginalConstants.CachedProgramConstants> ProgramConstants = new();
     /// <summary>Der VS liest TANGENT/BINORMAL (Renderer berechnet sie je Mesh).</summary>
     public bool NeedsTangents;
     public readonly IGpuTexture?[] Slots = new IGpuTexture?[16];
@@ -125,11 +130,19 @@ public sealed class OriginalMaterial
     public uint ProjMask;
     public ulong ProjBound;
 
+    // Einmal je Material aus den CTAB-Deklarationen beider Shader (inkl. Regen-Permutation) ermittelt.
+    // SamplerType() lief vorher bei jedem BuildOriginalSet 16× über einen Shaders()-Iterator.
+    readonly int[] _samplerTypes = new int[16];
+
     public static OriginalMaterial? Create(OriginalProgram? prog, MaterialDef def, Func<ulong, TextureWrap, TextureWrap, IGpuTexture?> getTexture, bool interior)
     {
         if (prog == null || (!AllSets && !EnabledSets.Contains(prog.Library.Name))) return null;
         if (PendingSets.Contains(prog.Library.Name)) return null;
         if (prog.Vs.Parsed == null || prog.Ps.Parsed == null) return null;
+        // Konstanten-Klassifikation einmal beim Materialaufbau statt beim ersten Draw. Erst dort ist die Permutation
+        // endgültig bekannt; die Shader-Parsings sind hier bereits erfolgt. Keine Bild- oder Zustandsänderung.
+        prog.VsEntries ??= OriginalConstants.EntriesOf(prog.Vs.Parsed!);
+        prog.PsEntries ??= OriginalConstants.EntriesOf(prog.Ps.Parsed!);
         // Volumen-Texturen (dcl_volume) hat der Renderer noch nicht
         foreach (var sh in new[] { prog.Vs.Parsed, prog.Ps.Parsed })
             foreach (var d in sh.Decls) if (d.RegType == 10 && d.SamplerType == 4) return null;
@@ -137,8 +150,14 @@ public sealed class OriginalMaterial
         if (string.Equals(prog.Library.Name, "TD_Road", StringComparison.OrdinalIgnoreCase))
         {
             var rain = OriginalShaderSystem.Resolve(def, true);
-            if (rain != null && rain.Vs.Parsed != null && rain.Ps.Parsed != null) m.RainProgram = rain;
+            if (rain != null && rain.Vs.Parsed != null && rain.Ps.Parsed != null)
+            {
+                rain.VsEntries ??= OriginalConstants.EntriesOf(rain.Vs.Parsed!);
+                rain.PsEntries ??= OriginalConstants.EntriesOf(rain.Ps.Parsed!);
+                m.RainProgram = rain;
+            }
         }
+        for (int i = 0; i < 16; i++) m._samplerTypes[i] = m.SamplerTypeCore(i);
         m.HeightMapInput = string.Equals(prog.Library.Name, "TD_HeightMap", StringComparison.OrdinalIgnoreCase);
         // Nachtlicht-Karten (TD_Building s8 gNightLightMapSampler, TD_Furnitures s7) und Sektortextur (TD_Ground s2 / TD_Road s5
         // gTexSamplerShadowMap, Kanäle Schatten/Nacht) ohne Textur: schwarz statt weiß, sonst leuchten Objekte nachts voll. Alle anderen leeren Slots bleiben weiß (Cockpit/Spiegel).
@@ -222,7 +241,9 @@ public sealed class OriginalMaterial
     }
 
     /// <summary>Sampler-Typ eines Slots laut dcl der beiden Shader: 2 = 2D, 3 = Würfel, 4 = Volumen, 0 = unbenutzt.</summary>
-    public int SamplerType(int slot)
+    public int SamplerType(int slot) => (uint)slot < 16u ? _samplerTypes[slot] : 0;
+
+    int SamplerTypeCore(int slot)
     {
         foreach (var sh in Shaders())
             foreach (var d in sh.Decls)

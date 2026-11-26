@@ -145,6 +145,8 @@ public sealed class GameLoop : IDisposable
                 using (s_mEnd.Auto())
                     _renderer.EndFrame();
             }
+            // Erst nach dem Sichtbarmachen zählen: ein Bild, das wirklich sichtbar gerendert/presentiert wurde.
+            if (_window.IsVisible) time.VisibleFrames++;
             // Erst jetzt anzeigen: Renderer, Module und das erste Bild (schwarzer Shader-Cache-/Startbildschirm) sind fertig
             if (time.FrameCount == 0) _window.Show();
             Overlay.RecordFrame(now, frame, 0, 0);

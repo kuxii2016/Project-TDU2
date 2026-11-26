@@ -422,11 +422,12 @@ namespace Paradise.Core.Vehicles
             _lights.CollectLamps(output, Current.VisualPose, UnityToRender(gameToRender));
         }
 
-        /// <summary>Scheinwerfer-Projektor des eigenen Autos (Original Art 0, Lichtpuffer s15) anhängen; cameraRender = Kamera im Render-Raum.</summary>
-        public void CollectProjectors(List<HeadlightProjector> output, Matrix4x4 gameToRender, Vector3 cameraRender)
+        /// <summary>Scheinwerfer-Projektor des eigenen Autos (Original Art 0, Lichtpuffer s15) anhängen; cameraRender = Kamera im Render-Raum.
+        /// minStrength &gt; 0 erzeugt eine Kopie für das PostFX-Volumen ohne den Original-Lichtpuffer zu ändern.</summary>
+        public void CollectProjectors(List<HeadlightProjector> output, Matrix4x4 gameToRender, Vector3 cameraRender, float minStrength = 0f)
         {
             if (Current == null || _lights == null) return;
-            _lights.CollectProjector(output, Current.VisualPose, UnityToRender(gameToRender), true, cameraRender);
+            _lights.CollectProjector(output, Current.VisualPose, UnityToRender(gameToRender), true, cameraRender, minStrength);
         }
 
         /// <summary>Lage des Fahrzeugs in Spielkoordinaten.</summary>

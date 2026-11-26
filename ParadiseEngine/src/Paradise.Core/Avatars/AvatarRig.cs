@@ -210,6 +210,7 @@ public sealed class AvatarRig
         var uv0 = pr.Uv[0];
         var uv1 = pr.Uv.Length > 1 ? pr.Uv[1] : uv0;
         var uv2 = pr.Uv.Length > 2 ? pr.Uv[2] : uv0;
+        var uv3 = pr.Uv.Length > 3 ? pr.Uv[3] : uv2;   // Original-Shader: LAYER3 liegt auf TEXCOORD3
         int n = Skeleton.Count;
         for (int v = 0; v < pos.Length; v++)
         {
@@ -236,14 +237,24 @@ public sealed class AvatarRig
             o.Position = p;
             o.Normal = l > 1e-6f ? nn / l : Vector3.UnitY;
             o.Uv0 = uv0[v]; o.Uv1 = uv1[v]; o.Uv2 = uv2[v];
-            // Tangente für den Avatar-Shader: Richtung oktaeder-kodiert in Uv3, Farbe B = 0 als Kennung, G = Händigkeit
-            float lt = tt.Length();
-            if (t4.W != 0f && lt > 1e-6f)
+            if (GraphicsSettings.RenderUseOriginal)
             {
-                o.Uv3 = OctEncode(tt / lt);
-                o.Color = ObjectVertex.PackColor(255, (byte)(t4.W < 0f ? 0 : 255), 0, 255);
+                // Die übersetzten Original-Shader (z.B. TD_Clothe2 vs92) lesen TEXCOORD3 als echten UV-Satz für LAYER3.
+                // Die Tangente kommt bei ihnen über TANGENT/BINORMAL aus dem Mesh, nicht aus Uv3.
+                o.Uv3 = uv3[v];
+                o.Color = 0xFFFFFFFFu;   // keine Tangenten-Kennung für den eigenen Shader
             }
-            else { o.Uv3 = Vector2.Zero; o.Color = 0xFFFFFFFFu; }
+            else
+            {
+                // Tangente für den eigenen Avatar-Shader: Richtung oktaeder-kodiert in Uv3, Farbe B = 0 als Kennung, G = Händigkeit
+                float lt = tt.Length();
+                if (t4.W != 0f && lt > 1e-6f)
+                {
+                    o.Uv3 = OctEncode(tt / lt);
+                    o.Color = ObjectVertex.PackColor(255, (byte)(t4.W < 0f ? 0 : 255), 0, 255);
+                }
+                else { o.Uv3 = Vector2.Zero; o.Color = 0xFFFFFFFFu; }
+            }
         }
     }
 

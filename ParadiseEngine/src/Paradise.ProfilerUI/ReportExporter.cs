@@ -49,7 +49,7 @@ internal static class ReportExporter
         foreach (var kv in Profiler.GetInfo()) sb.AppendLine("- " + kv.Key + ": " + kv.Value);
         sb.AppendLine("- CPU-Threads: " + Environment.ProcessorCount.ToString(Inv) + ", OS: " + Environment.OSVersion);
 #if DEBUG
-        sb.AppendLine("- Build: **Debug** (unoptimiert – absolute Zeiten sind höher als im Release; für echte Werte Release mit -p:Profiler=true messen)");
+        sb.AppendLine("- Build: **Debug** (DEBUG-Symbole, Profiler und Dev-Menü aktiv, JIT-Optimierungen aktiv – kein Release)");
 #else
         sb.AppendLine("- Build: Release");
 #endif

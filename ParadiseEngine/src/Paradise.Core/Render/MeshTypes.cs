@@ -54,6 +54,9 @@ public sealed class TextureUpload
     public GpuTextureFormat Format;
     public int Mips = 1;
     public byte[] Blocks = Array.Empty<byte>();
+    /// <summary>Start der Mip-Kette innerhalb von <see cref="Blocks"/> (BC-Texturen aus .2db: DataOffset).
+    /// Der Renderer kopiert beim Upload nur ab diesem Offset – sonst würde jedes neu geladene Sektorbild einmal komplett dupliziert.</summary>
+    public int BlockOffset;
     public TextureWrap WrapU = TextureWrap.Repeat, WrapV = TextureWrap.Repeat;
     public string? Name;
     /// <summary>Kopie auf die GPU erst im nächsten Bild vor dem Zeichnen (kein Warten auf die GPU) – für viele kleine Texturen (Flash).</summary>
@@ -122,6 +125,11 @@ public enum MaterialKind
     Lightning,
     /// <summary>TDU2/Avatar bzw. TDU2/AvatarBlend (AvBlend) – Avatare: Haut/Kleidung/Textur/Haare/Auge (AvMode), gehäutet auf der CPU (ObjectVertex).</summary>
     Avatar,
+    /// <summary>
+    /// TD_Impostor – ferne 2D-Bäume (V_*_H-I, 4 Vertices): zylindrisch zur Kamera ausgerichtetes Quad,
+    /// Höhe unverändert, nur die horizontale Ausdehnung wird gedreht. Alpha-Test, Ambient-Licht (ObjectVertex).
+    /// </summary>
+    Impostor,
 }
 
 /// <summary>Material-Beschreibung (in Unity: Material + Shader-Properties). Defaults = Shader-Defaults.</summary>
@@ -350,6 +358,7 @@ public sealed class RenderStats
     public long GpuMemoryAllocated;      // vom Allokator belegte Blöcke (Bytes)
     public long VramTotal;               // Device-Local-Heap (Bytes)
     public long VramBudget, VramUsage;   // VK_EXT_memory_budget (0 = nicht verfügbar)
+    public uint VendorId, DeviceId;      // PCI-ID des Vulkan-Geräts (für GPU-Telemetrie)
     public string DeviceName = "", DeviceType = "", Driver = "", Api = "";
     public int Width, Height;
     public bool VSync;
@@ -422,6 +431,8 @@ public struct FrameGlobals
     /// <summary>Scheinwerfer-Projektoren des Originals (einer je Auto) für den Lichtpuffer s15 (MapStreamer.HeadlightProjectors).</summary>
     public HeadlightProjector[]? Projectors;
     public int ProjectorCount;
+    /// <summary>Eigene Kopie des Spieler-Projektors für das PostFX-Volumen (Mindeststärke 1), unabhängig von <see cref="Projectors"/>.</summary>
+    public HeadlightProjector? PlayerProjector;
     public float ShadowStrength;        // Light.shadowStrength (0 = keine Schatten)
     public float ShadowDistance;        // QualitySettings.shadowDistance (m)
     public Vector2 Origin;              // _TDU2Origin.xz: Render-Position des Spielursprungs (Wasserwellen)

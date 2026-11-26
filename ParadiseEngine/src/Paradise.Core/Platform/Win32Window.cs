@@ -109,6 +109,9 @@ public sealed class Win32Window : IGameWindow
 
     bool _shown;
 
+    /// <summary>Ob das Fenster bereits sichtbar gemacht wurde.</summary>
+    public bool IsVisible => _shown;
+
     /// <summary>Fenster sichtbar machen (einmalig, nach dem ersten gezeichneten Bild).</summary>
     public void Show()
     {

@@ -627,6 +627,44 @@ void main() {
     outColor = vec4(TDU2Fog(albedo * fr.sunColor.rgb * x * TDU2Shadow(vWorld, vNormal) + albedo * fr.ambient.rgb, vWorld), 1.0);
 }";
 
+    // TD_Impostor (V_*_H-I): 4-Vertices-Quad, inPos.y = Höhe, inPos.z = horizontale Ausdehnung.
+    // Nur die Horizontale wird zylindrisch zur Kamera gedreht; die Höhe bleibt unverändert (keine Streckung).
+    //  color = _Color, p0.x = _Cutoff
+    public const string ImpostorVert = Common + ObjectInputs + Instancing + ObjectMat + @"
+layout(location = 0) out vec2 vUv;
+layout(location = 1) out vec3 vWorld;
+void main() {
+    mat4 M = TDU2Model();
+    vec3 origin = M[3].xyz;
+    // lokale Y-Achse in Welt (Höhe, Skalierung aus der Instanzmatrix)
+    vec3 sy = M[1].xyz;
+    float syLen = length(sy);
+    vec3 up = syLen > 1e-6 ? sy / syLen : vec3(0.0, 1.0, 0.0);
+    // lokale Z-Achse = Breite der Karte; nur diese kommt auf die Kamera-Rechte (XZ-Projektion)
+    float szLen = length(M[2].xyz);
+    vec3 right = vec3(fr.viewRight.x, 0.0, fr.viewRight.z);
+    float rl = length(right);
+    right = rl > 1e-6 ? right / rl : vec3(1.0, 0.0, 0.0);
+    vec3 wp = origin + up * (inPos.y * syLen) + right * (inPos.z * szLen);
+    gl_Position = pc.viewProj * vec4(wp, 1.0);
+    vUv = inUv0;
+    vWorld = wp;
+}";
+
+    public const string ImpostorFrag = Common + ObjectMat + @"
+layout(set = 0, binding = 0) uniform sampler2D mainTex;
+layout(location = 0) in vec2 vUv;
+layout(location = 1) in vec3 vWorld;
+layout(location = 0) out vec4 outColor;
+void main() {
+    vec4 c = texture(mainTex, vUv) * m.color;
+    if (c.a < m.p0.x) discard;                                  // alphatest
+    // TD_Impostor.ps: tex * (__AmbLight_Ambient_1 + __AmbLight_Ambient_0). Der verschwindend kleine
+    // zweite Slot (impostor_ambient ~0,2 gamma) ist hier als konstanter linearer Anteil enthalten.
+    vec3 amb = fr.ambient.rgb + vec3(0.033);
+    outColor = vec4(TDU2Fog(c.rgb * amb, vWorld), 1.0);
+}";
+
     // SpriteGlow
     //  color = _Color
     //  p0: _Intensity, _NightOnly

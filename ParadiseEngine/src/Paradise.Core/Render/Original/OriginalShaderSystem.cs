@@ -91,6 +91,11 @@ public sealed class OriginalProgram
     public int Differences;
     /// <summary>Schalter der gewählten Permutation (für Vergleich/Protokoll).</summary>
     public byte[]? Spec;
+    /// <summary>Klassifizierte Konstanten einmal je Shader, nicht je Draw aus dem ConditionalWeakTable holen.</summary>
+    public OriginalConstants.Entry[]? VsEntries, PsEntries;
+    /// <summary>Bitmaske gelesener Konstanten – einmal je Programm statt je Draw neu aus beiden Entry-Arrays zusammensetzen.</summary>
+    public ulong ConstantMask;
+    public bool MaskReady;
     public string Name => Library.Name + " vs" + VsIndex + "/ps" + PsIndex;
 }
 

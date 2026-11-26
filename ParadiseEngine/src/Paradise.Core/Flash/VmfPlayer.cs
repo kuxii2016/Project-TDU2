@@ -335,17 +335,30 @@ namespace Paradise.Core.Flash
         public DisplayObject Find(string path, Instance from = null)
         {
             if (Root == null || string.IsNullOrEmpty(path)) return null;
-            var inst = path.StartsWith("/") ? Root : (from ?? Root);
+            // Perf: Pfad ohne Split/Substrings laufen lassen. Find() wird pro Bild hunderte Male
+            // (HUD, GPS, Minimap, AS2-SetTarget) mit denselben Pfaden aufgerufen; Split erzeugte
+            // dabei ein String-Array und eine neue Teilzeichenfolge je Segment -> viel GC.
+            var span = path.AsSpan();
+            bool slash = IsSlashPath(path);
+            char sep = slash ? '/' : '.';
+            var inst = slash && span[0] == '/' ? Root : (from ?? Root);
             DisplayObject cur = null;
-            foreach (var part in (IsSlashPath(path) ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
+            int pos = 0;
+            while (pos < span.Length)
             {
-                if (part == "_root") { inst = Root; continue; }
-                if (part == "..") { inst = inst?.Owner?.Parent; cur = inst?.Owner; continue; }   // "x/.." endet auf dem Elternclip
+                int rel = span[pos..].IndexOf(sep);
+                int len = rel < 0 ? span.Length - pos : rel;
+                var part = span.Slice(pos, len);
+                pos += len + 1;   // Trennzeichen überspringen (bei rel < 0: hinter das Ende)
+                if (part.IsEmpty) continue;
+                if (part.SequenceEqual("_root".AsSpan())) { inst = Root; continue; }
+                if (part.SequenceEqual("..".AsSpan())) { inst = inst?.Owner?.Parent; cur = inst?.Owner; continue; }   // "x/.." endet auf dem Elternclip
                 if (inst == null) return null;
                 cur = null;
                 // "#12" = unbenanntes Objekt auf Tiefe 12 (so zeigt es der Flash Debugger)
-                if (part.Length > 1 && part[0] == '#' && int.TryParse(part.Substring(1), out int dep)) inst.List.TryGetValue(dep, out cur);
-                else foreach (var d in inst.List.Values) if (string.Equals(d.Name, part, StringComparison.OrdinalIgnoreCase)) { cur = d; break; }
+                if (part.Length > 1 && part[0] == '#' && int.TryParse(part[1..], out int dep)) inst.List.TryGetValue(dep, out cur);
+                else foreach (var d in inst.List.Values)
+                    if (d.Name != null && part.Equals(d.Name.AsSpan(), StringComparison.OrdinalIgnoreCase)) { cur = d; break; }
                 if (cur == null) return null;
                 inst = cur.Sprite;
             }
@@ -668,6 +681,21 @@ namespace Paradise.Core.Flash
         }
         void ReturnList(List<DisplayObject> l) { l.Clear(); _listPool.Push(l); }
 
+        // Perf: GotoFrame baut bei Rücksprüngen temporär eine Kopie der Anzeigeliste und eine Defer-Liste.
+        // Looende HUD-Clips rufen das mehrfach pro Bild auf -> frische Dictionary/List-Objekte waren messbar GC-Druck.
+        readonly Stack<Dictionary<int, DisplayObject>> _gotoKeepPool = new();
+        readonly Stack<List<DisplayObject>> _gotoDeferPool = new();
+        Dictionary<int, DisplayObject> RentGotoKeep(IEnumerable<KeyValuePair<int, DisplayObject>> src)
+        {
+            var d = _gotoKeepPool.Count > 0 ? _gotoKeepPool.Pop() : new Dictionary<int, DisplayObject>();
+            d.Clear();
+            foreach (var kv in src) d[kv.Key] = kv.Value;
+            return d;
+        }
+        void ReturnGotoKeep(Dictionary<int, DisplayObject> d) { d.Clear(); _gotoKeepPool.Push(d); }
+        List<DisplayObject> RentGotoDefer() => _gotoDeferPool.Count > 0 ? _gotoDeferPool.Pop() : new List<DisplayObject>();
+        void ReturnGotoDefer(List<DisplayObject> l) { l.Clear(); _gotoDeferPool.Push(l); }
+
         // Profiler-Abschnitte von Update (je Film darüber: FlashHost "Flash.Update: <bank>")
         static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mRasters = new("Flash: rasters / uploads", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
         static readonly global::Paradise.Core.Diagnostics.ProfilerMarker s_mInput = new("Flash: mouse / input", global::Paradise.Core.Diagnostics.ProfilerCategory.UI);
@@ -753,21 +781,25 @@ namespace Paradise.Core.Flash
             if (frame < inst.Frame || inst.Frame < 0)
             {
                 // zurück: neu aufbauen (bestehende Objekte mit gleicher Tiefe/Charakter bleiben erhalten -> Sprites behalten Zustand)
-                var keep = new Dictionary<int, DisplayObject>(inst.List);
+                var keep = RentGotoKeep(inst.List);
                 inst.List.Clear();
                 start = 0;
-                if (frame > 0) defer = new List<DisplayObject>();
+                if (frame > 0) defer = RentGotoDefer();
                 for (int f = 0; f <= frame; f++) ApplyFrame(inst, f, keep, defer);
+                ReturnGotoKeep(keep);
             }
             else
             {
                 start = inst.Frame + 1;
-                if (frame > start) defer = new List<DisplayObject>();
+                if (frame > start) defer = RentGotoDefer();
                 for (int f = start; f <= frame; f++) ApplyFrame(inst, f, null, defer);
             }
             if (defer != null)
+            {
                 foreach (var o in defer)
                     if (o.Sprite != null && inst.List.TryGetValue(o.Depth, out var cur) && ReferenceEquals(cur, o)) GotoFrame(o.Sprite, 0, true);
+                ReturnGotoDefer(defer);
+            }
             inst.Frame = frame;
             if (runActions)
                 foreach (var op in tl.Frames[frame])
@@ -855,13 +887,23 @@ namespace Paradise.Core.Flash
 
         Instance FindRelative(Instance from, string path)
         {
+            // Wie Find(): Pfadsegmente als Span, ohne Array/Teilstrings pro Aufruf.
             var inst = from;
-            foreach (var part in (IsSlashPath(path) ? path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries) : path.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries)))
+            var span = path.AsSpan();
+            char sep = IsSlashPath(path) ? '/' : '.';
+            int pos = 0;
+            while (pos < span.Length)
             {
                 if (inst == null) return null;
-                if (part == "..") { inst = inst.Owner?.Parent; continue; }
+                int rel = span[pos..].IndexOf(sep);
+                int len = rel < 0 ? span.Length - pos : rel;
+                var part = span.Slice(pos, len);
+                pos += len + 1;
+                if (part.IsEmpty) continue;
+                if (part.SequenceEqual("..".AsSpan())) { inst = inst.Owner?.Parent; continue; }
                 DisplayObject hit = null;
-                foreach (var d in inst.List.Values) if (string.Equals(d.Name, part, StringComparison.OrdinalIgnoreCase)) { hit = d; break; }
+                foreach (var d in inst.List.Values)
+                    if (d.Name != null && part.Equals(d.Name.AsSpan(), StringComparison.OrdinalIgnoreCase)) { hit = d; break; }
                 inst = hit?.Sprite;
             }
             return inst;

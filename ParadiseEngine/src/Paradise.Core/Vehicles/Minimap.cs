@@ -31,6 +31,10 @@ namespace Paradise.Core.Vehicles
         public int PlayerCount = 1;
         bool? _appliedOnline; int _appliedPlayers = -1; string? _lastOnlineVar, _lastPlayersVar;
         int _appliedRace;
+        // Perf: feste Pfade und Spielerzahl-Text einmal je Wert statt pro Bild neu erzeugen (Profiler: ~211 KB/Bild).
+        string? _playerCountText; int _playerCountTextFor = int.MinValue;
+        Comparison<(V3 w, Color32 c)>? _dotCompare;
+        V3 _dotSortCar;
 
         /// <summary>
         /// Teilnehmer des laufenden Rennens (Spieler + Gegner, ohne Ausgeschiedene); 0 = kein Rennen. Die exe zeigt in
@@ -78,7 +82,7 @@ namespace Paradise.Core.Vehicles
                 if (_appliedRace != RaceParticipants)
                 {
                     _appliedRace = RaceParticipants;
-                    _hud.SetVariable("/:nb_FRplayers", RaceParticipants > 1 ? RaceParticipants.ToString() : "");
+                    _hud.SetVariable("/:nb_FRplayers", RaceParticipants > 1 ? (PlayerText(RaceParticipants)) : "");
                     _hud.GotoLabel("/HUD/minimap/nb_players/in_out", "in", true);
                 }
                 return;
@@ -89,18 +93,29 @@ namespace Paradise.Core.Vehicles
                 _appliedOnline = OnlineStatus;
                 _hud.GotoLabel("/HUD/minimap/ic_status", OnlineStatus ? "connected" : "disconnected", true);
                 _hud.SetVariable("/:IsOnline", OnlineStatus ? "1" : "0"); _lastOnlineVar = _hud.GetVariable("/:IsOnline");
-                _hud.SetVariable("/:nb_FRplayers", PlayerCount.ToString());
+                _hud.SetVariable("/:nb_FRplayers", PlayerTextCached());
                 _hud.GotoLabel("/HUD/minimap/nb_players/in_out", OnlineStatus ? "in" : "out", true);
             }
             if (_appliedPlayers != PlayerCount)
             {
                 bool first = _appliedPlayers < 0;
                 _appliedPlayers = PlayerCount;
-                _hud.SetVariable("/:nb_FRplayers", PlayerCount.ToString());
-                _hud.SetVariable("/:nb_players", PlayerCount.ToString());
-                _hud.SetVariable("/:NbPlayers", PlayerCount.ToString()); _lastPlayersVar = _hud.GetVariable("/:NbPlayers");
+                string count = PlayerTextCached();
+                _hud.SetVariable("/:nb_FRplayers", count);
+                _hud.SetVariable("/:nb_players", count);
+                _hud.SetVariable("/:NbPlayers", count); _lastPlayersVar = _hud.GetVariable("/:NbPlayers");
                 if (OnlineStatus || !first) _hud.GotoLabel("/HUD/minimap/nb_players/in_out", "in", true);
             }
+        }
+        static string PlayerText(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string PlayerTextCached()
+        {
+            if (_playerCountText == null || _playerCountTextFor != PlayerCount)
+            {
+                _playerCountTextFor = PlayerCount;
+                _playerCountText = PlayerText(PlayerCount);
+            }
+            return _playerCountText;
         }
         bool IcStatusShows(string label)
         {
@@ -144,6 +159,16 @@ namespace Paradise.Core.Vehicles
         static readonly string?[] _objLabel = new string?[8];
         static readonly int[] _objNum = { int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue, int.MinValue };
         static readonly bool[] _objShown = new bool[8];
+        static readonly string[] s_objPaths =
+        {
+            "/HUD/minimap/objectif_01", "/HUD/minimap/objectif_02", "/HUD/minimap/objectif_03", "/HUD/minimap/objectif_04",
+            "/HUD/minimap/objectif_05", "/HUD/minimap/objectif_06", "/HUD/minimap/objectif_07", "/HUD/minimap/objectif_08",
+        };
+        static readonly string[] s_objNumPaths =
+        {
+            "/HUD/minimap/objectif_01:num_radar", "/HUD/minimap/objectif_02:num_radar", "/HUD/minimap/objectif_03:num_radar", "/HUD/minimap/objectif_04:num_radar",
+            "/HUD/minimap/objectif_05:num_radar", "/HUD/minimap/objectif_06:num_radar", "/HUD/minimap/objectif_07:num_radar", "/HUD/minimap/objectif_08:num_radar",
+        };
         // Kartenfeld von mmap_lure in /HUD/minimap (siehe LureCenter): 181.6 x 180.3 Bühnenpixel
         const float LureW = 181.6f, LureH = 180.3f;
 
@@ -171,7 +196,7 @@ namespace Paradise.Core.Vehicles
             float span = 2f * MathF.Max(1f, _range);
             for (int i = 0; i < Objectives.Length; i++)
             {
-                string path = "/HUD/minimap/objectif_" + (i + 1).ToString("00");
+                string path = s_objPaths[i];
                 var o = Objectives[i];
                 if (!o.Active || string.IsNullOrEmpty(o.Label))
                 {
@@ -183,7 +208,7 @@ namespace Paradise.Core.Vehicles
                 float v = System.Math.Clamp(0.5f - (rx * fwd.X + rz * fwd.Z) / span, 0f, 1f);   // Bühne: y nach unten, oben = Fahrtrichtung
                 if (!_objShown[i]) { _hud.SetVisible(path, true); _objShown[i] = true; }
                 if (_objLabel[i] != o.Label) { _hud.GotoLabel(path, o.Label, false); _objLabel[i] = o.Label; _objNum[i] = int.MinValue; }
-                if (_objNum[i] != o.Num) { _hud.SetVariable(path + ":num_radar", o.Num >= 0 ? o.Num.ToString() : ""); _objNum[i] = o.Num; }
+                if (_objNum[i] != o.Num) { _hud.SetVariable(s_objNumPaths[i], o.Num >= 0 ? PlayerText(o.Num) : ""); _objNum[i] = o.Num; }
                 _hud.SetPosition(path, new Vector2(LureCenter.x - LureW * 0.5f + u * LureW, LureCenter.y - LureH * 0.5f + v * LureH));
             }
         }
@@ -197,6 +222,13 @@ namespace Paradise.Core.Vehicles
             if (ShowPlayerDots) foreach (var d in PlayerDots) _dots.Add((d.pos, d.col));
         }
 
+        int CompareDots((V3 w, Color32 c) a, (V3 w, Color32 c) b)
+        {
+            float ax = a.w.X - _dotSortCar.X, az = a.w.Z - _dotSortCar.Z;
+            float bx = b.w.X - _dotSortCar.X, bz = b.w.Z - _dotSortCar.Z;
+            return (bx * bx + bz * bz).CompareTo(ax * ax + az * az);
+        }
+
         /// <summary>Punkte über die Straßen: Rand (schwarz) und Füllung; außerhalb des Kartenausschnitts nicht zeigen; nahe zuletzt (oben).</summary>
         void DrawDots(V3 car, V3 fwd, V3 right, float scale, float cxp, float cyp, int px)
         {
@@ -204,7 +236,8 @@ namespace Paradise.Core.Vehicles
             if (_dots.Count == 0) return;
             float r = MathF.Max(0.5f, _range * DotSize);
             float lim = _range * 0.9f - r;
-            _dots.Sort((a, b) => V3.DistanceSquared(b.w with { Y = 0 }, car with { Y = 0 }).CompareTo(V3.DistanceSquared(a.w with { Y = 0 }, car with { Y = 0 })));
+            _dotSortCar = car;
+            _dots.Sort(_dotCompare ??= CompareDots);
             foreach (var (w, c) in _dots)
             {
                 float rx = w.X - car.X, rz = w.Z - car.Z;

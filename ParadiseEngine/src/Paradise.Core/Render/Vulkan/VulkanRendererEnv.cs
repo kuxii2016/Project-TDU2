@@ -14,7 +14,7 @@ namespace Paradise.Core.Render.Vulkan;
 /// </summary>
 public sealed unsafe partial class VulkanRenderer
 {
-    private const uint ProbeSize = 128;
+    private const uint ProbeSize = 256;
 
     private RenderPass _envPass;
     // Bodenspiegelung
@@ -445,7 +445,7 @@ public sealed unsafe partial class VulkanRenderer
             EnvPass(cmd, _luFb, _luW, _luH, _envSets[si], RenderFx.LureView, RenderFx.LureProj, skipCars: false);
             RenderFx.LureTexture = _luTex;
         }
-        _viewProj = keepVP;
+        SetViewProj(keepVP);
     }
 
     private void EnvPass(CommandBuffer cmd, Framebuffer fb, uint w, uint h, DescriptorSet set, Matrix4x4 view, Matrix4x4 proj, bool skipCars, float farLimit = 0f, Vector3? clear = null, bool sky = true)
@@ -471,7 +471,7 @@ public sealed unsafe partial class VulkanRenderer
         _activeFrameSet = set;
         _boundPipeline = null;
         if (sky && !_globals.NoSky) DrawSky(cmd, view, proj);
-        _viewProj = view * proj;
+        SetViewProj(view * proj);
         // Sichtkegel dieses Durchgangs (wie die eigene Kamera in Unity: Spiegel-/Sondenkamera culled selbst) – Kugel je Mesh.
         // Ohne das zeichnete jede Sondenseite (90°) alle Objekte des Hauptbilds noch einmal.
         var vp = view * proj;

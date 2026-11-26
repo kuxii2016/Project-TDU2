@@ -4,23 +4,31 @@ using Silk.NET.Vulkan;
 namespace Paradise.Core.Render.Vulkan;
 
 /// <summary>
-/// GPU-Zeitmessung je Abschnitt (Schatten, Spiegel/Sonde/Vorschau, Szene, Oberfläche) über Vulkan-Zeitstempel.
+/// GPU-Zeitmessung je Abschnitt (Schatten, Spiegel/Sonde/Vorschau, Szene, Post, Volumen, Oberfläche) über Vulkan-Zeitstempel.
 /// Die Werte gehen an den Engine-Profiler (F1 &gt; Performance &gt; Open Profiler, Graph "GPU Usage").
 /// Zeitstempel werden nur geschrieben, solange der Profiler aufnimmt (sonst keinerlei Kosten auf der GPU).
 /// Die Ergebnisse eines Bildes sind erst nach seinem Fence fertig, kommen also 1–2 Bilder verzögert an.
 /// </summary>
 public sealed unsafe partial class VulkanRenderer
 {
-    private const int TsPerFrame = 5;
+    private const int TsPerFrame = 7;
     private QueryPool _tsPool;
     private float _tsPeriodNs;
     private readonly bool[] _tsWritten = new bool[MaxFramesInFlight];
     private static readonly ProfilerMarker[] TsMarkers =
     {
         new("GPU Shadows", ProfilerCategory.Rendering),
-        new("GPU Mirror / Probe / Preview", ProfilerCategory.Rendering),
-        new("GPU Scene (opaque + transparent)", ProfilerCategory.Rendering),
-        new("GPU UI (Flash) + Post", ProfilerCategory.Rendering),
+        new("GPU Reflections & Probes", ProfilerCategory.Rendering),
+        new("GPU Geometry & Lighting", ProfilerCategory.Rendering),
+        new("GPU Post Processing", ProfilerCategory.Rendering),
+        new("GPU Volumetrics", ProfilerCategory.Rendering),
+        new("GPU UI Rendering", ProfilerCategory.Rendering),
+        //new("GPU Shadows", ProfilerCategory.Rendering),
+        //new("GPU Mirror / Probe / Preview", ProfilerCategory.Rendering),
+        //new("GPU Scene (opaque + transparent)", ProfilerCategory.Rendering),
+        //new("GPU Post-Processing", ProfilerCategory.Rendering),
+        //new("GPU Volumetric", ProfilerCategory.Rendering),
+        //new("GPU UI", ProfilerCategory.Rendering),
     };
     private static readonly ProfilerMarker TsTotal = new(Profiler.GpuTotalName, ProfilerCategory.Rendering);
 
@@ -36,8 +44,38 @@ public sealed unsafe partial class VulkanRenderer
     private static readonly ProfilerMarker s_mEfSort = new("EndFrame.SortOpaque", ProfilerCategory.Rendering);
     private static readonly ProfilerMarker s_mEfEnv = new("EndFrame.RenderEnvironment (mirror/probe)", ProfilerCategory.Rendering);
     private static readonly ProfilerMarker s_mEfOpaque = new("EndFrame.Sky + Opaque batches", ProfilerCategory.Rendering);
+    // Feinere Aufteilung des großen Opaque-Messpunkts, damit der Profiler die Allokationsquelle zeigt.
+    private static readonly ProfilerMarker s_mEfOpaqueSky = new("EndFrame.Opaque.Sky", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mEfOpaqueBatches = new("EndFrame.Opaque.Batches", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mEfOpaqueOriginal = new("EndFrame.Opaque.Original", ProfilerCategory.Rendering);
     private static readonly ProfilerMarker s_mEfTransp = new("EndFrame.Additive + Transparent", ProfilerCategory.Rendering);
     private static readonly ProfilerMarker s_mEfUi = new("EndFrame.Photoshop + Flash/UI + Overlay", ProfilerCategory.Rendering);
+
+    // Grobe Stamps statt eines Markers pro Draw (ein Marker pro Draw hatte den Profiler mit ~945 KB/Bild überlastet).
+    // Diese laufen höchstens wenige Male pro Bild und zeigen, ob die Probe, der Planar-Spiegel oder die Lure-Vorschau
+    // die Env-Zeit frisst – und innerhalb des Original-Pfads BuildScene/Pipeline/Konstanten/Submit trennen.
+    private static readonly ProfilerMarker s_mEnvPlanar = new("EndFrame.Env.Planar", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mEnvProbe = new("EndFrame.Env.ProbeFace", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mEnvLure = new("EndFrame.Env.Lure", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mEnvPass = new("EndFrame.EnvPass (batch + draw)", ProfilerCategory.Rendering);
+    private static readonly ProfilerMarker s_mOrigScene = new("EndFrame.Original.BuildScene", ProfilerCategory.Rendering);
+    // Aggregierte Zeiten: ein Zählerwert pro Bild, keine Profiler-Events pro Draw.
+    private static readonly ProfilerCounter s_cOrigPipeline = new("Original.Pipeline (sum/frame)", ProfilerCounters.Rendering, ProfilerUnit.Ms, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigConstants = new("Original.Constants + Fill (sum/frame)", ProfilerCounters.Rendering, ProfilerUnit.Ms, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigSubmit = new("Original.Descriptors + Submit (sum/frame)", ProfilerCounters.Rendering, ProfilerUnit.Ms, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigSetRebuilds = new("Original.Set Rebuilds (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Count, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigRippleBinds = new("Original.Ripple Binds (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Count, resetEachFrame: true);
+    // Feinere Aufteilung der 331 KB Alloc in EndFrame.Opaque.Original – ohne Profiler-Events je Draw.
+    private static readonly ProfilerCounter s_cOrigDraws = new("Original.Draws (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Count, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocScene = new("Original.Alloc BuildScene (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocDraws = new("Original.Alloc Draws (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocSetup = new("Original.Alloc Setup / Pipeline (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocConstants = new("Original.Alloc Constants (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocSubmit = new("Original.Alloc Descriptors + Submit (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAllocFallback = new("Original.Alloc Fallback own shader (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static readonly ProfilerCounter s_cOrigAlloc = new("Original.Alloc Total (per frame)", ProfilerCounters.Rendering, ProfilerUnit.Bytes, resetEachFrame: true);
+    private static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    private static long AllocNow() => GC.GetAllocatedBytesForCurrentThread();
 
     // GPU-Zeit je Objektart im Hauptbild (Zusatz-Zeitstempel an jedem Pipeline-Wechsel der sortierten opaken Liste, dazu Himmel,
     // additive und transparente Objekte). Ersetzt im Profiler "GPU Scene" durch "GPU Scene: Terrain/Object/Foliage/…".

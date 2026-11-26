@@ -42,6 +42,12 @@ public sealed class MeshData
     public readonly List<Vector2> UV1 = new();
     public readonly List<Vector2> UV2 = new();   // letzter UV-Satz (Straßen-Detail)
     public readonly List<Vector2> UV3 = new();
+    /// <summary>
+    /// Gespeicherte Tangenten aus dem .3dg (xyz = Tangentenrichtung passend zum Detail-UV-Satz, w = 1).
+    /// Nur gefüllt, wenn der Vertexpuffer Tangenten enthält; sonst leer und der Renderer berechnet sie aus UV0.
+    /// </summary>
+    public readonly List<Vector4> Tangents = new();
+    public bool HasTangents;
     public bool HasUV1, HasUV2, HasUV3, HasColors;
     /// <summary>Skinning (Leitplanken): Knochen-Indizes/Gewichte je Vertex.</summary>
     public readonly List<Vector4> BoneIdx = new(), BoneW = new();
@@ -338,6 +344,9 @@ public sealed class Geometry3DG
                 else for (int i = 0; i < vb.Count; i++) md.Normals.Add(new Vector3(0, 1, 0));
                 if (vb.Colors != null) { md.Colors.AddRange(vb.Colors); md.HasColors = true; }
                 else for (int i = 0; i < vb.Count; i++) md.Colors.Add(new Rgba32(128, 128, 128, 255));
+                // Gespeicherte Tangenten weiterreichen (Straßen-Detail nutzt UV2, nicht UV0). Fehlende Tangenten bleiben Null.
+                if (vb.Tangents != null) { md.Tangents.AddRange(vb.Tangents); md.HasTangents = true; }
+                else for (int i = 0; i < vb.Count; i++) md.Tangents.Add(Vector4.Zero);
                 if (vb.UVs.Length > 0) md.UV0.AddRange(vb.UVs[0]);
                 else for (int i = 0; i < vb.Count; i++) md.UV0.Add(Vector2.Zero);
                 if (vb.IsSprite && vb.SpriteOffsets != null) { md.UV1.AddRange(vb.SpriteOffsets); md.HasUV1 = true; }

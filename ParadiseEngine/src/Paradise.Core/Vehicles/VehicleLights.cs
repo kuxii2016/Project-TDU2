@@ -201,8 +201,9 @@ namespace Paradise.Core.Vehicles
         /// <summary>
         /// Scheinwerfer-Projektor des Originals für dieses Auto (<see cref="HeadlightProjectors"/>, Lichtpuffer s15) anhängen, solange
         /// der Scheinwerfer an ist. player = eigenes Auto (Art 0), sonst Art 1. Höhe/Länge aus den Karosserie-Bounds.
+        /// minStrength &gt; 0 erzeugt eine Kopie für das PostFX-Volumen, auch wenn das Wetter die Originalstärke auf 0 setzt.
         /// </summary>
-        public void CollectProjector(List<HeadlightProjector> output, VehiclePose tr, Matrix4x4 unityToRender, bool player, Vector3 cameraRender)
+        public void CollectProjector(List<HeadlightProjector> output, VehiclePose tr, Matrix4x4 unityToRender, bool player, Vector3 cameraRender, float minStrength = 0f)
         {
             if (_hlOn <= 0) return;
             float intensity = CarLighting.HeadlightsIntensity;
@@ -216,7 +217,7 @@ namespace Paradise.Core.Vehicles
                 Vector3.Transform(tr.position, unityToRender),
                 Vector3.TransformNormal(upU, unityToRender),
                 Vector3.TransformNormal(fwdU, unityToRender),
-                size.Y, size.Z, intensity, 1f, cameraRender);
+                size.Y, size.Z, intensity, 1f, cameraRender, minStrength);
         }
 
         LampLight Point(Vector3 pos, Vector3 color) => new LampLight

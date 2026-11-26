@@ -250,10 +250,38 @@ public sealed partial class DevMenu
         l.Add(Float("AO bias", () => PostFx.AoBias, v => PostFx.AoBias = v, 0.01f, 0f, 0.5f, d.AoBias, "0.00"));
         l.Add(Info("AO active", () => PostFx.AoEnabled && !_terrain.MapView ? "yes (not on the big map)" : "no"));
         l.Add(Float("AO fade distance", () => PostFx.AoMaxDistance, v => PostFx.AoMaxDistance = v, 10f, 5f, 2000f, d.AoMaxDistance, "0", " m"));
+        l.Add(Head("GOD RAYS (engine extra, not in the original)"));
+        l.Add(Bool("God rays", () => PostFx.GodRaysEnabled, v => PostFx.GodRaysEnabled = v, d.GodRays));
+        l.Add(Float("God intensity", () => PostFx.GodIntensity, v => PostFx.GodIntensity = v, 0.05f, 0f, 2f, d.GodIntensity, "0.00"));
+        l.Add(Float("God threshold", () => PostFx.GodThreshold, v => PostFx.GodThreshold = v, 0.02f, 0f, 1f, d.GodThreshold, "0.00"));
+        l.Add(Float("God decay", () => PostFx.GodDecay, v => PostFx.GodDecay = v, 0.01f, 0.5f, 0.995f, d.GodDecay, "0.000"));
+        l.Add(Float("God samples", () => PostFx.GodSamples, v => PostFx.GodSamples = (int)(v + 0.5f), 1f, 4f, 24f, d.GodSamples, "0"));
+        l.Add(Info("God active", () => PostFx.SunVolumetricEnabled ? "no (replaced by sun volumetric)" : PostFx.GodRaysEnabled && !_terrain.MapView ? "yes (sun must be visible)" : "no"));
+        l.Add(Head("HEIGHT / DISTANCE FOG (engine extra, not in the original)"));
+        l.Add(Bool("Height fog", () => PostFx.FogEnabled, v => PostFx.FogEnabled = v, d.HeightFog));
+        l.Add(Float("Fog intensity", () => PostFx.FogIntensity, v => PostFx.FogIntensity = v, 0.05f, 0f, 1f, d.FogIntensity, "0.00"));
+        l.Add(Float("Fog start", () => PostFx.FogStart, v => PostFx.FogStart = v, 10f, 0f, 5000f, d.FogStart, "0", " m"));
+        l.Add(Float("Fog end", () => PostFx.FogEnd, v => PostFx.FogEnd = v, 50f, 1f, 10000f, d.FogEnd, "0", " m"));
+        l.Add(Float("Fog height falloff", () => PostFx.FogHeightDensity, v => PostFx.FogHeightDensity = v, 0.005f, 0f, 1f, d.FogHeightDensity, "0.000"));
+        l.Add(Float("Fog base height", () => PostFx.FogHeightBase, v => PostFx.FogHeightBase = v, 1f, -500f, 5000f, d.FogHeightBase, "0", " m"));
+        l.Add(Head("VOLUMETRIC HEADLIGHT (player only, engine extra)"));
+        l.Add(Bool("Volumetric light", () => PostFx.VolumetricEnabled, v => PostFx.VolumetricEnabled = v, d.Volumetric));
+        l.Add(Float("Volumetric intensity", () => PostFx.VolumetricIntensity, v => PostFx.VolumetricIntensity = v, 0.05f, 0f, 2f, d.VolumetricIntensity, "0.00"));
+        l.Add(Float("Volumetric steps", () => PostFx.VolumetricSteps, v => PostFx.VolumetricSteps = (int)(v + 0.5f), 1f, 4f, 16f, d.VolumetricSteps, "0"));
+        l.Add(Info("Volumetric active", () => PostFx.VolumetricEnabled && _terrain.MapView == false ? "yes (headlight must be on)" : "no"));
+        l.Add(Info("Player projector", () => PostFx.VolumetricProjectorAvailable
+            ? "yes, strength " + PostFx.VolumetricProjectorStrength.ToString("0.00", Inv)
+            : "no (headlight off or no car)"));
+        l.Add(Head("VOLUMETRIC SUNLIGHT (replaces God Rays, engine extra)"));
+        l.Add(Bool("Sun volumetric", () => PostFx.SunVolumetricEnabled, v => PostFx.SunVolumetricEnabled = v, d.SunVolumetric));
+        l.Add(Float("Sun volumetric intensity", () => PostFx.SunVolumetricIntensity, v => PostFx.SunVolumetricIntensity = v, 0.05f, 0f, 2f, d.SunVolumetricIntensity, "0.00"));
+        l.Add(Float("Sun volumetric steps", () => PostFx.SunVolumetricSteps, v => PostFx.SunVolumetricSteps = (int)(v + 0.5f), 1f, 4f, 24f, d.SunVolumetricSteps, "0"));
+        l.Add(Info("Sun volumetric active", () => PostFx.SunVolumetricActive ? "yes (day, sun above horizon)" : "no (night, inside or disabled)"));
         l.Add(Bool("Photoshop (original colour LUT)", () => PhotoshopFx.Enabled, v => PhotoshopFx.Enabled = v, true));
-        l.Add(Table("Debug view (show buffer only)", new[] { "Off", "AO buffer", "Bloom buffer", "Bloom mask (glowing)" }, () => PostFx.DebugView, v => PostFx.DebugView = v, 0));
+        l.Add(Table("Debug view (show buffer only)", new[] { "Off", "AO buffer", "Bloom buffer", "Bloom mask (glowing)", "God / sun buffer", "Fog amount", "Volumetric buffer" }, () => PostFx.DebugView, v => PostFx.DebugView = v, 0));
         l.Add(Info("Bloom threshold 1.0 = nothing glows (lower = more glow)"));
         l.Add(Info("AO bias high (0.3-0.5) = almost no AO (lower = more AO)"));
+        l.Add(Info("God threshold high = only sky glows (white walls stay dark)"));
     }
 
     /// <summary>Unity GUI.Label der Debug-Ansichten: Text am Bildschirmpunkt des Weltpunkts, Tafel des Verkehrs unten links.</summary>

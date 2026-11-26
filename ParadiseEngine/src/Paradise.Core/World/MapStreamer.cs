@@ -78,10 +78,19 @@ public sealed partial class MapStreamer : IDisposable
     }
 
     #region Settings (values from the Unity scene TDU2Main.unity, TDU2MapStreamer component)
+    /// <summary>
+    /// Sichtweite aus GraphicsConfig.TreeViewDistance. Statisch, weil GraphicsConfig.Apply() beim Start läuft,
+    /// bevor der erste MapStreamer erzeugt wird. Bäume liegen in denselben Kacheln wie das Gelände, deshalb
+    /// müssen Flächen-, Sektor- und Vegetationsdistanz gemeinsam gesetzt werden.
+    /// </summary>
+    public static float ConfiguredAreaLoadDistance = 900f;
+    public static float ConfiguredSectorLoadDistance = 900f;
+    public static float ConfiguredVegetationDistance = 1100f;
+
     public string Island = "ibiza";
-    public float AreaLoadDistance = 900f;
+    public float AreaLoadDistance = ConfiguredAreaLoadDistance;
     public float AreaUnloadMargin = 1000f;
-    public float SectorLoadDistance = 900f;   // Unity: 900 (1500 kostete ~2,8x Gelände-Dreiecke im Bild, Schatten und Spiegelung)
+    public float SectorLoadDistance = ConfiguredSectorLoadDistance;   // Unity: 900 (1500 kostete ~2,8x Gelände-Dreiecke im Bild, Schatten und Spiegelung)
     public float SectorUnloadMargin = 300f;
     public int MaxParallelLoads = 3;
     public bool ShowIslandLod = true;
@@ -92,7 +101,7 @@ public sealed partial class MapStreamer : IDisposable
     public bool LoadActors = true;
     public bool LoadWorldActors = true;
     public bool LoadSpotExteriors = true;
-    public float VegetationDistance = 1100f;   // Unity: 1000
+    public float VegetationDistance = ConfiguredVegetationDistance;   // Unity: 1000
     /// <summary>Tunnelportale: HMAP-Loch-Kacheln auslassen und das Sektormodell BLOCK als Gelände zeichnen (wie das Original).</summary>
     public bool CutTunnelPortals = true;
     public bool ShowSignText = true;
@@ -173,6 +182,14 @@ public sealed partial class MapStreamer : IDisposable
     private GrassMap? _grassNoise;
     private bool _waterNormalSet;
     private double _time, _nextScan, _nextTexRetry, _nextLodCheck;
+    // Perf: wiederkehrende Streamer-Arbeiten ohne frische Delegates/Listen (Profiler: ~75 KB/Bild).
+    Func<ulong, TextureWrap, TextureWrap, IGpuTexture?>? _retryTexture;
+    readonly List<(float d, AreaKey k)> _wantedAreas = new();
+    readonly List<AreaKey> _dropAreas = new();
+    readonly List<(float d, SectorKey k)> _wantedSectors = new();
+    readonly List<SectorKey> _dropSectors = new();
+    static readonly Comparison<(float d, AreaKey k)> s_areaByDistance = (a, b) => a.d.CompareTo(b.d);
+    static readonly Comparison<(float d, SectorKey k)> s_sectorByDistance = (a, b) => a.d.CompareTo(b.d);
     private Vector3 _viewerGame;
     private string _status = "";
     public IslandIndex? Index => _index;
@@ -192,6 +209,8 @@ public sealed partial class MapStreamer : IDisposable
     public readonly List<LampLight> ExtraLamps = new();
     /// <summary>Scheinwerfer-Projektoren des Originals (einer je Auto, Spieler zuerst) für den Lichtpuffer s15; je Bild neu gefüllt.</summary>
     public readonly List<HeadlightProjector> HeadlightProjectors = new();
+    /// <summary>Separater Spieler-Projektor für das PostFX-Volumen (Mindeststärke 1); je Bild neu gefüllt, nicht im Lichtpuffer s15.</summary>
+    public readonly List<HeadlightProjector> PlayerPostFxProjectors = new();
     HeadlightProjector[] _projMerge = Array.Empty<HeadlightProjector>();
     LampLight[] _lampMerge = Array.Empty<LampLight>();
 
@@ -461,7 +480,12 @@ public sealed partial class MapStreamer : IDisposable
         _wetGround?.Update(dt);
         RenderFx.OceanOn = ShowWater && _oceanIsland != null && !WorldWeather.Inside;
         RenderFx.OceanY = GameToRender(new Vector3(0f, WaterLevel, 0f)).Y;
-        if (_time >= _nextTexRetry) { _nextTexRetry = _time + 1.0; MaterialFactory.RetryPendingTextures((k, u, v) => _textures?.Get(k, u, v)); }
+        if (_time >= _nextTexRetry)
+        {
+            _nextTexRetry = _time + 1.0;
+            _retryTexture ??= (k, u, v) => _textures?.Get(k, u, v);
+            MaterialFactory.RetryPendingTextures(_retryTexture);
+        }
 
         PollLibrary();
 
@@ -636,8 +660,8 @@ public sealed partial class MapStreamer : IDisposable
     void ScanAreas()
     {
         var p = new Vector2(_viewerGame.X, _viewerGame.Z);
-        var wanted = new List<(float d, AreaKey k)>();
-        var drop = new List<AreaKey>();
+        var wanted = _wantedAreas; wanted.Clear();
+        var drop = _dropAreas; drop.Clear();
         foreach (var k in _index!.AreaBanks.Keys)
         {
             float d = WorldLayout.DistanceToRect(p, WorldLayout.AreaRect(k));
@@ -645,7 +669,7 @@ public sealed partial class MapStreamer : IDisposable
             else if (d > AreaLoadDistance + AreaUnloadMargin && _areas.ContainsKey(k)) drop.Add(k);
         }
         foreach (var k in drop) UnloadArea(k);
-        wanted.Sort((a, b) => a.d.CompareTo(b.d));
+        wanted.Sort(s_areaByDistance);
         foreach (var (d, k) in wanted)
         {
             if (RunningJobs() >= MaxParallelLoads) break;
@@ -656,8 +680,8 @@ public sealed partial class MapStreamer : IDisposable
     void ScanSectors()
     {
         var p = new Vector2(_viewerGame.X, _viewerGame.Z);
-        var wanted = new List<(float d, SectorKey k)>();
-        var drop = new List<SectorKey>();
+        var wanted = _wantedSectors; wanted.Clear();
+        var drop = _dropSectors; drop.Clear();
         foreach (var k in _index!.SectorBanks.Keys)
         {
             float d = WorldLayout.DistanceToRect(p, WorldLayout.SectorRect(k));
@@ -666,7 +690,7 @@ public sealed partial class MapStreamer : IDisposable
             else if (loaded && d > SectorLoadDistance + SectorUnloadMargin) drop.Add(k);
         }
         foreach (var k in drop) UnloadSector(k);
-        wanted.Sort((a, b) => a.d.CompareTo(b.d));
+        wanted.Sort(s_sectorByDistance);
         foreach (var (d, k) in wanted)
         {
             if (RunningJobs() >= MaxParallelLoads) break;
@@ -1212,7 +1236,8 @@ public sealed partial class MapStreamer : IDisposable
             var obj = _library.Get(g.Key, _textures, Physics != null ? _collOpt : _opt, _renderer);
             if (obj == null) return;
             bool skin = res != null && SkinnedRail(obj);
-            var list = new List<Matrix4x4>(g.Instances.Count);
+            var mats = new Matrix4x4[g.Instances.Count];   // exakte Größe, keine Liste + ToArray je PMI-Gruppe
+            int count = 0;
             foreach (var inst in g.Instances)
             {
                 var m = inst.Matrix * Matrix4x4.CreateTranslation(origin);
@@ -1221,7 +1246,7 @@ public sealed partial class MapStreamer : IDisposable
                     var baked = BakeRail(obj, inst.Bones, res!);
                     if (baked != null)
                     {
-                        veg.Add(baked, new List<Matrix4x4> { m });
+                        veg.Add(baked, new[] { m });
                         if (coll != null && Physics != null && baked.Lods.Length > 0)
                         {
                             _collTris.Clear(); _collSurf.Clear();
@@ -1247,7 +1272,7 @@ public sealed partial class MapStreamer : IDisposable
                     }
                 }
                 var wm = inst.Pre.HasValue ? inst.Pre.Value * m : m;
-                list.Add(wm);
+                mats[count++] = wm;
                 if (coll != null && Physics != null)
                 {
                     var (tris, surf) = LibraryCollision(obj);
@@ -1258,7 +1283,7 @@ public sealed partial class MapStreamer : IDisposable
                     }
                 }
             }
-            if (list.Count > 0) veg.Add(obj, list);
+            if (count > 0) veg.Add(obj, mats, count);
         }
     }
 
@@ -1349,7 +1374,8 @@ public sealed partial class MapStreamer : IDisposable
         if (i.Count == 0) return;
         var mat = SignMaterial();
         if (mat == null) return;
-        var mesh = _renderer.CreateMesh(v.ToArray(), i.ToArray());
+        // UploadMesh kopiert sofort in den Hostpuffer – keine temporären Arrays je Nachladesektor.
+        var mesh = _renderer.CreateMesh(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(v), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(i));
         st.Res.Owned.Add(mesh);
         node.Meshes.Add((mesh, mat, model));
     }
@@ -1439,7 +1465,6 @@ public sealed partial class MapStreamer : IDisposable
         return list;
     }
 
-    //TODO: Remove and Cleanup
     static readonly HashSet<string> SpecialObjects = new()
     {
         "PORTAIL", "INTERIOR", "~a1~8aTAL_GA", "PORTAILG", "DOOR", "~85~96~94~b1~8fxAR",
@@ -1668,6 +1693,12 @@ public sealed partial class MapStreamer : IDisposable
     Vector3 _collectCamera;
     Vector4[] _collectPlanes = Array.Empty<Vector4>();
     Action<int>? _collectSector;
+    // Perf: Render lief zuvor zwei closures pro Bild (DrawNode/DrawScenes) und eine frische Frustum-Plane-Liste.
+    readonly Vector4[] _renderPlanes = new Vector4[6];
+    Vector3 _renderCameraGame;
+    Matrix4x4 _renderRoot;
+    int _renderDrawn;
+    readonly List<PowerWires.SectorWires> _wireSets = new();
 
     /// <summary>Work thread: Collecting visible objects (LOD) and placements in a sector – like DrawNode/PlacementRenderer.Render.</summary>
     void CollectSector(int i)
@@ -1718,51 +1749,15 @@ public sealed partial class MapStreamer : IDisposable
         HeadlightProjectors.CopyTo(_projMerge, 0);
         globals.Projectors = _projMerge;
         globals.ProjectorCount = HeadlightProjectors.Count;
+        globals.PlayerProjector = PlayerPostFxProjectors.Count > 0 ? PlayerPostFxProjectors[0] : (HeadlightProjector?)null;
         _renderer.SetFrameGlobals(globals);
 
-        var planes = Frustum(viewProj);
+        var planes = Frustum(viewProj, _renderPlanes);
         var cameraGame = RenderToGame(cameraRender);
         var root = RootMatrix;
-        int drawn = 0;
+        _renderCameraGame = cameraGame; _renderRoot = root; _renderDrawn = 0;
 
-        void DrawNode(Node n)
-        {
-            if (!n.Active) return;
-            foreach (var (mesh, mat, model) in n.Meshes)
-                _renderer.DrawMesh(mesh, mat, model * root);
-            foreach (var o in n.Objects)
-            {
-                if (!o.Active) continue;
-                if (!InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
-                var lod = o.SelectLod(cameraGame);
-                if (lod == null) continue;
-                var m = o.Model * root;
-                foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
-                drawn++;
-            }
-        }
-
-        // Frei platzierte Szenen (Interieurs, Möbel, Renn-Tore) erst NACH der opaken Welt zeichnen.
-        // Unity zeichnet TDU2/Checkpoint mit RenderQueue 3000 (nach allen opaken Objekten); die additiven
-        // Checkpoint-Tore wurden vorher von Straße/Terrain überdeckt und waren dadurch unsichtbar.
-        void DrawScenes()
-        {
-            foreach (var sc in Scenes)
-            {
-                if (!sc.Active) continue;
-                foreach (var o in sc.Objects)
-                {
-                    if (!o.Active || !InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
-                    var lod = o.SelectLod(cameraGame);
-                    if (lod == null) continue;
-                    var m = o.Model * root;
-                    foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
-                    drawn++;
-                }
-            }
-        }
-
-        if (HideWorld) { DrawScenes(); DrawnObjects = drawn; return; }
+        if (HideWorld) { DrawScenes(); DrawnObjects = _renderDrawn; return; }
         foreach (var n in _islandPieces.Values) DrawNode(n);
         foreach (var a in _areas.Values) if (a.Built && !EditorIsHidden(a)) foreach (var n in a.Nodes) DrawNode(n);   // EditorIsHidden: Szenen-Editor (F1 > Open Editor)
         // Sektoren: Sichtbarkeit/LOD der Objekte und Platzierungen parallel je Sektor (jeder Sektor hat nur eigenen Zustand),
@@ -1780,7 +1775,7 @@ public sealed partial class MapStreamer : IDisposable
             var list = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_sectorDraws[i]);
             foreach (ref readonly var d in list) _renderer.DrawMesh(d.Mesh, d.Material, d.Model);
             _sectorDraws[i].Clear();
-            drawn += _sectorDrawn[i];
+            _renderDrawn += _sectorDrawn[i];
             _renderSectors[i].Grass?.Render(_renderer, root);
         }
         DrawAircraft(_renderer, cameraGame, root, planes);
@@ -1791,9 +1786,48 @@ public sealed partial class MapStreamer : IDisposable
         if (ShowStars && !WorldWeather.Inside && globals.Sky.On && globals.Sky.StarsIntensity > 0f) _stars?.Draw(globals.CameraPosition);
         if (ShowStars && !WorldWeather.Inside && globals.Sky.On && globals.Sky.MoonPercent > 0f) _stars?.DrawMoon(globals.CameraPosition, globals.SunDirection, globals.Sky.MoonSize);
         if (ShowClouds && !WorldWeather.Inside) _clouds?.Draw(root);
-        if (ShowPowerWires) _powerWires.Draw(_renderer, WireSets(), cameraGame, RootOffset, globals.SunDirection);
+        if (ShowPowerWires) _powerWires.Draw(_renderer, CollectWireSets(), cameraGame, RootOffset, globals.SunDirection);
         DrawScenes();   // Checkpoint-Tore / Overlays zuletzt (Unity RenderQueue 3000)
-        DrawnObjects = drawn;
+        DrawnObjects = _renderDrawn;
+    }
+
+    void DrawNode(Node n)
+    {
+        if (!n.Active) return;
+        var planes = _renderPlanes; var cameraGame = _renderCameraGame; var root = _renderRoot;
+        foreach (var (mesh, mat, model) in n.Meshes)
+            _renderer.DrawMesh(mesh, mat, model * root);
+        foreach (var o in n.Objects)
+        {
+            if (!o.Active) continue;
+            if (!InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
+            var lod = o.SelectLod(cameraGame);
+            if (lod == null) continue;
+            var m = o.Model * root;
+            foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
+            _renderDrawn++;
+        }
+    }
+
+    // Frei platzierte Szenen (Interieurs, Möbel, Renn-Tore) erst NACH der opaken Welt zeichnen.
+    // Unity zeichnet TDU2/Checkpoint mit RenderQueue 3000 (nach allen opaken Objekten); die additiven
+    // Checkpoint-Tore wurden vorher von Straße/Terrain überdeckt und waren dadurch unsichtbar.
+    void DrawScenes()
+    {
+        var planes = _renderPlanes; var cameraGame = _renderCameraGame; var root = _renderRoot;
+        foreach (var sc in Scenes)
+        {
+            if (!sc.Active) continue;
+            foreach (var o in sc.Objects)
+            {
+                if (!o.Active || !InFrustum(planes, o.BoundsMin + RootOffset, o.BoundsMax + RootOffset)) continue;
+                var lod = o.SelectLod(cameraGame);
+                if (lod == null) continue;
+                var m = o.Model * root;
+                foreach (var p in lod.Parts) _renderer.DrawMesh(p.Mesh, p.Material, m);
+                _renderDrawn++;
+            }
+        }
     }
 
     /// <summary>
@@ -2066,10 +2100,12 @@ public sealed partial class MapStreamer : IDisposable
 
     private readonly PowerWires _powerWires = new();
 
-    IEnumerable<PowerWires.SectorWires> WireSets()
+    List<PowerWires.SectorWires> CollectWireSets()
     {
+        _wireSets.Clear();
         foreach (var s in _sectors.Values)
-            if (s.Built && s.Wires != null) yield return s.Wires;
+            if (s.Built && s.Wires != null) _wireSets.Add(s.Wires);
+        return _wireSets;
     }
 
     /// <summary>
@@ -2176,24 +2212,31 @@ public sealed partial class MapStreamer : IDisposable
         return true;
     }
 
-    static Vector4[] Frustum(Matrix4x4 m)
+    static Vector4[] Frustum(Matrix4x4 m, Vector4[] dst)
     {
         // Zeilenvektoren: clip = v * M -> Ebenen aus den Spalten
         var c0 = new Vector4(m.M11, m.M21, m.M31, m.M41);
         var c1 = new Vector4(m.M12, m.M22, m.M32, m.M42);
         var c2 = new Vector4(m.M13, m.M23, m.M33, m.M43);
         var c3 = new Vector4(m.M14, m.M24, m.M34, m.M44);
-        return new[] { c3 + c0, c3 - c0, c3 + c1, c3 - c1, c2, c3 - c2 };
+        dst[0] = c3 + c0; dst[1] = c3 - c0; dst[2] = c3 + c1;
+        dst[3] = c3 - c1; dst[4] = c2;     dst[5] = c3 - c2;
+        // Einmal je Bild normalisieren (6 Wurzeln), statt in jeder Kugelprüfung erneut (früher bis zu 6 pro Instanz).
+        // Positives Skalieren ändert weder das Vorzeichen der AABB-Ebenentests noch die Sphere-Klassifikation.
+        for (int i = 0; i < 6; i++)
+        {
+            var p = dst[i];
+            float len = MathF.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z);
+            if (len > 1e-12f) dst[i] = p / len;
+        }
+        return dst;
     }
 
     public static bool SphereInFrustum(Vector4[] planes, Vector3 c, float r)
     {
+        var c4 = new Vector4(c, 1f);
         foreach (var p in planes)
-        {
-            float len = MathF.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z);
-            if (len < 1e-12f) continue;
-            if ((p.X * c.X + p.Y * c.Y + p.Z * c.Z + p.W) / len < -r) return false;
-        }
+            if (Vector4.Dot(p, c4) < -r) return false;
         return true;
     }
 

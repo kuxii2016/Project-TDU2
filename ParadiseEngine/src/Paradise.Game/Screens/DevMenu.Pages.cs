@@ -2,6 +2,7 @@ using Paradise.Core.Formats;
 using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
+using Paradise.Game.Config;
 using Paradise.Game.Gamemodes;
 using System.Globalization;
 
@@ -201,9 +202,9 @@ public sealed partial class DevMenu
         l.Add(Info("Areas / sectors", () => s.LoadedAreas + "  ·  " + s.LoadedSectors));
         l.Add(Head("LOADING"));
         l.Add(Int("Parallel load jobs", () => s.MaxParallelLoads, v => s.MaxParallelLoads = v, 1, 8, 4));
-        l.Add(Float("Load areas up to", () => s.AreaLoadDistance, v => s.AreaLoadDistance = v, 100f, 500f, 10000f, 900f, "0", " m"));
+        l.Add(Float("Load areas up to", () => s.AreaLoadDistance, v => s.AreaLoadDistance = v, 100f, 500f, 10000f, new GraphicsConfig().TreeViewDistance, "0", " m"));
         l.Add(Float("Unload areas (+)", () => s.AreaUnloadMargin, v => s.AreaUnloadMargin = v, 100f, 100f, 5000f, 1000f, "0", " m"));
-        l.Add(Float("Load sectors up to", () => s.SectorLoadDistance, v => s.SectorLoadDistance = v, 50f, 100f, 5000f, 900f, "0", " m"));
+        l.Add(Float("Load sectors up to", () => s.SectorLoadDistance, v => s.SectorLoadDistance = v, 50f, 100f, 10000f, new GraphicsConfig().TreeViewDistance, "0", " m"));
         l.Add(Float("Unload sectors (+)", () => s.SectorUnloadMargin, v => s.SectorUnloadMargin = v, 50f, 50f, 3000f, 300f, "0", " m"));
         l.Add(Head("RENDER DISTANCE  (immediate)"));
         l.Add(Table("Object render distance", RenderDistance.Names, () => (int)RenderDistance.Level, i => RenderDistance.Level = (RenderDistanceLevel)i, (int)RenderDistanceLevel.Normal));
@@ -214,7 +215,7 @@ public sealed partial class DevMenu
         l.Add(Head("DETAIL  (newly loaded tiles)"));
         l.Add(Float("Object LOD distance", () => s.LodDistanceScale, v => s.LodDistanceScale = v, 0.25f, 0.25f, 10f, 4f, "0.00", " x"));
         l.Add(Bool("Cull last LOD", () => s.CullLastLod, v => s.CullLastLod = v, false));
-        l.Add(Float("Vegetation distance", () => s.VegetationDistance, v => s.VegetationDistance = v, 50f, 100f, 5000f, 1100f, "0", " m"));
+        l.Add(Float("2D tree draw distance", () => s.VegetationDistance, v => s.VegetationDistance = v, 50f, 100f, 10000f, new GraphicsConfig().ImpostorViewDistance, "0", " m"));
         l.Add(Float("Grass radius", () => s.GrassRadius, v => s.GrassRadius = v, 10f, 20f, 500f, 120f, "0", " m"));
         l.Add(Float("Grass density", () => s.GrassDensity, v => s.GrassDensity = v, 0.05f, 0f, 2f, 0.9f, "0.00"));
         return l;
@@ -280,6 +281,8 @@ public sealed partial class DevMenu
     static readonly string[] TexNames = { "Full", "1/2", "1/4", "1/8" };
     static readonly string[] ShadowResNames = { "1024", "2048", "4096" };
     static readonly int[] ShadowResValues = { 1024, 2048, 4096 };
+    static readonly string[] ShadowCascadeNames = { "2", "3", "4" };
+    static readonly int[] ShadowCascadeValues = { 2, 3, 4 };
 
     List<Item> RenderingMenu()
     {
@@ -301,12 +304,13 @@ public sealed partial class DevMenu
         if (s != null) l.Add(Float("Object LOD distance (new tiles)", () => s.LodDistanceScale, v => s.LodDistanceScale = v, 0.25f, 0.25f, 10f, 4f, "0.00", " x"));
         l.Add(Head("SHADOWS"));
         l.Add(Table("Shadow resolution (restart)", ShadowResNames, () => Math.Max(0, Array.IndexOf(ShadowResValues, GraphicsSettings.ShadowResolution)), i => GraphicsSettings.ShadowResolution = ShadowResValues[i], 1));
+        l.Add(Table("Active cascades (runtime)", ShadowCascadeNames, () => Math.Clamp(Array.IndexOf(ShadowCascadeValues, GraphicsSettings.ActiveShadowCascades), 0, 2), i => GraphicsSettings.ActiveShadowCascades = ShadowCascadeValues[i], 1));
         l.Add(Float("Shadow distance (0 = config)", () => GraphicsSettings.ShadowDistance, v => GraphicsSettings.ShadowDistance = v, 25f, 0f, 3000f, 0f, "0", " m"));
         l.Add(Head("WORLD"));
         if (s != null)
         {
             l.Add(Bool("Glow materials (new tiles)", () => s.ShowGlowMaterials, v => { s.ShowGlowMaterials = v; MaterialFactory.ShowGlowMaterials = v; }, true));
-            l.Add(Float("Vegetation distance (new tiles)", () => s.VegetationDistance, v => s.VegetationDistance = v, 50f, 100f, 5000f, 1100f, "0", " m"));
+            l.Add(Float("2D tree draw distance (new tiles)", () => s.VegetationDistance, v => s.VegetationDistance = v, 50f, 100f, 10000f, new GraphicsConfig().ImpostorViewDistance, "0", " m"));
             l.Add(Float("Wind strength", () => s.WindStrength, v => s.WindStrength = v, 0.1f, 0f, 3f, 1f, "0.0"));
         }
         AddPostFxItems(l);
@@ -342,9 +346,18 @@ public sealed partial class DevMenu
             Info("Triangles", () => st.Triangles.ToString("N0", CultureInfo.InvariantCulture)),
             Info("Transparent / shadow / overlay draws", () => st.TransparentDraws + " / " + st.ShadowDraws + " / " + st.OverlayDraws),
             Info("Textures / materials / meshes", () => st.Textures + " / " + st.Materials + " / " + st.Meshes),
+            Head("GPU LIVE (driver telemetry)"),
+            Info("Source", () => _gpu.Available ? _gpu.Source : "n/a (no NVML / AMD ADL2)"),
+            Info("Core / memory clock", () => _gpu.Available ? _gpu.CoreClockMHz + " / " + _gpu.MemClockMHz + " MHz" : "-"),
+            Info("GPU / memory load", () => _gpu.Available
+                ? _gpu.GpuUtil + "% / " + (_gpu.MemUtilAvailable ? _gpu.MemUtil + "%" : "-") : "-"),
+            Info("Temperature edge / hotspot", () => _gpu.Available
+                ? _gpu.TempC + " / " + (_gpu.TempHotspotC > 0 ? _gpu.TempHotspotC.ToString(CultureInfo.InvariantCulture) : "-") + " C" : "-"),
+            Info("VRAM used / total", () => _gpu.Available ? MB((long)_gpu.VramUsed) + " / " + MB((long)_gpu.VramTotal) : "-"),
+            Info("Board power", () => _gpu.Available && _gpu.PowerW > 0 ? _gpu.PowerW + " W" : "-"),
             Head("MEMORY"),
             Info("GPU allocated", () => MB(st.GpuMemoryAllocated)),
-            Info("VRAM usage / budget / total", () => MB(st.VramUsage) + " / " + MB(st.VramBudget) + " / " + MB(st.VramTotal)),
+            Info("VRAM usage / budget / total (Vulkan)", () => MB(st.VramUsage) + " / " + MB(st.VramBudget) + " / " + MB(st.VramTotal)),
             Info(".NET heap", () => MB(GC.GetTotalMemory(false))),
             Info("Process working set", () => MB(Environment.WorkingSet)),
             Info("GC collections", () => GC.CollectionCount(0) + " / " + GC.CollectionCount(1) + " / " + GC.CollectionCount(2)),

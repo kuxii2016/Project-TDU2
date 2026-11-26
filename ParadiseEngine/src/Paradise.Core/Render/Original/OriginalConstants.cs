@@ -12,6 +12,8 @@ namespace Paradise.Core.Render.Original;
 public struct OriginalScene
 {
     public Matrix4x4 View, Proj, ViewProj;
+    /// <summary>Inverse von View/Proj/ViewProj – einmal je Bild berechnet (vorher je Konstante und je VS/PS-Aufruf).</summary>
+    public Matrix4x4 InvView, InvProj, InvViewProj;
     public Vector3 CameraPosition, CameraDirection;
     /// <summary>Richtung des Sonnenlichts (von der Sonne weg, wie "sundirection" der Wetterdaten).</summary>
     public Vector3 SunDirection;
@@ -81,6 +83,36 @@ public static class OriginalConstants
         // in den Banken nachgezählt, wie CarMaterials.ParamKey). Mit den abgeschnittenen Schlüsseln fehlten alle Namen > 8 Zeichen -> 0.
         public ulong PKey0, PKey1;
         public string Name;
+        /// <summary>Vorausgewertet: Autodreck-Symbol (wurde je Draw per Stringvergleich geprüft).</summary>
+        public bool IsDirtColor;
+        /// <summary>Register*4 bzw. Count*4 – einmal je Shader statt je Draw neu multiplizieren.</summary>
+        public int Offset, Floats;
+    }
+
+    /// <summary>
+    /// Materialwerte eines Original-Shaders, die nicht von Weltmatrix/Szene abhängen: einmal je (<see cref="OriginalMaterial"/>,
+    /// Entry-Array) auflösen statt bei jedem Draw erneut zwei Dictionary-Lookups und Sonderfallprüfungen zu machen. Szenenwerte
+    /// (CarEnv, Regen, NIGHTLMAP, Avatarlicht, Dirt, Gloss …) bleiben bewusst im langsamen Pfad.
+    /// </summary>
+    public sealed class CachedMaterialConstants
+    {
+        public readonly Vector4[] Values;
+        public readonly bool[] Pure;
+        /// <summary>Statische Materialwerte auch für dynamische Einträge – ersetzt die Dictionary-Lookups je Draw.</summary>
+        public readonly Vector4[] MaterialValues;
+        /// <summary>Nur Def-Werte (HEADLIGHTSINTENSITY liest bewusst nicht das Over-Material).</summary>
+        public readonly Vector4[] DefValues;
+        /// <summary>Ob der Wert tatsächlich in over/def stand (für die Diagnose fehlender Parameter).</summary>
+        public readonly bool[] MaterialKnown;
+        public CachedMaterialConstants(Vector4[] values, bool[] pure, Vector4[] materialValues, Vector4[] defValues, bool[] materialKnown)
+        { Values = values; Pure = pure; MaterialValues = materialValues; DefValues = defValues; MaterialKnown = materialKnown; }
+    }
+
+    /// <summary>VS- und PS-Cache eines Programms für dasselbe Material (ein Dictionary-Lookup statt zwei je Draw).</summary>
+    internal sealed class CachedProgramConstants
+    {
+        public readonly CachedMaterialConstants Vs, Ps;
+        public CachedProgramConstants(CachedMaterialConstants vs, CachedMaterialConstants ps) { Vs = vs; Ps = ps; }
     }
 
     static readonly ConditionalWeakTable<DxsoShader, Entry[]> s_cache = new();
@@ -167,7 +199,9 @@ public static class OriginalConstants
         foreach (var c in s.Constants)
         {
             if (c.RegisterSet != 2) continue;
-            var en = new Entry { Kind = Classify(c.Name), Register = c.Register, Count = c.Count, Class = c.Class, Name = c.Name };
+            var en = new Entry { Kind = Classify(c.Name), Register = c.Register, Count = c.Count, Class = c.Class, Name = c.Name,
+                                 IsDirtColor = c.Name.StartsWith("DirtColor", StringComparison.Ordinal),
+                                 Offset = c.Register * 4, Floats = c.Count * 4 };
             if (en.Kind == Kind.Material)
             {
                 string b = StripSuffix(c.Name);
@@ -199,6 +233,65 @@ public static class OriginalConstants
     static Vector3 Mul(Vector3 a, Vector4 b) => new(a.X * b.X, a.Y * b.Y, a.Z * b.Z);
     static Vector3 Dir(in Matrix4x4 inv, Vector3 v) { var r = Vector3.TransformNormal(v, inv); float l = r.Length(); return l > 1e-12f ? r / l : r; }
 
+    /// <summary>Übersichtliche Sonderfälle, die pro Draw von Szene/Material abhängen. Alles andere lässt sich je Shader+Material cachen.</summary>
+    static bool IsDynamic(Entry e, MaterialDef def, OriginalMaterial? mat)
+        => e.IsDirtColor
+        || (mat != null && mat.Avatar != null && (e.Key0 == s_kCarInteg || e.Key0 == s_kAtteFact || e.Key0 == s_kShadowAtt))
+        || (mat != null && mat.GlossFct.HasValue && e.Key0 == s_kGlossFct)
+        || (mat != null && mat.Car && e.Key0 == s_kEnvCoeff && (def.ShaderSet == SetCarPaint2 || def.ShaderSet == SetCarPaint))
+        || (e.PKey0 == s_kHeadlightsInt && (def.ShaderSet == SetDashBoard || def.ShaderSet == SetDashBoard2))
+        || (mat != null && mat.SpotExterior && e.PKey0 == s_kNightLmap && def.ShaderSet == SetBuilding
+            && def.Spec != null && def.Spec.Length > SpecUserType6 && def.Spec[SpecUserType6] == 1)
+        || (def.ShaderSet == OriginalShaderSystem.SetRoad && (e.PKey0 == s_kRainSpecs || e.PKey0 == s_kRainRipple))
+        || e.Key0 == s_kSectrOff;
+
+    static Vector4 ResolveStaticEntry(Entry e, MaterialDef def, MaterialDef? over)
+    {
+        if ((over != null && (over.Params.TryGetValue(e.PKey0, out var pv) || over.Params.TryGetValue(e.PKey1, out pv)))
+            || def.Params.TryGetValue(e.PKey0, out pv) || def.Params.TryGetValue(e.PKey1, out pv)) return pv;
+        return Vector4.Zero;   // frischer D3D9-Konstantenpuffer
+    }
+
+    static readonly CachedMaterialConstants s_noCache = new(Array.Empty<Vector4>(), Array.Empty<bool>(), Array.Empty<Vector4>(), Array.Empty<Vector4>(), Array.Empty<bool>());
+    static readonly CachedProgramConstants s_noProgramCache = new(s_noCache, s_noCache);
+
+    /// <summary>Einmal je OriginalMaterial+Entry-Array: statische Materialwerte, dynamische Einträge bleiben unscharf.</summary>
+    static CachedMaterialConstants BuildCache(Entry[] entries, MaterialDef def, MaterialDef? over, OriginalMaterial? mat)
+    {
+        if (mat == null) return s_noCache;
+        var vals = new Vector4[entries.Length];
+        var pure = new bool[entries.Length];
+        var mats = new Vector4[entries.Length];
+        var defVals = new Vector4[entries.Length];
+        var known = new bool[entries.Length];
+        for (int i = 0; i < entries.Length; i++)
+        {
+            var e = entries[i];
+            if (e.Kind == Kind.Material)
+            {
+                known[i] = (over != null && (over.Params.ContainsKey(e.PKey0) || over.Params.ContainsKey(e.PKey1)))
+                           || def.Params.ContainsKey(e.PKey0) || def.Params.ContainsKey(e.PKey1);
+                if (known[i]) mats[i] = ResolveStaticEntry(e, def, over);
+                if (def.Params.TryGetValue(e.PKey0, out var dv) || def.Params.TryGetValue(e.PKey1, out dv)) defVals[i] = dv;
+            }
+            pure[i] = e.Kind == Kind.Material && e.Count == 1 && !IsDynamic(e, def, mat);
+            if (pure[i]) vals[i] = mats[i];
+        }
+        return new CachedMaterialConstants(vals, pure, mats, defVals, known);
+    }
+
+    /// <summary>Einmal je OriginalMaterial+Programm: VS und PS gemeinsam, inklusive der Material-Fallbackwerte.</summary>
+    internal static CachedProgramConstants GetProgramCached(OriginalProgram prog, MaterialDef def, MaterialDef? over, OriginalMaterial? mat)
+    {
+        if (mat == null || prog.VsEntries == null || prog.PsEntries == null) return s_noProgramCache;
+        if (mat.ProgramConstants.TryGetValue(prog, out var cached)) return cached;
+        cached = new CachedProgramConstants(
+            BuildCache(prog.VsEntries, def, over, mat),
+            BuildCache(prog.PsEntries, def, over, mat));
+        mat.ProgramConstants.Add(prog, cached);
+        return cached;
+    }
+
     /// <summary>
     /// Materialfarben der Lichtkonstanten wie die exe (dyn-Block 0xfc0120, Kennung 0x1a -> 0xfbf150, 0x28 -> 0xfbe510, 0x2b -> 0xfbe790):
     /// Licht.rgb x Material.rgb, w = Material.w. Laufzeit-Material +0xb0 Ambient, +0xc0 Diffuse, +0xd0 Specular (auch Material_Specular
@@ -210,7 +303,8 @@ public static class OriginalConstants
 
     /// <summary>
     /// CARINTEG / ATTEFACT / SHADOWATTENUATION wie das Spiel je Bild (exe 0x67f360ff., Spec §2.6): CARINTEG = (p1, p2, Schatten, 1),
-    /// ATTEFACT = (1 − p3, 1 − p4, 1 − p5, Envmap) – auch TD_Clothe2Bike (0x67f4fc, eigener Setter); TD_Pedestrian SHADOWATTENUATION =
+    /// ATTEFACT = (1 − p3, 1 − p4, 1 − p5, 0) – envmap bewusst aus (siehe <see cref="AvatarSymbol"/>), sonst chromige Kleidung;
+    /// auch TD_Clothe2Bike (0x67f4fc, eigener Setter); TD_Pedestrian SHADOWATTENUATION =
     /// (s, s, s, 1); TD_Avatar: Werte der .2DM (nicht in der Liste).
     /// Außerhalb des Autos ist (p1, p2) = (0, 0): D3D9 rechnet h = y·rcp(0) -> k = 1 + inf·0 = 1; SPIR-V gäbe NaN, daher (0, 1)
     /// (ergibt k = 1 genau, Spec §3). TD_Hair: CARINTEG.w = 10 (exe 0x67f2d7, im Auto Knochenhöhe – offen).
@@ -227,7 +321,10 @@ public static class OriginalConstants
                 W(o, new Vector4(x, y, av.Shadow, fam == OriginalMaterial.AvatarFamily.Hair ? 10f : 1f));
                 return true;
             }
-            if (key == s_kAtteFact) { W(o, new Vector4(1f - p[3], 1f - p[4], 1f - p[5], av.Envmap)); return true; }
+            // ATTEFACT.w = envmap. Das Original mischt damit TD_Accessories2/TD_Clothe2Bike auf den Umgebungswürfel; mit dem
+            // verfügbaren Probe-Würfel wirken Kleider/Accessoires chromig, während der eigene Avatar-Shader ganz ohne envmap
+            // auskam. Deshalb hier 0 (nur Avatare; Auto-Lacke nutzen ENVCOEFF unverändert).
+            if (key == s_kAtteFact) { W(o, new Vector4(1f - p[3], 1f - p[4], 1f - p[5], 0f)); return true; }
         }
         else if (fam == OriginalMaterial.AvatarFamily.Pedestrian && key == s_kShadowAtt)
         {
@@ -237,35 +334,114 @@ public static class OriginalConstants
         return false;
     }
 
+    /// <summary>
+    /// Werte, die innerhalb eines Draws für VS und PS gleich sind und vorher in <see cref="Fill"/> je Konstante neu berechnet
+    /// wurden (Matrixprodukte, normalisierte Richtungen mit sqrt, Licht x Material). Einmal je Draw statt mehrfach je Block.
+    /// </summary>
+    public struct OriginalDrawCache
+    {
+        public bool CarOn;
+        public Matrix4x4 WorldViewProj, WorldView, TInvWorldView;
+        public Vector3 CamPos, CamDir, DirLightDir0, DirLightDir1, SpotPos;
+        public Vector4 Ambient, RawAmbient, Diffuse, RawDiffuse, Specular, DirEmissive;
+        public Vector4 SpotAmbient, SpotDiffuse, SpotSpecular;
+
+        /// <summary>Bitmaske der von VS+PS tatsächlich gelesenen Konstanten (Kind &lt; 64).</summary>
+        public static ulong MaskOf(Entry[] vs, Entry[] ps)
+        {
+            ulong m = 0;
+            for (int i = 0; i < vs.Length; i++) m |= 1UL << (int)vs[i].Kind;
+            for (int i = 0; i < ps.Length; i++) m |= 1UL << (int)ps[i].Kind;
+            return m;
+        }
+
+        static bool Has(ulong m, Kind k) => (m & (1UL << (int)k)) != 0;
+
+        /// <summary>Inverse Weltmatrix nur berechnen, wenn ein Shader sie oder eines der objektraum-Lichtwerte liest.</summary>
+        public static bool NeedsInverse(ulong m)
+            => Has(m, Kind.InvWorld) || Has(m, Kind.InvWorldView) || Has(m, Kind.TInvWorldView)
+            || Has(m, Kind.CamPos) || Has(m, Kind.CamDir) || Has(m, Kind.DirLightDir0)
+            || Has(m, Kind.DirLightDir1) || Has(m, Kind.SpotPos0);
+
+        public static bool NeedsInvWorldView(ulong m) => Has(m, Kind.InvWorldView) || Has(m, Kind.TInvWorldView);
+
+        /// <summary>
+        /// Nur die Werte berechnen, die VS/PS dieses Draws wirklich lesen. Vorher wurden hier bei jedem Draw drei Matrixprodukte,
+        /// eine Transposition, zwei Normalisierungen (sqrt) und zwölf Licht-Farbmultiplikationen ausgeführt – auch für Shaders,
+        /// die nur WVP und Materialfarben brauchen.
+        /// </summary>
+        public static OriginalDrawCache Create(in Matrix4x4 world, in OriginalScene sc, in Matrix4x4 inv, in Matrix4x4 invWorldView,
+                                               MaterialDef def, Paradise.Core.Avatars.AvatarLightState? av, OriginalMaterial? mat, ulong mask)
+        {
+            bool avOn = av != null && av.Valid;
+            bool carOn = !avOn && mat != null && mat.Car && sc.CarOn;
+            var c = new OriginalDrawCache { CarOn = carOn };
+            if (Has(mask, Kind.WorldViewProj)) c.WorldViewProj = world * sc.ViewProj;
+            if (Has(mask, Kind.WorldView)) c.WorldView = world * sc.View;
+            if (Has(mask, Kind.TInvWorldView)) c.TInvWorldView = Matrix4x4.Transpose(invWorldView);
+            if (Has(mask, Kind.CamPos)) c.CamPos = Vector3.Transform(sc.CameraPosition, inv);
+            if (Has(mask, Kind.CamDir)) c.CamDir = Dir(inv, sc.CameraDirection);
+            if (Has(mask, Kind.DirLightDir0)) c.DirLightDir0 = Dir(inv, avOn ? av!.Direction : sc.SunDirection);
+            if (Has(mask, Kind.DirLightDir1)) c.DirLightDir1 = Vector3.TransformNormal(new Vector3(0f, -1f, 0f), inv);
+            if (Has(mask, Kind.SpotPos0) && avOn) c.SpotPos = Vector3.Transform(av!.SpotPosition(sc.CameraDirection), inv);
+            if (Has(mask, Kind.Ambient0) || Has(mask, Kind.RawAmbient0) || Has(mask, Kind.SpotAmbient0))
+            {
+                Vector3 la = carOn ? sc.CarAmbient : sc.Ambient;
+                var ma = MatAmbient(def);
+                if (Has(mask, Kind.Ambient0)) c.Ambient = new Vector4(Mul(avOn ? av!.Ambient : la, ma), ma.W);
+                if (Has(mask, Kind.RawAmbient0)) c.RawAmbient = new Vector4(avOn ? av!.Ambient : la, 1f);
+                if (Has(mask, Kind.SpotAmbient0)) c.SpotAmbient = new Vector4(avOn ? Mul(av!.SpotAmbient, ma) : Vector3.Zero, ma.W);
+            }
+            if (Has(mask, Kind.DirLightDiffuse0) || Has(mask, Kind.DirLightRawDiffuse0) || Has(mask, Kind.SpotDiffuse0))
+            {
+                Vector3 ld = carOn ? sc.CarDiffuse : sc.SunDiffuse;
+                var md = MatDiffuse(def);
+                if (Has(mask, Kind.DirLightDiffuse0)) c.Diffuse = new Vector4(Mul(avOn ? av!.Diffuse : ld, md), md.W);
+                if (Has(mask, Kind.DirLightRawDiffuse0)) c.RawDiffuse = new Vector4(avOn ? av!.Diffuse : ld, 1f);
+                if (Has(mask, Kind.SpotDiffuse0)) c.SpotDiffuse = new Vector4(avOn ? Mul(av!.SpotDiffuse, md) : Vector3.Zero, md.W);
+            }
+            if (Has(mask, Kind.DirLightSpecular0) || Has(mask, Kind.SpotSpecular0))
+            {
+                Vector3 ls = carOn ? sc.CarSpecular : sc.SunSpecular;
+                var ms = def.Specular;
+                if (Has(mask, Kind.DirLightSpecular0)) c.Specular = new Vector4(Mul(avOn ? av!.Specular : ls, ms), ms.W);
+                if (Has(mask, Kind.SpotSpecular0)) c.SpotSpecular = new Vector4(avOn ? Mul(av!.SpotSpecular, ms) : Vector3.Zero, ms.W);
+            }
+            if (Has(mask, Kind.DirEmissive0)) c.DirEmissive = new Vector4(Mul(sc.SunEmissive, def.Emissive), def.Emissive.W);
+            return c;
+        }
+    }
+
     /// <summary>Register eines Shaders füllen (<paramref name="regs"/> = Anzahl vec4 des Konstantenblocks).</summary>
-    public static unsafe void Fill(float* dst, int regs, Entry[] entries, MaterialDef def, in Matrix4x4 world, in OriginalScene sc, MaterialDef? over = null,
+    public static unsafe void Fill(float* dst, int regs, Entry[] entries, MaterialDef def, in Matrix4x4 world, in OriginalScene sc,
+                                   in OriginalDrawCache cache, in Matrix4x4 inv, in Matrix4x4 invWorldView,
+                                   CachedMaterialConstants cached,
                                    Paradise.Core.Avatars.AvatarLightState? av = null, OriginalMaterial.AvatarFamily fam = OriginalMaterial.AvatarFamily.None,
                                    Vector4? glossFct = null, OriginalMaterial? mat = null)
     {
         bool avOn = av != null && av.Valid;
-        // Auto-Materialien (CarModel: OriginalMaterial.Car) bekommen das Autolicht des Originals statt der Sonne
-        bool carOn = !avOn && mat != null && mat.Car && sc.CarOn;
-        Vector3 lAmb = carOn ? sc.CarAmbient : sc.Ambient, lDif = carOn ? sc.CarDiffuse : sc.SunDiffuse, lSpc = carOn ? sc.CarSpecular : sc.SunSpecular;
-        if (!Matrix4x4.Invert(world, out var inv)) inv = Matrix4x4.Identity;
-        foreach (ref readonly var e in entries.AsSpan())
+        bool carMat = mat != null && mat.Car;
+        var mats = cached.MaterialValues;
+        var defVals = cached.DefValues;
+        for (int idx = 0; idx < entries.Length; idx++)
         {
+            ref readonly var e = ref entries[idx];
             if (e.Register + e.Count > regs) continue;
-            float* o = dst + e.Register * 4;
+            float* o = dst + e.Offset;
+            if (cached.Pure[idx] && e.Count == 1) { W(o, cached.Values[idx]); continue; }
             switch (e.Kind)
             {
                 case Kind.Material:
                     // Autodreck (TD_CarPaint2/_NM, TD_CarMat_NM VS): DirtColor0..3 = Dreckfarbe rgb + Dreck-Alpha je Viertel, der VS
                     // mischt sie bilinear über TEXCOORD0 zu COLOR1 (s318). Hier ein Wert für alle vier Viertel (Vehicles/CarDirt).
-                    if (mat != null && mat.Car && e.Name.StartsWith("DirtColor", StringComparison.Ordinal)) { W(o, mat.Dirt); break; }
+                    if (carMat && e.IsDirtColor) { W(o, mat!.Dirt); break; }
                     if (avOn && AvatarSymbol(o, e.Key0, av!, fam)) break;
                     if (glossFct.HasValue && e.Key0 == s_kGlossFct) { W(o, glossFct.Value); break; }   // Autolichter (Lichtgläser)
-                    if (carOn && e.Key0 == s_kEnvCoeff && (def.ShaderSet == SetCarPaint2 || def.ShaderSet == SetCarPaint))
+                    if (cache.CarOn && e.Key0 == s_kEnvCoeff && (def.ShaderSet == SetCarPaint2 || def.ShaderSet == SetCarPaint))
                     {
                         // exe 0x7175a0: TD_CarPaint2 ganz aus dem Autolicht, TD_CarPaint nur x (y bleibt Materialwert)
                         if (def.ShaderSet == SetCarPaint2) { W(o, sc.CarEnv); break; }
-                        Vector4 ev = Vector4.Zero;
-                        if (!((over != null && (over.Params.TryGetValue(e.PKey0, out ev) || over.Params.TryGetValue(e.PKey1, out ev)))
-                              || def.Params.TryGetValue(e.PKey0, out ev) || def.Params.TryGetValue(e.PKey1, out ev))) ev = Vector4.Zero;
+                        Vector4 ev = (uint)idx < (uint)mats.Length ? mats[idx] : Vector4.Zero;
                         ev.X = sc.CarEnvFactor;
                         W(o, ev);
                         break;
@@ -274,8 +450,7 @@ public static class OriginalConstants
                     // Bild nur .x = 0x70eaf0 = car_headlights_intensity aus dem Wetter, y..w bleiben Materialwerte)
                     if (e.PKey0 == s_kHeadlightsInt && (def.ShaderSet == SetDashBoard || def.ShaderSet == SetDashBoard2))
                     {
-                        Vector4 hv = Vector4.Zero;
-                        if (!(def.Params.TryGetValue(e.PKey0, out hv) || def.Params.TryGetValue(e.PKey1, out hv))) hv = Vector4.Zero;
+                        Vector4 hv = (uint)idx < (uint)defVals.Length ? defVals[idx] : Vector4.Zero;
                         hv.X = sc.DashHeadlights;
                         W(o, hv);
                         break;
@@ -291,38 +466,34 @@ public static class OriginalConstants
                         W(o, e.PKey0 == s_kRainSpecs ? sc.RainSpecs : sc.RainRipple);
                         break;
                     }
-                    // over: Lack-Material der Autos (<car>_color.2dm) vor dem Karosserie-Material
-                    if ((over != null && (over.Params.TryGetValue(e.PKey0, out var pv) || over.Params.TryGetValue(e.PKey1, out pv)))
-                        || def.Params.TryGetValue(e.PKey0, out pv) || def.Params.TryGetValue(e.PKey1, out pv))
+                    // Fallback (over zuerst, dann def) einmal je Programm+Material aufgelöst – keine Dictionary-Suche je Draw.
+                    if ((uint)idx < (uint)cached.MaterialKnown.Length && cached.MaterialKnown[idx])
                     {
-                        // SECTROFF (World.SectorMaterials, Spielkoordinaten) in den Render-Raum der Weltmatrix
-                        if (e.Key0 == s_kSectrOff) pv += new Vector4(sc.Origin.X, 0f, sc.Origin.Y, 0f);
-                        W(o, pv);
+                        // SECTROFF (World.SectorMaterials, Spielkoordinaten) in den Render-Raum der Weltmatrix.
+                        Vector4 mv = mats[idx];
+                        if (e.Key0 == s_kSectrOff) mv += new Vector4(sc.Origin.X, 0f, sc.Origin.Y, 0f);
+                        W(o, mv);
                     }
                     else
                     {
-                        // Ring enthält sonst Werte eines anderen Aufrufs -> 0 wie ein frischer D3D9-Konstantenpuffer; Name für die Diagnose merken
-                        new Span<float>(o, e.Count * 4).Clear();
+                        new Span<float>(o, e.Floats).Clear();
                         NoteMissing(e.Name);
                     }
                     break;
-                case Kind.WorldViewProj: WriteMatrix(o, e.Count, e.Class, world * sc.ViewProj); break;
+                case Kind.WorldViewProj: WriteMatrix(o, e.Count, e.Class, cache.WorldViewProj); break;
                 case Kind.World: WriteMatrix(o, e.Count, e.Class, world); break;
-                case Kind.WorldView: WriteMatrix(o, e.Count, e.Class, world * sc.View); break;
+                case Kind.WorldView: WriteMatrix(o, e.Count, e.Class, cache.WorldView); break;
                 case Kind.InvWorld: WriteMatrix(o, e.Count, e.Class, inv); break;
                 case Kind.InvWorldView:
                 case Kind.TInvWorldView:
-                    {
-                        if (!Matrix4x4.Invert(world * sc.View, out var iwv)) iwv = Matrix4x4.Identity;
-                        WriteMatrix(o, e.Count, e.Class, e.Kind == Kind.TInvWorldView ? Matrix4x4.Transpose(iwv) : iwv);
-                        break;
-                    }
+                    WriteMatrix(o, e.Count, e.Class, e.Kind == Kind.TInvWorldView ? cache.TInvWorldView : invWorldView);
+                    break;
                 case Kind.View: WriteMatrix(o, e.Count, e.Class, sc.View); break;
                 case Kind.Proj: WriteMatrix(o, e.Count, e.Class, sc.Proj); break;
                 case Kind.ViewProj: WriteMatrix(o, e.Count, e.Class, sc.ViewProj); break;
-                case Kind.InvView: { Matrix4x4.Invert(sc.View, out var m); WriteMatrix(o, e.Count, e.Class, m); break; }
-                case Kind.InvProj: { Matrix4x4.Invert(sc.Proj, out var m); WriteMatrix(o, e.Count, e.Class, m); break; }
-                case Kind.InvViewProj: { Matrix4x4.Invert(sc.ViewProj, out var m); WriteMatrix(o, e.Count, e.Class, m); break; }
+                case Kind.InvView: WriteMatrix(o, e.Count, e.Class, sc.InvView); break;
+                case Kind.InvProj: WriteMatrix(o, e.Count, e.Class, sc.InvProj); break;
+                case Kind.InvViewProj: WriteMatrix(o, e.Count, e.Class, sc.InvViewProj); break;
                 case Kind.Uva:
                     {
                         // Textur-Matrix: VS uv' = (u, v, 1) · Zeile 0/1 (.xyw), z. B. TD_Building dp3 o1.x, r0, c65.xyww
@@ -340,23 +511,23 @@ public static class OriginalConstants
                 case Kind.Skin:
                     for (int b = 0; b < e.Count / 3; b++) WriteMatrix(o + b * 12, 3, 3, Matrix4x4.Identity);
                     break;
-                case Kind.CamPos: W(o, Vector3.Transform(sc.CameraPosition, inv), 1f); break;
-                case Kind.CamDir: W(o, Dir(inv, sc.CameraDirection), 0f); break;
-                case Kind.DirLightDir0: W(o, Dir(inv, avOn ? av!.Direction : sc.SunDirection), 0f); break;
-                case Kind.DirLightDir1: W(o, Vector3.TransformNormal(new Vector3(0, -1, 0), inv), 0f); break;
-                case Kind.DirLightDiffuse0: W(o, Mul(avOn ? av!.Diffuse : lDif, MatDiffuse(def)), MatDiffuse(def).W); break;
-                case Kind.DirLightRawDiffuse0: W(o, avOn ? av!.Diffuse : lDif, 1f); break;
-                case Kind.DirLightSpecular0: W(o, Mul(avOn ? av!.Specular : lSpc, def.Specular), def.Specular.W); break;
+                case Kind.CamPos: W(o, cache.CamPos, 1f); break;
+                case Kind.CamDir: W(o, cache.CamDir, 0f); break;
+                case Kind.DirLightDir0: W(o, cache.DirLightDir0, 0f); break;
+                case Kind.DirLightDir1: W(o, cache.DirLightDir1, 0f); break;
+                case Kind.DirLightDiffuse0: W(o, cache.Diffuse); break;
+                case Kind.DirLightRawDiffuse0: W(o, cache.RawDiffuse); break;
+                case Kind.DirLightSpecular0: W(o, cache.Specular); break;
                 case Kind.Emissive: W(o, def.Emissive); break;   // Material_Emissive 0xfbd170: Datei +0xF0 unverändert
                 // __DirLight_Emissive_0 (Kennung 0x2e, exe 0xfbf600): Emissive des Richtungslichts (+0x40) x Material-Emissive, w = Material.w
-                case Kind.DirEmissive0: W(o, Mul(sc.SunEmissive, def.Emissive), def.Emissive.W); break;
-                case Kind.Ambient0: W(o, Mul(avOn ? av!.Ambient : lAmb, MatAmbient(def)), MatAmbient(def).W); break;
-                case Kind.RawAmbient0: W(o, avOn ? av!.Ambient : lAmb, 1f); break;
+                case Kind.DirEmissive0: W(o, cache.DirEmissive); break;
+                case Kind.Ambient0: W(o, cache.Ambient); break;
+                case Kind.RawAmbient0: W(o, cache.RawAmbient); break;
                 // Kameralicht (nur Avatare; sonst aus = 0 wie ein abgeschaltetes Spotlicht). Materialfarben wie exe 0xfbd9b0/0xfbd450/0xfbd6e0
-                case Kind.SpotPos0: W(o, avOn ? Vector3.Transform(av!.SpotPosition(sc.CameraDirection), inv) : Vector3.Zero, 1f); break;
-                case Kind.SpotAmbient0: W(o, avOn ? Mul(av!.SpotAmbient, MatAmbient(def)) : Vector3.Zero, MatAmbient(def).W); break;
-                case Kind.SpotDiffuse0: W(o, avOn ? Mul(av!.SpotDiffuse, MatDiffuse(def)) : Vector3.Zero, MatDiffuse(def).W); break;
-                case Kind.SpotSpecular0: W(o, avOn ? Mul(av!.SpotSpecular, def.Specular) : Vector3.Zero, def.Specular.W); break;
+                case Kind.SpotPos0: W(o, cache.SpotPos, 1f); break;
+                case Kind.SpotAmbient0: W(o, cache.SpotAmbient); break;
+                case Kind.SpotDiffuse0: W(o, cache.SpotDiffuse); break;
+                case Kind.SpotSpecular0: W(o, cache.SpotSpecular); break;
                 case Kind.MaterialSpecular: W(o, def.Specular); break;
                 case Kind.InstanceColor: W(o, Vector4.One); break;
                 case Kind.AlphaRef: { float r = def.Flags[7] / 255f; W(o, new Vector4(r)); break; }
@@ -369,7 +540,7 @@ public static class OriginalConstants
                 case Kind.FogConfig: W(o, sc.FogConfig); break;
                 case Kind.RenderTargetSize: W(o, new Vector4(1f / System.Math.Max(sc.Width, 1f), 1f / System.Math.Max(sc.Height, 1f), sc.Width, sc.Height)); break;
                 case Kind.StereoUvMadd: W(o, new Vector4(1, 1, 0, 0)); break;
-                default: new Span<float>(o, e.Count * 4).Clear(); break;   // zweites Licht, Spot-Lichter, Echtzeit-Schatten: abgeschaltet -> 0
+                default: new Span<float>(o, e.Floats).Clear(); break;   // zweites Licht, Spot-Lichter, Echtzeit-Schatten: abgeschaltet -> 0
             }
         }
     }

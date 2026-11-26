@@ -826,10 +826,12 @@ public sealed partial class Traffic : IDisposable
             }
             else if (c.Mode == 1)
             {
-                // Unfall: Physik bestimmt die Lage
+                // Unfall: Physik bestimmt die Lage. Die lose Box hat keine Reifen -> Reibung und Drehungsdämpfung
+                // hier nachbilden, sonst rutscht sie wie auf Eis und schweren Objekten fehlt das Gewicht.
                 if (c.Loose is BodyHandle h && _world != null && _world.Simulation.Bodies.BodyExists(h))
                 {
                     var b = _world.Body(h);
+                    DampLoose(c, b, dt);
                     var rot = b.Pose.Orientation;
                     c.Fwd = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, rot));
                     c.Up = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, rot));
@@ -837,7 +839,11 @@ public sealed partial class Traffic : IDisposable
                     c.Vel = b.Velocity.Linear;
                     bool rest = c.Vel.Length() < 0.4f && b.Velocity.Angular.Length() < 0.3f;
                     c.RestT = rest ? c.RestT + dt : 0f;
-                    if (c.RestT > 1.5f || c.ModeT > 25f) { c.Mode = 2; c.ModeT = 0f; RemoveLoose(c); }
+                    if (c.RestT > 1.5f || c.ModeT > 25f)
+                    {
+                        c.Mode = 2; c.ModeT = 0f;
+                        SetWreckCollider(c);   // stehengebliebenes Wrack bleibt als Hindernis kollidierbar
+                    }
                 }
                 else { c.Mode = 2; c.ModeT = 0f; }
                 c.V = 0f; c.Hazard = c.ModeT > 0.8f; c.Brake = false; c.IndL = c.IndR = false;
@@ -849,6 +855,56 @@ public sealed partial class Traffic : IDisposable
                 if (c.ModeT > 6f) { c.RestT += dt; if (c.RestT > 2f) { c.RestT = 0f; TryRejoin(c); } }
             }
         }
+    }
+
+    /// <summary>
+    /// Lose Unfallkörper: Reifenreibung als konstante Verzögerung (Gummi auf Asphalt), Drehungsdämpfung und
+    /// Höhenkorrektur über die echte Reifenaufstandsfläche. Die Bepu-Box allein kennt keine Reifen und rutscht sonst ewig.
+    /// </summary>
+    void DampLoose(Car c, BodyReference b, float dt)
+    {
+        if (_world == null) return;
+        var lin = b.Velocity.Linear;
+        var ang = b.Velocity.Angular;
+        var center = _world.ToGame(b.Pose.Position);
+        var rot = b.Pose.Orientation;
+        // eigenen losen Körper ignorieren, sonst trifft der Strahl sofort die eigene Box und es gibt keine Reibung.
+        bool grounded = _world.Raycast(center, -Vector3.UnitY, c.BoxSize.Y * 0.5f + 0.45f, out var gh, b.Handle)
+            && gh.Normal.Y > 0.55f && gh.Collidable.Mobility == BepuPhysics.Collidables.CollidableMobility.Static;
+        if (grounded)
+        {
+            float speed = MathF.Sqrt(lin.X * lin.X + lin.Z * lin.Z);
+            if (speed > 1e-4f)
+            {
+                // Coulomb-Reibung: unabhängig von der Masse, aber endlich – kein ewiges Eis-Rutschen.
+                float f = MathF.Max(0f, speed - TrafficConfig.LooseTireFriction * 9.81f * dt) / speed;
+                lin.X *= f; lin.Z *= f;
+            }
+            ang *= MathF.Exp(-dt * TrafficConfig.LooseGroundAngularDamping);
+            // RideOffset = -minY (unterster Radmesh-Punkt). Nicht die Boxhöhe, sondern die Reifen kontrollieren die Bodenhöhe.
+            var origin = center - Vector3.Transform(c.BoxCenter, rot);
+            float wheelY = origin.Y + Vector3.Transform(new Vector3(0f, -c.RideOffset, 0f), rot).Y;
+            if (wheelY < gh.Point.Y - 0.02f)
+            {
+                var p = b.Pose.Position;
+                p.Y += MathF.Min(0.08f, (gh.Point.Y - wheelY) * 0.35f);
+                b.Pose.Position = p;
+            }
+        }
+        else
+        {
+            float air = MathF.Exp(-dt * TrafficConfig.LooseAirLinearDamping);
+            lin.X *= air; lin.Z *= air;
+            lin.Y -= 9.81f * MathF.Max(0f, TrafficConfig.LooseAirGravityScale - 1f) * dt;   // schwerer in der Luft
+            ang *= MathF.Exp(-dt * TrafficConfig.LooseAirAngularDamping);
+        }
+        float v = lin.Length();
+        if (v > TrafficConfig.LooseMaxSpeed) lin *= TrafficConfig.LooseMaxSpeed / v;
+        float w = ang.Length();
+        if (w > TrafficConfig.LooseMaxAngularSpeed) ang *= TrafficConfig.LooseMaxAngularSpeed / w;
+        b.Velocity.Linear = lin;
+        b.Velocity.Angular = ang;
+        if (lin.LengthSquared() + ang.LengthSquared() > 0.01f) b.Awake = true;
     }
 
     void GroundProbe(Car c)
@@ -890,6 +946,7 @@ public sealed partial class Traffic : IDisposable
         foreach (var o in _obs) if (o.Car != c && Flat(o.P, c.Pos) < 7f) return;
         if (_lanes == null || !_lanes.Nearest(c.Pos, c.Fwd, 4.5f, out var lane, out var s) || lane == null) return;
         var old = c.Pos;
+        RemoveLoose(c);   // Wrack-Collider am Unfallort entfernen, sonst bleibt ein Geist-Hindernis stehen
         c.Lane = lane; c.S = s; c.Phase = 0; c.V = 0f; c.Accel = 0f; c.Mode = 0; c.ModeT = 0f; c.WaitT = 0f; c.StuckT = 0f;
         ChooseNext(c);
         ComputePose(c, 0f);
@@ -934,16 +991,28 @@ public sealed partial class Traffic : IDisposable
         if (d.LengthSquared() > reach * reach) return;
         if (!Overlap(c.Pos, c.Fwd, c.HalfLen + 0.15f, c.HalfWidth + 0.15f, _me, _meFwd, _meHalfLen, _meHalfWidth)) return;
         var rel = _meVel - c.Vel; rel.Y = 0f;
-        if (rel.Length() < TrafficConfig.CrashSpeed) return;
-        float m1 = 1400f, m2 = MathF.Max(300f, c.Type.Car.Mass);
-        var est = c.Vel + (_meVel - c.Vel) * (m1 / (m1 + m2)) * 1.3f;
+        var normal = d.LengthSquared() > 1e-6f ? Vector3.Normalize(d) : _meFwd;
+        float closing = Vector3.Dot(rel, normal);
+        if (closing < TrafficConfig.CrashSpeed) return;
+        // Echte Massen und Stoßrichtung statt der alten 1400/300-Schätzung mit 1.3x Faktor (schleuderte viel zu weit).
+        var vm = _vm();
+        float m1 = MathF.Max(200f, vm?.Current?.Rigidbody.mass ?? 1400f), m2 = TrafficMass(c);
+        float push = (1f + TrafficConfig.CrashRestitution) * closing * m1 / (m1 + m2)
+                   + MathF.Min(TrafficConfig.CrashSeparation, closing * 0.1f);
+        var est = c.Vel + normal * push;
+        float speed = est.Length();
+        if (speed > TrafficConfig.LooseMaxSpeed) est *= TrafficConfig.LooseMaxSpeed / speed;
+        // Außermittiger Treffer: ein Teil der Energie wird Drehung statt Flugbewegung.
+        var center = c.Pos + Vector3.Transform(c.BoxCenter, RotGame(c.Fwd, c.Up));
+        var contact = Vector3.Lerp(_me, c.Pos, 0.5f) + Vector3.UnitY * MathF.Min(1f, c.BoxSize.Y);
+        var axis = Vector3.Cross(contact - center, normal);
         if (!c.Mine)
         {
             // fremdes Auto gerammt: übernehmen, Unfall bei mir berechnen
             Claim(c);
             c.VisOffset = Vector3.Zero;
         }
-        Crash(c, est);
+        Crash(c, est, axis, closing);
     }
 
     static bool Overlap(Vector3 pa, Vector3 fa, float la, float wa, Vector3 pb, Vector3 fb, float lb, float wb)
@@ -961,18 +1030,24 @@ public sealed partial class Traffic : IDisposable
     }
 
     /// <summary>Unfall: KI aus, loser Körper mit Schwerkraft.</summary>
-    void Crash(Car c, Vector3 vel)
+    void Crash(Car c, Vector3 vel, Vector3 axis, float closing)
     {
         RemoveKin(c);
         c.Mode = 1; c.ModeT = 0f; c.RestT = 0f; c.V = 0f; c.Accel = 0f;
+        c.VisOffset = Vector3.Zero;   // keine alte Interpolationsverschiebung in die Physik mitnehmen
         if (_world == null) { c.Mode = 2; return; }
         var rot = RotGame(c.Fwd, c.Up);
-        var h = _world.AddLooseBox(c.Pos + Vector3.Transform(c.BoxCenter, rot), rot, c.BoxSize, MathF.Max(600f, c.Type.Car.Mass));
+        var h = _world.AddLooseBox(c.Pos + Vector3.Transform(c.BoxCenter, rot), rot, c.BoxSize, TrafficMass(c));
         var b = _world.Body(h);
         b.Velocity.Linear = vel;
+        if (axis.LengthSquared() > 1e-6f)
+            b.Velocity.Angular = Vector3.Normalize(axis) * MathF.Min(6f, closing * 0.18f);
         b.Awake = true;
         c.Loose = h;
     }
+
+    /// <summary>Masse des Crash-Körpers – muss mit der Masse in <see cref="CheckHit"/> übereinstimmen.</summary>
+    static float TrafficMass(Car c) => MathF.Max(900f, c.Type.Car.Mass) * TrafficConfig.CrashMassScale;
 
     void SetPhysical(Car c, bool on)
     {
@@ -999,6 +1074,24 @@ public sealed partial class Traffic : IDisposable
     {
         if (c.Loose is BodyHandle h && _world != null) _world.RemoveBody(h);
         c.Loose = null;
+    }
+
+    /// <summary>
+    /// Stillstehendes Wrack als festes Hindernis behalten. Vorher wurde der lose Körper einfach gelöscht,
+    /// wodurch man ohne Widerstand hindurchfahren konnte.
+    /// </summary>
+    void SetWreckCollider(Car c)
+    {
+        if (_world == null) return;
+        RemoveLoose(c);
+        var box = new Box(MathF.Max(0.2f, c.BoxSize.X), MathF.Max(0.2f, c.BoxSize.Y), MathF.Max(0.2f, c.BoxSize.Z));
+        var shape = _world.Simulation.Shapes.Add(box);
+        var rot = RotGame(c.Fwd, c.Up);
+        var pose = new RigidPose(_world.ToLocal(c.Pos + Vector3.Transform(c.BoxCenter, rot)), rot);
+        var desc = BodyDescription.CreateKinematic(pose, new BodyVelocity(), new CollidableDescription(shape, 0.1f, ContinuousDetection.Continuous()), new BodyActivityDescription(-1f));
+        var h = _world.Simulation.Bodies.Add(desc);
+        _world.RayIgnoreBodies.Add(h.Value);   // Radstrahlen treffen das Wrack nicht (wie bei fahrendem Verkehr)
+        c.Loose = h;
     }
 
     // ------------------------------------------------------------------ Mehrspieler: Entfernen, Übergeben, Übernehmen (Unity TDU2Traffic)
@@ -1399,10 +1492,16 @@ public sealed partial class Traffic : IDisposable
         if (radius > 0.15f) c.Radius = radius;
         c.HalfLen = MathF.Max(1.5f, (bmax.Z - bmin.Z) * 0.5f);
         c.HalfWidth = MathF.Max(0.7f, (bmax.X - bmin.X) * 0.5f);
-        // Körper: Box ab etwas über dem Boden (fährt ohne Bodenkontakt)
-        float bottom = bmin.Y + 0.25f;
-        c.BoxCenter = new Vector3((bmin.X + bmax.X) * 0.5f, (bottom + bmax.Y) * 0.5f, (bmin.Z + bmax.Z) * 0.5f);
-        c.BoxSize = new Vector3((bmax.X - bmin.X) * 0.95f, MathF.Max(0.4f, bmax.Y - bottom), (bmax.Z - bmin.Z) * 0.97f);
+        // Crash-Box: Boden exakt auf die Reifenaufstandsfläche. minY ist der unterste Punkt der Rad-Meshes
+        // (Radius ist darin enthalten), RideOffset = -minY. Die alte Karosserie-Unterkante lag ~0,3-0,5 m höher,
+        // deshalb sank das Auto nach dem Crash halb in den Boden. Die Box geht jetzt um die Räder statt nur um die Karosserie.
+        float wheelBottom = minY < float.MaxValue ? minY : -MathF.Max(0.2f, radius);
+        float clearance = radius > 0.15f ? MathF.Min(0.05f, radius * 0.15f) : 0.03f;
+        float bottom = wheelBottom + clearance;
+        float boxTop = MathF.Max(bmax.Y, bottom + 0.4f);
+        float sizeY = boxTop - bottom;
+        c.BoxCenter = new Vector3((bmin.X + bmax.X) * 0.5f, bottom + sizeY * 0.5f, (bmin.Z + bmax.Z) * 0.5f);
+        c.BoxSize = new Vector3((bmax.X - bmin.X) * 0.95f, sizeY, (bmax.Z - bmin.Z) * 0.97f);
         if (c.Mode == 0) ComputePose(c, 0f);
 
         var lights = new VehicleLights { External = true, UnityLights = false };

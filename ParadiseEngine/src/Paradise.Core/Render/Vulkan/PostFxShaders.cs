@@ -11,8 +11,10 @@ namespace Paradise.Core.Render.Vulkan;
 ///   bloom     LUT: (black, 1/(white-black), intensity)                          – c13
 ///   gamma     LUT: x = Gamma                                                    – c14
 /// Texturen (set 0): binding 0 = Eingang/Szene (sA), 1 = Unschärfe Viertel (sB), 2 = LUT (sLut), 3 = Bloom (sBloom, Zusatz),
-/// 4 = AO (sAo, Zusatz). Alle linear, Rand geklemmt.
-/// Zusatz der Engine (nicht im Original, siehe <see cref="Paradise.Core.Render.PostFx"/>): BrightFrag, AoFrag, ApplyFrag-Flags.
+/// 4 = AO (sAo, Zusatz), 5 = God Rays / Sonnen-Volumetrie (sGod, Zusatz), 6 = Welttiefe (sDepth, Zusatz),
+/// 8 = Volumen (sVol, Zusatz), binding 7 = Uniform-Puffer (Scheinwerfer + Sonne, Kameraachsen). Texturen linear, Rand geklemmt.
+/// Zusatz der Engine (nicht im Original, siehe <see cref="Paradise.Core.Render.PostFx"/>): BrightFrag, AoFrag, GodRayFrag,
+/// VolumeFrag, SunVolumeFrag, ApplyFrag-Flags (Bloom/AO/God/Fog/Volumen).
 /// Gerechnet wird auf den gespeicherten 8-Bit-Werten (UNORM-Sicht), also im selben Raum wie das Original (A8R8G8B8, ohne sRGB).
 /// </summary>
 internal static class PostFxShaders
@@ -32,6 +34,23 @@ layout(set = 0, binding = 1) uniform sampler2D sB;
 layout(set = 0, binding = 2) uniform sampler2D sLut;
 layout(set = 0, binding = 3) uniform sampler2D sBloom;
 layout(set = 0, binding = 4) uniform sampler2D sAo;
+layout(set = 0, binding = 5) uniform sampler2D sGod;
+layout(set = 0, binding = 6) uniform sampler2D sDepth;
+layout(set = 0, binding = 7) uniform Volume {
+    vec4 vPosNear;   // xyz = Projektorposition (Welt), w = Near
+    vec4 vDirStr;    // xyz = Richtung zur Sonne des Scheinwerfers, w = Stärke
+    vec4 vUpCot;     // xyz = Oben des Kegels, w = cot(Außenwinkel/2)
+    vec4 vAtt;       // x = cut*ay, y = ay, z = -cos(außen)*aw, w = aw
+    vec4 vRight;     // Kamera rechts (Welt)
+    vec4 vCamUp;     // Kamera oben (Welt)
+    vec4 vFwd;       // Kamera vorwärts (Welt)
+    vec4 vCamPos;    // xyz = Kameraposition (Welt)
+    vec4 vSunDir;    // xyz = Richtung zur Streu-Sonne, w = Stärke
+    vec4 vSunColor;  // rgb = Sonnenfarbe (Gamma), w = Tagesmaske
+    vec4 vSunPhase;  // x = 1−g², y = 1+g², z = 2g, w = Obergrenze der Phase
+    vec4 vSunRange;  // x = max. Distanz, y = Fade-Start (Anteil), z = Jitter, w = unbenutzt
+} vol;
+layout(set = 0, binding = 8) uniform sampler2D sVol;
 layout(location = 0) out vec4 outColor;
 // Pixelmitte des Ziels in Texturkoordinaten
 vec2 Uv() { return gl_FragCoord.xy * p.vars.xy; }
@@ -117,22 +136,51 @@ void main() {
     /// <summary>
     /// §2.5 Anwenden (PFX_ApplyLut ps_0): Zeile = Helligkeit aus Bild und Unschärfe gemischt (vars.z = BlurredLumFactor),
     /// jeder Kanal einzeln über die Tabelle. Gezeichnet als erstes im UI-Durchgang über das ganze Bild.
-    /// Zusatz (Engine): vars.w = Flags (1 Photoshop, 2 Bloom, 4 AO); params.x = Bloom-Stärke, params.y = AO-Stärke.
-    /// AO dunkelt das Bild vor der Tabelle ab, Bloom kommt danach per "Negativ multiplizieren" dazu. Nur Photoshop = Original.
+    /// Zusatz (Engine): vars.w = Flags (1 Photoshop, 2 Bloom, 4 AO, 64 God Rays, 128 Nebel, 1024 Volumen,
+    /// 8/16/32/256/512/2048 = Diagnose); params.x = Bloom-Stärke, params.y = AO-Stärke, params.z = 1 (Volumen-Puffer trägt die Stärke bereits),
+    /// shadows.xy = God/Fog-Stärke, midtones = Tiefenunprojektion, hightones = Kameraachsen.Y + Kamera-Y,
+    /// bloom = Nebelfarbe, gamma = (Start, Ende, Höhendichte, Basis-Y).
+    /// AO/God/Fog/Volumen kommen vor der Tabelle, Bloom danach per "Negativ multiplizieren". Nur Photoshop = Original.
     /// </summary>
     public const string ApplyFrag = Head + @"
+// Ein gemeinsamer Platzhalter, den ApplySource(bool msaa) je nach Tiefe ersetzt.
+float DepthAt(vec2 q) { return texture(sDepth, clamp(q, vec2(0.0), vec2(1.0))).r; }
+vec3 ViewPos(vec2 uv) {
+    float d = DepthAt(uv);
+    float z = p.midtones.y / (d + p.midtones.x + 1e-6);
+    z = clamp(z, 0.0, 20000.0);
+    vec2 ndc = uv * 2.0 - 1.0;
+    // M22 ist negativ (Vulkan-Y nach unten): Vorzeichen wie in VolumeFrag/SunVolumeFrag erhalten,
+    // sonst wird die obere Bildhälfte falsch rekonstruiert und der Hoehenfog schaltet nur dort ein.
+    return vec3(ndc.x * z / max(abs(p.midtones.z), 1e-4),
+                ndc.y * z / p.midtones.w, z);
+}
 void main() {
     vec2 uv = Uv();
     int flags = int(p.vars.w + 0.5);
-    vec3 a = texture(sA, uv).rgb;
-    if ((flags & 4) != 0) a *= mix(1.0, texture(sAo, uv).r, p.params.y);
-    vec3 c = a;
+    vec3 src = texture(sA, uv).rgb;
+    if ((flags & 4) != 0) src *= mix(1.0, texture(sAo, uv).r, p.params.y);
+    vec3 c = src;
+    if ((flags & 64) != 0) c = min(c + texture(sGod, uv).rgb * p.shadows.x, vec3(1.0));
+    if ((flags & 1024) != 0) c = min(c + texture(sVol, uv).rgb * p.params.z, vec3(1.0));
+    float fog = 0.0;
+    if ((flags & 128) != 0 || (flags & 512) != 0) {
+        vec3 view = ViewPos(uv);
+        float worldY = p.hightones.w + dot(view, p.hightones.xyz);
+        float dist = max(view.z - p.gamma.x, 0.0);
+        float span = max(p.gamma.y - p.gamma.x, 1.0);
+        fog = clamp(dist / span, 0.0, 1.0);
+        fog = fog * fog * (3.0 - 2.0 * fog);
+        fog *= exp(-max(worldY - p.gamma.w, 0.0) * p.gamma.z);
+        fog = clamp(fog * p.shadows.y, 0.0, 1.0);
+        if ((flags & 128) != 0) c = mix(c, p.bloom.rgb, fog);
+    }
     if ((flags & 1) != 0) {
         vec3 bq = texture(sB, uv).rgb;
-        float L = dot(mix(a, bq, p.vars.z), vec3(0.299, 0.587, 0.114));
-        c = vec3(texture(sLut, vec2(a.r, L)).r,
-                 texture(sLut, vec2(a.g, L)).g,
-                 texture(sLut, vec2(a.b, L)).b);
+        float L = dot(mix(c, bq, p.vars.z), vec3(0.299, 0.587, 0.114));
+        c = vec3(texture(sLut, vec2(c.r, L)).r,
+                 texture(sLut, vec2(c.g, L)).g,
+                 texture(sLut, vec2(c.b, L)).b);
     }
     if ((flags & 2) != 0) {
         vec3 b = clamp(texture(sBloom, uv).rgb * p.params.x, 0.0, 1.0);
@@ -141,6 +189,9 @@ void main() {
     if ((flags & 8) != 0) c = vec3(texture(sAo, uv).r);                                   // Diagnose: AO-Bild
     if ((flags & 16) != 0) c = clamp(texture(sBloom, uv).rgb * p.params.x, 0.0, 1.0);     // Diagnose: Bloom-Bild
     if ((flags & 32) != 0) c = vec3(texture(sA, uv).a);                                   // Diagnose: Bloom-Maske (Alpha)
+    if ((flags & 256) != 0) c = clamp(texture(sGod, uv).rgb, 0.0, 1.0);                   // Diagnose: God-Ray-Puffer
+    if ((flags & 512) != 0) c = vec3(fog);                                                 // Diagnose: Nebelanteil
+    if ((flags & 2048) != 0) c = clamp(texture(sVol, uv).rgb, 0.0, 1.0);                   // Diagnose: Volumen-Puffer
     outColor = vec4(c, 1.0);
 }";
 
@@ -238,4 +289,190 @@ void main() {
     public static string AoSource(bool msaa) => msaa
         ? AoFrag.Replace("uniform sampler2D sA;", "uniform sampler2DMS sA;").Replace("AO_LOD", "")
         : AoFrag.Replace("AO_LOD", ", 0");
+
+    /// <summary>
+    /// Zusatz God Rays (Viertel): Himmelsquelle aus ferner Tiefe + Helligkeit, radialer Blur von der Sonne weg.
+    /// Die Sonnenumgebung bekommt einen Mindestbeitrag, damit auch ein matter Himmel Strahlen erzeugt; weiße Wände bleiben
+    /// wegen der Tiefenprüfung draußen. Normiert wird auf tatsächlich getroffene Samples, nicht auf alle Abtastungen – sonst
+    /// verschwinden die Strahlen hinter einem Baum fast vollständig.
+    /// vars.xy = 1/Zielgröße, vars.zw = 1/Bildgröße (Seitenverhältnis); params = (sunU, sunV, Stärke, Abfall),
+    /// shadows = (Schwelle, Knie, Fernanteil, gültig), midtones = (proj.M33, proj.M43, Abtastungen, 0).
+    /// </summary>
+    public const string GodRayFrag = Head + @"
+float DepthAt(vec2 q) { return texture(sDepth, clamp(q, vec2(0.0), vec2(1.0))).r; }
+vec3 SkySource(vec2 uv) {
+    if (p.shadows.w <= 0.5) return vec3(0.0);
+    vec2 q = clamp(uv, vec2(0.0), vec2(1.0));
+    vec3 s = texture(sA, q).rgb;
+    float br = max(s.r, max(s.g, s.b));
+    float knee = max(p.shadows.y, 1e-4);
+    float soft = clamp(br - p.shadows.x + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee);
+    float bright = max(soft, br - p.shadows.x) / max(br, 1e-4);
+    float farZ = p.midtones.y / (p.midtones.x + 1e-6);
+    if (farZ <= 0.0) return vec3(0.0);
+    float d = DepthAt(q);
+    float z = clamp(p.midtones.y / (d + p.midtones.x + 1e-6), 0.0, farZ);
+    float sky = smoothstep(farZ * max(p.shadows.z, 0.01), farZ * 0.99, z);
+    if (sky <= 0.0) return vec3(0.0);
+    // Nähe zur Sonne im Sample: auch ein nicht weißer Himmel liefert dort Strahlen.
+    float aspect = p.vars.w / max(p.vars.z, 1e-6);
+    vec2 sd = (q - p.params.xy) * vec2(aspect, 1.0);
+    float prox = exp(-dot(sd, sd) * 3.0);
+    float w = sky * max(bright, 0.4 * prox) * (0.4 + 0.6 * prox);
+    vec3 warm = mix(s, vec3(1.0, 0.94, 0.78), 0.35);
+    return warm * w;
+}
+void main() {
+    if (p.shadows.w <= 0.5) { outColor = vec4(0.0); return; }
+    vec2 uv = Uv();
+    vec2 delta = uv - p.params.xy;
+    float aspect = p.vars.w / max(p.vars.z, 1e-6);
+    float dist = length(delta * vec2(aspect, 1.0));
+    float falloff = exp(-dist * dist * 2.0);
+    int N = clamp(int(p.midtones.z + 0.5), 4, 24);
+    vec2 rayStep = delta * (p.params.w / float(N));
+    vec3 acc = vec3(0.0);
+    float hits = 0.0, weight = 1.0;
+    for (int i = 0; i < 24; i++) {
+        if (i >= N) break;
+        vec2 suv = clamp(uv - rayStep * float(i), vec2(0.0), vec2(1.0));
+        vec3 src = SkySource(suv);
+        float m = max(src.r, max(src.g, src.b));
+        if (m > 1e-4) { acc += src * weight; hits += weight; }
+        weight *= p.params.w;
+    }
+    vec3 col = acc / max(hits, 1e-4) * p.params.z * falloff;
+    outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}";
+
+    /// <summary>Depth- und Apply-Shader passend zur Tiefe: mit MSAA sampler2DMS (texelFetch Abtastung 0), sonst sampler2D.</summary>
+    private const string DepthLine = "float DepthAt(vec2 q) { return texture(sDepth, clamp(q, vec2(0.0), vec2(1.0))).r; }";
+    private const string DepthLineMsaa = "float DepthAt(vec2 q) { ivec2 sz = textureSize(sDepth); return texelFetch(sDepth, clamp(ivec2(q * vec2(sz)), ivec2(0), sz - 1), 0).r; }";
+
+    public static string GodRaySource(bool msaa) => msaa
+        ? GodRayFrag.Replace("uniform sampler2D sDepth;", "uniform sampler2DMS sDepth;").Replace(DepthLine, DepthLineMsaa)
+        : GodRayFrag;
+
+    /// <summary>
+    /// Volumetrisches Licht des Spieler-Scheinwerfers (Viertel): Raymarch vom Auge bis zur Szenentiefe. Der Kegel kommt aus
+    /// dem UBO (erster HeadlightProjector), das Streulicht aus der Höhenfog-Dichte. vars.xy = 1/Zielgröße, vars.zw = 1/Bildgröße,
+    /// params = (FogHeightDensity, FogHeightBase, Schritte, 0), shadows.x = Stärke, midtones = (proj.M33, M43, M11, M22).
+    /// </summary>
+    public const string VolumeFrag = Head + @"
+float DepthAt(vec2 q) { return texture(sDepth, clamp(q, vec2(0.0), vec2(1.0))).r; }
+vec3 ViewPos(vec2 uv) {
+    float d = DepthAt(uv);
+    float z = p.midtones.y / (d + p.midtones.x + 1e-6);
+    z = clamp(z, 0.0, 20000.0);
+    vec2 ndc = uv * 2.0 - 1.0;
+    // M22 ist negativ (Vulkan-Y nach unten): das Vorzeichen muss erhalten bleiben, sonst liegt das Volumen gespiegelt.
+    return vec3(ndc.x * z / max(abs(p.midtones.z), 1e-4),
+                ndc.y * z / p.midtones.w, z);
+}
+void main() {
+    if (vol.vDirStr.w <= 0.0 || p.shadows.x <= 0.0) { outColor = vec4(0.0); return; }
+    vec3 viewEnd = ViewPos(Uv());
+    float reach = length(viewEnd);
+    float rangeFade = clamp(reach / 60.0, 0.0, 1.0);
+    if (rangeFade <= 0.0) { outColor = vec4(0.0); return; }
+    int N = clamp(int(p.params.z + 0.5), 4, 16);
+    vec3 dir = normalize(vol.vDirStr.xyz);
+    // Original-Attenuation: Att.x = cut*ay, Att.y = ay -> cut in Metern zurückrechnen (DxsoToGlsl.OrigLightYZ).
+    float ay = max(vol.vAtt.y, 1e-6);
+    float range = vol.vAtt.x / ay;
+    float cot = max(vol.vUpCot.w, 1e-4);
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 16; i++) {
+        if (i >= N) break;
+        float s = (float(i) + 0.5) / float(N);
+        vec3 viewSample = viewEnd * s;
+        vec3 world = vol.vCamPos.xyz + vol.vRight.xyz * viewSample.x
+                   + vol.vCamUp.xyz * viewSample.y + vol.vFwd.xyz * viewSample.z;
+        vec3 delta = world - vol.vPosNear.xyz;
+        float d = length(delta);
+        if (d <= 1e-6) continue;
+        float along = dot(delta, dir);
+        if (along <= 0.0 || d >= range) continue;
+        // Nahbereich wie im Original: linear von Near-0,5 bis Near (Meter), nicht über Att.x (normiert).
+        float nr = d - (vol.vPosNear.w - 0.5);
+        float nearFade = d - vol.vPosNear.w >= 0.0 ? 1.0 : nr + nr;
+        nearFade = nr >= 0.0 ? nearFade : 0.0;
+        if (nearFade <= 0.0) continue;
+        float r = length(delta - dir * along);
+        float radius = along / cot;
+        float radial = 1.0 - smoothstep(radius * 0.55, radius, r);
+        if (radial <= 0.0) continue;
+        float distAtt = clamp(vol.vAtt.x - d * vol.vAtt.y, 0.0, 1.0);
+        float cosTheta = clamp(along / d, 0.0, 1.0);
+        float angular = clamp(cosTheta * vol.vAtt.w + vol.vAtt.z, 0.0, 1.0);
+        float density = exp(-max(world.y - p.params.y, 0.0) * p.params.x);
+        acc += vec3(1.0, 0.95, 0.82) * radial * distAtt * nearFade * angular * density;
+    }
+    vec3 col = acc / float(N) * rangeFade * vol.vDirStr.w * p.shadows.x;
+    outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}";
+
+    public static string VolumeSource(bool msaa) => msaa
+        ? VolumeFrag.Replace("uniform sampler2D sDepth;", "uniform sampler2DMS sDepth;").Replace(DepthLine, DepthLineMsaa)
+        : VolumeFrag;
+
+    /// <summary>
+    /// Sonnen-Volumetrie als Ersatz für die klassischen God Rays (beide gleichzeitig würden die Sonne doppelt addieren).
+    /// Richtung = Sky.ScatterSun (deckt sich mit dem sichtbaren Himmel), Phase = Henyey-Greenstein aus Skydome_HGg,
+    /// Medium = Höhenprofil des Nebels. Viertelauflösung, 4–24 Schritte, danach derselbe Gauß wie beim Scheinwerfer.
+    /// Kein Shadow-Map-Binding: die Tiefe beendet den Strahl an der sichtbaren Oberfläche, weiterhin keine echte Verschattung.
+    /// </summary>
+    public const string SunVolumeFrag = Head + @"
+float DepthAt(vec2 q) { return texture(sDepth, clamp(q, vec2(0.0), vec2(1.0))).r; }
+vec3 ViewPos(vec2 uv) {
+    float d = DepthAt(uv);
+    float z = p.midtones.y / (d + p.midtones.x + 1e-6);
+    z = clamp(z, 0.0, 20000.0);
+    vec2 ndc = uv * 2.0 - 1.0;
+    // M22 ist negativ (Vulkan-Y nach unten): Vorzeichen wie beim Scheinwerfer-Volumen erhalten.
+    return vec3(ndc.x * z / max(abs(p.midtones.z), 1e-4),
+                ndc.y * z / p.midtones.w, z);
+}
+void main() {
+    if (vol.vSunColor.w <= 0.0 || vol.vSunDir.w <= 0.0) { outColor = vec4(0.0); return; }
+    vec3 viewEnd = ViewPos(Uv());
+    float reach = length(viewEnd);
+    if (reach <= 1.0) { outColor = vec4(0.0); return; }
+    int N = clamp(int(p.params.z + 0.5), 4, 24);
+    vec3 L = normalize(vol.vSunDir.xyz);
+    float maxDist = min(reach, max(vol.vSunRange.x, 1.0));
+    // Versetzte Startphase gegen Schrittbänder; der nachfolgende Gauß glättet das Rauschen wieder.
+    float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 24; i++) {
+        if (i >= N) break;
+        float s = clamp((float(i) + 0.5 + (jitter - 0.5) * vol.vSunRange.z) / float(N), 0.0, 1.0);
+        // quadratische Verteilung: nah dicht, weit grob (Nebel ist in Bodennähe am stärksten)
+        float t = maxDist * s * s;
+        if (t <= 1e-3) continue;
+        vec3 viewSample = viewEnd * (t / reach);
+        vec3 offset = vol.vRight.xyz * viewSample.x + vol.vCamUp.xyz * viewSample.y + vol.vFwd.xyz * viewSample.z;
+        vec3 world = vol.vCamPos.xyz + offset;
+        // Henyey-Greenstein in der Form des Sky-Domes, aber mit abgemildertem g (siehe UpdateVolumeUbo).
+        float mu = dot(normalize(offset), L);
+        float hx = max(vol.vSunPhase.y - vol.vSunPhase.z * mu, 1e-4);
+        float phase = min(vol.vSunPhase.x * inversesqrt(hx) / hx, vol.vSunPhase.w);
+        float density = exp(-max(world.y - p.params.y, 0.0) * p.params.x);
+        float fade = 1.0 - smoothstep(maxDist * vol.vSunRange.y, maxDist, t);
+        acc += vol.vSunColor.rgb * density * phase * fade;
+    }
+    // acc/N ist ein Mittelwert. Kein zusätzlicher Gain mehr: die Phasen-Obergrenze in UpdateVolumeUbo
+    // verhindert bereits die Sättigung, ein Faktor >1 würde bei Blick zur Sonne sofort wieder blenden.
+    vec3 col = acc / float(N) * vol.vSunDir.w * vol.vSunColor.w;
+    outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}";
+
+    public static string SunVolumeSource(bool msaa) => msaa
+        ? SunVolumeFrag.Replace("uniform sampler2D sDepth;", "uniform sampler2DMS sDepth;").Replace(DepthLine, DepthLineMsaa)
+        : SunVolumeFrag;
+
+    public static string ApplySource(bool msaa) => msaa
+        ? ApplyFrag.Replace("uniform sampler2D sDepth;", "uniform sampler2DMS sDepth;").Replace(DepthLine, DepthLineMsaa)
+        : ApplyFrag;
 }

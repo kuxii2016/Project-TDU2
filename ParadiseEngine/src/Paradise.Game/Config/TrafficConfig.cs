@@ -20,8 +20,16 @@ public static class TrafficConfig
     /// <summary>Cars within this radius are physics bodies (CullingConfig 100) – up to a maximum of <see cref="PhysicsMax"/>.</summary>
     public static float PhysicsRadius = 100f;
     public static int PhysicsMax = 6;
-    /// <summary>Impact (m/s relative speed) at which a car is removed from the AI.</summary>
+    /// <summary>Impact (m/s closing speed) at which a car is removed from the AI.</summary>
     public static float CrashSpeed = 3.5f;
+    /// <summary>Crash response: restitution, extra separation push and speed cap for the loose car.</summary>
+    public static float CrashRestitution = 0.08f, CrashSeparation = 0.5f, LooseMaxSpeed = 22f;
+    /// <summary>Mass factor for crashed traffic cars – makes them harder to shove around like a lightweight box.</summary>
+    public static float CrashMassScale = 1.15f;
+    /// <summary>Loose traffic car after a crash: tire grip (Coulomb deceleration) and spin damping.</summary>
+    public static float LooseTireFriction = 1.15f, LooseGroundAngularDamping = 5f;
+    /// <summary>Airborne crashed car: damping and extra gravity so it does not float like a balloon.</summary>
+    public static float LooseAirLinearDamping = 0.35f, LooseAirAngularDamping = 1.5f, LooseMaxAngularSpeed = 5f, LooseAirGravityScale = 1.25f;
 
     // Multiplayer (Unity TDU2Traffic "Multiplayer"): every car belongs to one player who simulates it; the others see it interpolated
     /// <summary>Sync traffic between players (Online/Multiplayer.SendTraffic).</summary>

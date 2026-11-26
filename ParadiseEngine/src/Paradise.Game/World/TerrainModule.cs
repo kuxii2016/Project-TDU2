@@ -24,11 +24,22 @@ public sealed class TerrainModule : GameModule
     private MapStreamer? _streamer;
     private Birds? _birds;
     private PhysicsWorld? _physics;
-    private string _groundInfo = "";
+    private bool _groundHit;
+    private float _groundY;
+    private Birds.SurfaceQuery? _birdSurface;
 
     /// <summary>Physics world with the collision meshes of the loaded sectors (for vehicles).</summary>
     public PhysicsWorld? Physics => _physics;
     public MapStreamer? Streamer => _streamer;
+    /// <summary>
+    /// Instrumentenbeleuchtung des Original-Shaders (FrameGlobals.DashHeadlights). Wird vom Spieler-Lichtschalter
+    /// überschrieben; der Wetterwert bleibt als Helligkeit im eingeschalteten Zustand erhalten.
+    /// </summary>
+    public float DashHeadlights
+    {
+        get => _globals.DashHeadlights;
+        set => _globals.DashHeadlights = value;
+    }
     /// <summary>Weather/time of day on the island (null = LightingConfig.UseWeather is disabled or not yet loaded) – for the developer menu.</summary>
     public WorldWeather? Weather => _weather;
     /// <summary>Free-Flight Camera (Render Room).</summary>
@@ -98,7 +109,7 @@ public sealed class TerrainModule : GameModule
         _overlay?.AddSection("Physik", () => new[]
         {
             $"Colliders {_physics?.StaticCount ?? 0}   Triangles {(_physics?.TriangleCount ?? 0):N0}   Last build {_streamer?.ColliderBuildMs ?? 0:0.0} ms (background), Add {_streamer?.ColliderAddMs ?? 0:0.0} ms",
-            _groundInfo,
+            _groundHit ? $"Boden unter Kamera: y {_groundY:0.00}  (Abstand {(_streamer?.ViewerGame.Y ?? 0f) - _groundY:0.0} m)" : "Boden unter Kamera: kein Kollider",
         });
         _cam = new FlyCamera(s.StartPosition, 0f, -35f * MathF.PI / 180f);
     }
@@ -197,22 +208,22 @@ public sealed class TerrainModule : GameModule
 
         if (_birds != null)
         {
-            var strm = _streamer;
+            // Perf: SurfaceQuery-Delegate einmalig halten (vorher ein frischer Closure pro Bild, der den Streamer einfing).
+            _birdSurface ??= (float x, float z, float y, out float h) =>
+            {
+                var s = _streamer;
+                h = 0f;
+                return s != null && s.TryGetMapGroundHeight(x, z, out h);
+            };
             using (s_mBirds.Auto())
-                _birds.Tick(time.DeltaTime, _globals.RainSpecs.X, 1f - _globals.NightK,
-                    (float x, float z, float y, out float h) => strm.TryGetMapGroundHeight(x, z, out h));
+                _birds.Tick(time.DeltaTime, _globals.RainSpecs.X, 1f - _globals.NightK, _birdSurface);
         }
 
 
         var camGame = _streamer.ViewerGame;
         tp = System.Diagnostics.Stopwatch.GetTimestamp();
-        bool ground;
-        float gy;
         using (s_mRaycast.Auto())
-            ground = _streamer.RaycastDown(camGame, 2f, 3000f, out gy);
-        _groundInfo = ground
-            ? $"Boden unter Kamera: y {gy:0.00}  (Abstand {camGame.Y - gy:0.0} m)"
-            : "Boden unter Kamera: kein Kollider";
+            _groundHit = _streamer.RaycastDown(camGame, 2f, 3000f, out _groundY);
 
         #if DEBUG
         bool f10 = _window.Input.IsKeyDown(0x79);
@@ -237,7 +248,7 @@ public sealed class TerrainModule : GameModule
             if (MapTerrainShown) { using (s_mMapTerrain.Auto()) _streamer.RenderMapTerrain(_cam.Position, g); return; }
         }
         using (s_mStreamerRender.Auto())
-            _streamer.Render(_cam.Position, view * proj, g);
+            _streamer.Render(_cam.Position, _lastViewProj, g);
         using (s_mWeatherFx.Auto())
         {
             if (!MapView) _birds?.Draw(_renderer, _streamer.RenderToGame(_cam.Position), _streamer.RootOffset, view, 1f - g.NightK);

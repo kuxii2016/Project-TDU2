@@ -84,15 +84,16 @@ public sealed class TextureDef
             while (mips > 1 && MipChainSize(Width, Height, mips, bb) > avail) mips--;
             int size = MipChainSize(Width, Height, mips, bb);
             if (size > avail || Width % 4 != 0 || Height % 4 != 0) return null;
-            var raw = new byte[size];
-            Buffer.BlockCopy(Data, DataOffset, raw, 0, size);
+            // Keine Kopie der kompletten Mip-Kette: der .2db-Puffer bleibt unverändert, CreateTexture liest ab BlockOffset.
+            // Vorher: new byte[size] + BlockCopy je Textur – ein Sektor mit vielen Texturen bedeutete etliche MB GC pro Nachladebild.
             return new TextureUpload
             {
                 Width = Width,
                 Height = Height,
                 Mips = mips,
                 Format = bf == 0x84 ? GpuTextureFormat.Bc1 : IsDxt3Block ? GpuTextureFormat.Bc2 : GpuTextureFormat.Bc3,
-                Blocks = raw,
+                Blocks = Data,
+                BlockOffset = DataOffset,
                 WrapU = wrapU,
                 WrapV = wrapV,
                 Name = nm,

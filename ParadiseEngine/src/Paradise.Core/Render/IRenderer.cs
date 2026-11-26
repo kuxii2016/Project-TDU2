@@ -57,10 +57,25 @@ public interface IRenderer : IDisposable
     void SetFourUvSets(IGpuMesh mesh) { }
 
     /// <summary>
+    /// Gespeicherte Tangenten (xyz, passend zum Detail-UV-Satz) an ein Objekt-Mesh hängen. Der Original-Renderer benutzt sie
+    /// statt der aus UV0 finite-differenzierten Tangenten; ohne Aufruf bleibt das bisherige Verhalten.
+    /// </summary>
+    void SetMeshTangents(IGpuMesh mesh, ReadOnlySpan<Vector4> tangents) { }
+
+    /// <summary>Array-Overload: übernimmt das fertige Array direkt, wenn der Renderer es unverändert speichern kann.</summary>
+    void SetMeshTangents(IGpuMesh mesh, Vector4[] tangents) => SetMeshTangents(mesh, tangents.AsSpan());
+
+    /// <summary>
     /// Mesh mit Material und Modellmatrix zeichnen (zwischen BeginFrame und EndFrame).
     /// Transparente Materialien werden gesammelt und am Frameende hinten→vorne gezeichnet (Unity: Queue Transparent).
     /// </summary>
     void DrawMesh(IGpuMesh mesh, IGpuMaterial? material, Matrix4x4 model);
+
+    /// <summary>
+    /// Mesh nur in die Reflexions-/Spiegel-Durchgänge zeichnen (nicht ins Hauptbild, nicht in Schattenkarten). Für
+    /// Vegetation, die außerhalb des Haupt-Frustums liegt, aber in der Cube-Map der Reflexionssonde sichtbar sein soll.
+    /// </summary>
+    void DrawEnvOnly(IGpuMesh mesh, IGpuMaterial? material, Matrix4x4 model) { }
 
     /// <summary>Mesh nur in die Schattenkarten zeichnen (nicht ins Bild), z. B. Stromleitungen.</summary>
     void DrawShadowOnly(IGpuMesh mesh, IGpuMaterial material, Matrix4x4 model);

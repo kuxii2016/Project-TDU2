@@ -22,6 +22,17 @@ public sealed class GraphicsConfig
     /// <summary>Effektqualität 0 niedrig, 1 mittel, 2 hoch: Schattenauflösung 1024/2048/4096, Schattenweite 60/120 m bzw. LightingConfig.</summary>
     public int EffectsQuality { get; set; } = 2;
     /// <summary>
+    /// Sichtweite der geladenen Gelände-/Sektorkacheln in Metern (Unity: 900 m). Bestimmt nur, welche Kacheln
+    /// geladen werden – nicht, wie weit Vegetation gezeichnet wird (dafür ImpostorViewDistance). Höhere Werte
+    /// laden mehr Terrain, Schatten und Spiegelungen (3000 m ≈ 3× der Originaldistanz, ~20 statt 100 FPS).
+    /// </summary>
+    public float TreeViewDistance { get; set; } = 900f;
+    /// <summary>
+    /// Zeichnungsdistanz der fernen 2D-Bäume (TD_Impostor, V_*_H-I) in Metern. Wirkt nur auf die Vegetations-
+    /// Renderer, nicht auf das Laden von Kacheln: die Quads sind 4 Vertices und kosten praktisch nichts.
+    /// </summary>
+    public float ImpostorViewDistance { get; set; } = 1800f;
+    /// <summary>
     /// Photoshop-Nachbearbeitung des Originals (Farbtabelle aus den Wetterwerten photoshop_*: Weiches Licht, Farbbalance,
     /// Ineinanderkopieren, Bloom, Gamma – Docs\re\postfx_spec.md §2). Aus = Bild ohne Nachbearbeitung (zum Vergleichen).
     /// </summary>
@@ -47,7 +58,7 @@ public sealed class GraphicsConfig
     public static void ApplyEffects(int level)
     {
         level = System.Math.Clamp(level, 0, 2);
-        GraphicsSettings.ShadowResolution = new[] { 1024, 2048, 4096 }[level];
+        GraphicsSettings.ShadowResolution = new[] { 1024, 2048, 2048 }[level];
         GraphicsSettings.ShadowDistance = new[] { 60f, 120f, 0f }[level];
     }
 
@@ -63,5 +74,11 @@ public sealed class GraphicsConfig
         Paradise.Core.Vehicles.CarMaterials.OriginalGlass = OriginalCarGlass;
         Paradise.Core.World.RenderDistance.SetBaseLodBias(LodBias);
         Paradise.Core.World.RenderDistance.Level = RenderDistance;
+        float view = System.Math.Clamp(TreeViewDistance, 500f, 10000f);
+        Paradise.Core.World.MapStreamer.ConfiguredAreaLoadDistance = view;
+        Paradise.Core.World.MapStreamer.ConfiguredSectorLoadDistance = view;
+        // Nur die Zeichnungsdistanz der Vegetation – keine zusätzlichen Kacheln, kein zusätzliches Gelände.
+        Paradise.Core.World.MapStreamer.ConfiguredVegetationDistance =
+            System.Math.Clamp(ImpostorViewDistance, 100f, 10000f);
     }
 }

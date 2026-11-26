@@ -71,18 +71,20 @@ public sealed class ScreenModule : GameModule, IGameModeContext
             if (_vehicles?.Manager != null && _vehicles.Manager.IsLoadingCar) return false;
             return s.ReadyAround(cam.Position, radius);
         };
-        // Original-Shader vorab übersetzen (nur beim ersten Start / nach Übersetzer-Update): Anzeige mit Fortschritt, Spielstart wartet
+        // Original-Shader vorab übersetzen (nur beim ersten Start / nach Übersetzer-Update): Anzeige mit Fortschritt, Spielstart wartet.
+        // Der eigentliche Start erst nach dem ersten sichtbar gerenderten Bild (siehe Update) – nicht schon beim Laden.
         if (Paradise.Core.Render.Original.ShaderPrecompile.Needed())
         {
-            Paradise.Core.Render.Original.ShaderPrecompile.Start();
             Paradise.Core.Render.Original.ShaderPrecompileScreen.Show();
+            _shaderStartPending = true;
             _waitShaders = true;
             return;
         }
         StartFirstMode();
     }
 
-    bool _waitShaders;
+    bool _waitShaders;         // warten, bis die Übersetzung abgeschlossen ist
+    bool _shaderStartPending;  // Übersetzung erst nach dem ersten sichtbar gerenderten Bild starten
 
     void StartFirstMode()
     {
@@ -94,6 +96,15 @@ public sealed class ScreenModule : GameModule, IGameModeContext
     public override void Update(in GameTime time)
     {
         Paradise.Core.Render.Original.ShaderPrecompileScreen.Update();   // Shader-Cache-Anzeige (blendet nach Abschluss aus)
+        if (_shaderStartPending)
+        {
+            // Erst loslegen, wenn das Fenster wirklich sichtbar ist und mindestens ein
+            // vollständiges Bild danach gerendert/presentiert wurde (GameLoop.VisibleFrames).
+            if (!_window.IsVisible || time.VisibleFrames < 1) return;
+            _shaderStartPending = false;
+            Log.Info("Shader-Cache: Starte Übersetzung nach dem ersten sichtbar gerenderten Bild.");
+            Paradise.Core.Render.Original.ShaderPrecompile.Start();
+        }
         if (_waitShaders)
         {
             if (!Paradise.Core.Render.Original.ShaderPrecompile.Finished) return;

@@ -1292,9 +1292,10 @@ namespace Paradise.Core.Vehicles
                         AllMaterials.Add(mat);
                         if (mat.IsCarShader && mat.Desc.EmissionTex != null) LightMaterials.Add(mat);
                     }
-                    var (v, idx) = ObjectBuilder.ToObjectVertices(md, i, ref min, ref max);
+                    var (v, idx, tan) = ObjectBuilder.ToObjectVertices(md, i, ref min, ref max);
                     if (idx.Length == 0) continue;
                     var mesh = _r.CreateMesh(v, idx);
+                    if (tan != null) _r.SetMeshTangents(mesh, tan);
                     Owned.Add(mesh);
                     go.Parts.Add(new CarPart { Mesh = mesh, Material = mat, Source = md, SubMesh = i });
                 }

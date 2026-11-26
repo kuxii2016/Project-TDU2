@@ -4,6 +4,7 @@ using Paradise.Core.Engine;
 using Paradise.Core.Platform;
 using Paradise.Core.Render;
 using Paradise.Core.Vehicles;
+using Paradise.Core.World;
 using Paradise.Game.Config;
 
 using Paradise.Game.Input;
@@ -128,6 +129,7 @@ public sealed class VehicleModule : GameModule
         _terrain.FlyCameraEnabled = v == null || _terrain.FreeFly;
         s?.ExtraLamps.Clear();
         s?.HeadlightProjectors.Clear();
+        s?.PlayerPostFxProjectors.Clear();
         if (v == null) return;
         if (_terrain.FreeFly)
         {
@@ -138,6 +140,7 @@ public sealed class VehicleModule : GameModule
                 _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
                 var camR = cam != null ? cam.Position : System.Numerics.Vector3.Zero;
                 _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, camR);
+                _vm.CollectProjectors(s.PlayerPostFxProjectors, s.RootMatrix, camR, 1f);
                 _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
                 Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
             }
@@ -182,6 +185,14 @@ public sealed class VehicleModule : GameModule
 
         using (s_mLateUpdate.Auto())
             _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+
+        // TD_DashBoard/HEADLIGHTSINTENSITY folgt dem Lichtschalter, nicht nur dem Wetter.
+        // Ein: mindestens 1 (Nachthelligkeit des Wetters bleibt erhalten), aus: 0.
+        int headlightMode = lights?.Headlights ?? 0;
+        _terrain.DashHeadlights = headlightMode > 0
+            ? MathF.Max(CarLighting.HeadlightsIntensity, 1f)
+            : 0f;
+
         if (cam != null && s != null)
         {
             var (pos, fwd, up) = _vm.CameraRender(s.RootMatrix);
@@ -196,6 +207,7 @@ public sealed class VehicleModule : GameModule
                 Paradise.Game.Online.RemoteCars.CollectLamps(_vm, s.ExtraLamps, s.RootMatrix);
                 // Scheinwerfer-Projektoren des Originals (Lichtpuffer s15): eigenes Auto zuerst, dann Verkehr
                 _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, pos);
+                _vm.CollectProjectors(s.PlayerPostFxProjectors, s.RootMatrix, pos, 1f);
                 _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, pos);
                 Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, pos);
             }

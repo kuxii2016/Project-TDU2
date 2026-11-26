@@ -73,15 +73,21 @@ public sealed partial class PlacementRenderer
         }
     }
 
-    public void Add(LibraryObject? obj, List<Matrix4x4> localMatrices)
+    public void Add(LibraryObject? obj, List<Matrix4x4> localMatrices) => Add(obj, localMatrices.ToArray(), localMatrices.Count);
+
+    /// <summary>Das vom Streamer bereits exakt zugeschnittene Matrix-Array direkt übernehmen (kein ToArray mehr je PMI-Gruppe).</summary>
+    public void Add(LibraryObject? obj, Matrix4x4[] localMatrices, int count = -1)
     {
-        if (obj == null || localMatrices.Count == 0) return;
+        if (obj == null || localMatrices.Length == 0) return;
+        int n = count < 0 ? localMatrices.Length : System.Math.Min(count, localMatrices.Length);
+        if (n == 0) return;
+        var mats = n == localMatrices.Length ? localMatrices : localMatrices.AsSpan(0, n).ToArray();
         var b = new Batch
         {
             Obj = obj,
-            LocalMatrix = localMatrices.ToArray(),
-            LocalPos = new Vector3[localMatrices.Count],
-            Radius = new float[localMatrices.Count],
+            LocalMatrix = mats,
+            LocalPos = new Vector3[n],
+            Radius = new float[n],
             PerLod = new List<int>[obj.Lods.Length],
         };
         for (int i = 0; i < b.LocalMatrix.Length; i++)
@@ -151,6 +157,39 @@ public sealed partial class PlacementRenderer
                     var m = b.LocalMatrix[i] * root;
                     foreach (var p in parts) sink.Add(new DrawItem(p.Mesh, p.Material, m));
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sonden-Sichtbarkeit: Vegetation innerhalb einer Kugel um die Reflexionssonde, unabhängig vom Haupt-Frustum
+    /// (Original: MASSINSTANCE_VIS_CUBEMAP mit MASSINSTANCE_VIS_CUBEMAP_MIN_SIZE). Immer die gröbste LOD-Stufe;
+    /// Instanzen im Hauptbild werden übersprungen, weil sie bereits über die normale Sammlung in die Sonde gelangen.
+    /// Es werden keine zusätzlichen Kacheln oder Meshes geladen – nur vorhandene Platzierungen neu eingeteilt.
+    /// </summary>
+    public void CollectForProbe(List<DrawItem> sink, Matrix4x4 root, Vector3 probeGame, float radius, float minSize, Vector4[] mainFrustum)
+    {
+        if (_batches.Count == 0 || EditorHidden) return;
+        float r2 = radius * radius;
+        var rootOff = root.Translation;
+        foreach (var b in _batches)
+        {
+            if (EditorSkip(b, out var hidden)) continue;
+            var lods = b.Obj.Lods;
+            int li = (CullLastLod ? lods.Length - 2 : lods.Length - 1);
+            if (li < 0) continue;
+            // Gruppen-Box als schneller Vorabtest (wie FindInstances).
+            var nearest = Vector3.Clamp(probeGame, b.PMin, b.PMax);
+            if ((nearest - probeGame).LengthSquared() > r2) continue;
+            var parts = lods[li].Parts;
+            for (int i = 0; i < b.LocalPos.Length; i++)
+            {
+                if (b.Radius[i] < minSize) continue;
+                if ((b.LocalPos[i] - probeGame).LengthSquared() > r2) continue;
+                if (hidden != null && hidden.Contains(i)) continue;
+                if (MapStreamer.SphereInFrustum(mainFrustum, b.LocalPos[i] + rootOff, b.Radius[i])) continue;
+                var m = b.LocalMatrix[i] * root;
+                foreach (var p in parts) sink.Add(new DrawItem(p.Mesh, p.Material, m));
             }
         }
     }

@@ -39,10 +39,11 @@ namespace Paradise.Core.Vehicles
         /// <summary>
         /// Projektor eines Autos anhängen. Fahrzeugachsen im Render-Raum (rechts/oben/vorn aus der Unity-Lage über die
         /// Spiegelung, Ursprung = Autoursprung), A/B = Höhe/Länge des Autos, intensity = car_headlights_intensity (Modus 2 schon
-        /// max(…, 1)), on = Einschaltgrad 0..1 (Slot+0x31c), camera = Kameraposition (Render-Raum).
+        /// max(…, 1)), on = Einschaltgrad 0..1 (Slot+0x31c), camera = Kameraposition (Render-Raum),
+        /// minStrength = Mindeststärke für den PostFX-Scheinwerfer (0 = Originalverhalten).
         /// </summary>
         public static void Add(List<HeadlightProjector> output, bool player, bool bike, Vector3 origin, Vector3 up, Vector3 forward,
-                               float height, float length, float intensity, float on, Vector3 camera)
+                               float height, float length, float intensity, float on, Vector3 camera, float minStrength = 0f)
         {
             if (output.Count >= MaxSlots) return;
             // Autotyp vt+0x2c == 1 = Bike (Hinweis User 24.11.): Art + 2; die Lenkung steckt dann schon in forward (VehicleLights)
@@ -63,8 +64,9 @@ namespace Paradise.Core.Vehicles
             // 0xd1d380: Abblendung über den Kameraabstand (0x42260b, hier Abstand Kamera–Projektor)
             float dc = Vector3.Distance(camera, pos);
             float fade = dc < FadeStart ? 1f : 1f - (dc - FadeStart) / (FadeEnd - FadeStart);
+            fade = MathF.Max(fade, 0f);
             float sOn = System.Math.Clamp(on, 0f, 1f);
-            float strength = intensity * sOn * sOn * fade;
+            float strength = MathF.Max(intensity * sOn * sOn * fade, minStrength);
             if (strength <= 0f) return;
 
             output.Add(new HeadlightProjector

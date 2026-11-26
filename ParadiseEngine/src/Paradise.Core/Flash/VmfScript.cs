@@ -804,8 +804,9 @@ namespace Paradise.Core.Flash
             var ch = ChildObj(scope, name);
             if (ch != null) return ch;
             if (_globals.TryGetValue(name, out var gv)) return gv;
-            if (_objVars.TryGetValue(VarKey(Root, name), out ov)) return ov;
-            if (_vars.TryGetValue(VarKey(Root, name), out sv)) return sv;
+            string rootKey = VarKey(Root, name);   // Perf: vorher zweimal PathOf+Join pro Lookup
+            if (_objVars.TryGetValue(rootKey, out ov)) return ov;
+            if (_vars.TryGetValue(rootKey, out sv)) return sv;
             return Undefined;
         }
 

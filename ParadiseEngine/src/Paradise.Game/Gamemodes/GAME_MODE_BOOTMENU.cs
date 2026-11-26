@@ -18,9 +18,6 @@ namespace Paradise.Game.Gamemodes
     /// </summary>
     public class GAME_MODE_BOOTMENU : GameModeHandler
     {
-        //TODO: recreate the Orginal Screens, Videos and Images, As first Image the Engine Logo -> Paradise Engine_ Neon-Insel-Logo.png <- Needs be backed into exe and show for half Minute
-        // Play the Second Videos, Mouse Click Key Press can skip it, and go to the next Video, after all Videos are played, go to the Main Menu
-
         public override Gamemode Mode => Gamemode.GAME_MODE_BOOTMENU;
 
         /// <summary>Modus nach Logo und Intros (Program: Login mit Server, sonst Freifahrt).</summary>
@@ -29,7 +26,7 @@ namespace Paradise.Game.Gamemodes
         readonly BootConfig _cfg = new();
         IGpuTexture? _logo, _black;
         VideoPlayer? _video;
-        int _step;          // 0 = Logo, 1.. = Videos
+        int _step;          // 0 = Logo, 1 = Legal-Slides (LoadingScreen), 2.. = Videos
         float _t;
         bool _done;
 
@@ -54,6 +51,7 @@ namespace Paradise.Game.Gamemodes
                 if (skip || _t >= _cfg.LogoSeconds) NextStep();
                 return;
             }
+            if (_step == 1) return;   // Legal-Slideshow läuft im LoadingScreen (Update/Render dort)
             if (_video == null) { NextStep(); return; }
             _video.Update(dt);
             if (skip || _video.Finished) NextStep();
@@ -71,22 +69,37 @@ namespace Paradise.Game.Gamemodes
                 float f = _cfg.LogoFadeSeconds > 0f ? System.Math.Clamp(System.Math.Min(_t, _cfg.LogoSeconds - _t) / _cfg.LogoFadeSeconds, 0f, 1f) : 1f;
                 Fit(r, _logo, sw, sh, f);
             }
-            else if (_video?.Texture != null) Fit(r, _video.Texture, sw, sh, 1f);
+            else if (_step >= 2 && _video?.Texture != null) Fit(r, _video.Texture, sw, sh, 1f);
         }
 
         public override void Exit(IGameModeContext ctx, Gamemode to)
         {
             _video?.Dispose(); _video = null;
             _done = true;
+            LoadingScreen.Hide();   // ggf. noch laufende Legal-Slideshow abbrechen
         }
 
         void NextStep()
         {
+            if (_step == 0)
+            {
+                // Erst das Engine-Logo, dann die 3 Bilder aus legal_<lang>.bnk (slideshow.xml),
+                // automatisch nach duration, und erst danach die Intros.
+                _step = 1;
+                LoadingScreen.ShowLegalScreen("Gamestart", StartVideos, 1f);
+                return;
+            }
+            StartVideos();
+        }
+
+        void StartVideos()
+        {
+            if (_done) return;
             _video?.Dispose(); _video = null;
             while (true)
             {
                 _step++;
-                int i = _step - 1;
+                int i = _step - 2;   // _step 2 = erstes Video
                 if (i >= _cfg.Videos.Length) { Finish(); return; }
                 var dir = GameData.BnkDir;
                 var path = dir == null ? null : Path.Combine(dir, "Video", _cfg.Videos[i]);

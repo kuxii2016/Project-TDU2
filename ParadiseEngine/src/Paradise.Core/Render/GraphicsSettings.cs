@@ -16,6 +16,9 @@ public static class GraphicsSettings
     public static int ShadowResolution = 2048;
     /// <summary>Schattenweite in Metern (Unity QualitySettings.shadowDistance), &lt;= 0 = Wert aus LightingConfig.</summary>
     public static float ShadowDistance;
+    /// <summary>Aktive Schatten-Kaskaden (2/3/4). Nur die ersten N Kaskaden werden gezeichnet und gesampelt;
+    /// die Kartenauflösung je Kaskade bleibt unverändert. 3 = Default.</summary>
+    public static int ActiveShadowCascades = 3;
     /// <summary>
     /// Original-Renderer (Render/Original): Original-Shader aus Euro/Shaders/*.sob übersetzt statt der eigenen GLSL-Shader,
     /// Rechnung im Gamma-Raum wie D3D9. Im Aufbau – Stufe 2: opake Objekte der freigegebenen Sätze (OriginalMaterial.EnabledSets,

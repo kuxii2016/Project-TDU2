@@ -85,7 +85,7 @@ public sealed class DebugOverlay : IDisposable
     private int _gcGen1;
     private int _gcGen2;
     private int _threads;
-    private readonly GpuMonitor _gpu = new();
+    private readonly GpuMonitor _gpu;
     private readonly List<ObjectVertex> _vertices = new(4096);
     private readonly List<uint> _indices = new(6144);
     private readonly List<(string text, uint color)> _lines = new();
@@ -99,6 +99,7 @@ public sealed class DebugOverlay : IDisposable
     public DebugOverlay(IRenderer renderer)
     {
         _renderer = renderer;
+        _gpu = new GpuMonitor(renderer.Stats.DeviceName, renderer.Stats.VendorId, renderer.Stats.DeviceId);
         _lastCpu = _process.TotalProcessorTime;
     }
 
@@ -293,6 +294,15 @@ public sealed class DebugOverlay : IDisposable
         Line($"{stats.Api}  |  Driver: {stats.Driver}");
         Line($"Resolution {stats.Width} x {stats.Height}");
         Line($"GPU Memory {Mb(stats.GpuMemoryAllocated)}");
+        if (_gpu.Available)
+        {
+            Line($"GPU Live   {_gpu.Source}");
+            Line($"Clocks     {_gpu.CoreClockMHz} / {_gpu.MemClockMHz} MHz (core / memory)");
+            Line($"Load       {_gpu.GpuUtil}% GPU, {(_gpu.MemUtilAvailable ? _gpu.MemUtil + "%" : "-")} memory");
+            Line($"Temp       {_gpu.TempC} C edge" + (_gpu.TempHotspotC > 0 ? $", {_gpu.TempHotspotC} C hotspot" : ""));
+            Line($"VRAM       {Mb((long)_gpu.VramUsed)} / {Mb((long)_gpu.VramTotal)} used / total");
+            if (_gpu.PowerW > 0) Line($"Power      {_gpu.PowerW} W");
+        }
         Head("Rendering");
         Line($"Draw Calls       {stats.DrawCalls,8:N0}");
         Line($"Triangles        {stats.Triangles,8:N0}");

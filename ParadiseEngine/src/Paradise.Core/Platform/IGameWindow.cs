@@ -20,6 +20,9 @@ public interface IGameWindow : IDisposable
     /// <summary>Fenster anzeigen; GameLoop ruft es nach dem ersten fertigen Bild (kein weißes Fenster beim Laden).</summary>
     void Show() { }
 
+    /// <summary>True, sobald das Fenster sichtbar gemacht wurde (Show() ausgeführt).</summary>
+    bool IsVisible => false;
+
     event Action<int, int>? Resized;
     event Action? CloseRequested;
 }

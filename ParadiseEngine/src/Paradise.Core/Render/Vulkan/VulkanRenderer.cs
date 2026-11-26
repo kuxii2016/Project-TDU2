@@ -1,4 +1,4 @@
-﻿using Paradise.Core.Diagnostics;
+using Paradise.Core.Diagnostics;
 using Silk.NET.Core;
 using Silk.NET.Core.Native;
 using Silk.NET.Shaderc;
@@ -98,6 +98,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private Vector4 _shadowSplits, _shadowTexelWorld;
     private Matrix4x4 _view = Matrix4x4.Identity, _proj = Matrix4x4.Identity;
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _opaque = new();
+    /// <summary>
+    /// Vegetation außerhalb des Haupt-Frustums: nur für die Reflexionssonde, nicht im Hauptbild und nicht in Schattenkarten
+    /// (Original: MASSINSTANCE_VIS_CUBEMAP – eigene Sichtbarkeitsmenge je Cube-Map).
+    /// </summary>
+    private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _envOnly = new();
     // zuletzt gebundene Material-/Mesh-Bindung (nur gültig, solange die Pipeline nicht gewechselt hat)
     private DescriptorSet _lastSet;
     private Silk.NET.Vulkan.Buffer _lastVb;
@@ -197,8 +202,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat, Matrix4x4 model)> _shadowOnly = new();
     private int _cShadow;
 
-    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning, Avatar, AvatarBlend, ShadowAvatar, OverlayUi, TransparentAlphaGlow }
-    private const int PipeCount = 38;
+    private enum PipeId { Simple, Terrain, Object, TransparentAlpha, TransparentAdd, Foliage, Sprite, GlowAlpha, GlowAdd, Overlay, Grass, Water, Sky, ShadowObject, ShadowFoliage, ShadowSprite, ShadowTerrain, Flash, Car, CarGlass, CarShadow, ShadowCar, Skidmark, Particle, ParticleAdd, Flare, FlashUi, MapTerrain, MapRoad, Cloud, SkyStars, SkyMoon, Lightning, Avatar, AvatarBlend, ShadowAvatar, OverlayUi, TransparentAlphaGlow, Impostor }
+    private const int PipeCount = 39;
 
     // ------------------------------------------------------------------ Zustand
     private readonly bool _validation;
@@ -219,6 +224,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private Image[] _images = Array.Empty<Image>();
     private ImageView[] _imageViews = Array.Empty<ImageView>();
     private Format _format;
+    private bool _formatSrgb;   // statt _format.ToString().EndsWith("Srgb") in jedem BuildOriginalSet
     // Flash wie Unity-IMGUI im linearen Farbraum: in den Bildpuffer ohne sRGB-Kodierung schreiben und dort mischen.
     // Dafür eine UNORM-Sicht auf die (sRGB-)Swapchain-Bilder (VK_KHR_swapchain_mutable_format) und ein eigener Durchgang.
     private bool _mutableSwap;
@@ -255,6 +261,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private Format _depthFormat;
 
     private Matrix4x4 _viewProj = Matrix4x4.Identity;
+    /// <summary>Vorzeichen der Determinante von <see cref="_viewProj"/> – einmal pro Durchgang statt je Draw (Cullmodus).</summary>
+    private bool _viewProjFlipped;
     private Vector3 _viewRight = Vector3.UnitX, _viewUp = Vector3.UnitY;
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private readonly List<(VulkanMesh mesh, VulkanMaterial mat)> _overlay = new();
@@ -394,6 +402,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _overlayTop.Clear();
         _flashV.Clear(); _flashI.Clear(); _flashDraws.Clear(); _cFlash = 0;
         _opaque.Clear();
+        _envOnly.Clear();
         _shadowOnly.Clear();
         _instUsed = 0; _rCount = 0; _rMesh = null; _rMat = null;
         _cDraw = _cTris = _cBinds = _cTransp = _cAdditive = _cOverlay = _cShadow = 0;
@@ -407,7 +416,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     public void SetCamera(Matrix4x4 view, Matrix4x4 projection)
     {
         _view = view; _proj = projection;
-        _viewProj = view * projection;
+        SetViewProj(view * projection);
         // UNITY_MATRIX_V[0]/[1]: Kamera rechts/oben in Weltkoordinaten (Zeilenvektor-View -> Spalten)
         _viewRight = new Vector3(view.M11, view.M21, view.M31);
         _viewUp = new Vector3(view.M12, view.M22, view.M32);
@@ -650,8 +659,9 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             return;
         }
         var vp = new Matrix4x4(2f / _extent.Width, 0, 0, 0, 0, 2f / _extent.Height, 0, 0, 0, 0, 1, 0, -1, -1, 0, 1);
+        bool vpFlipped = Det3(vp) > 0f;
         _boundPipeline = null;
-        foreach (var (mesh, mat) in _overlayTop) { Emit(mesh, mat, Matrix4x4.Identity, id, false, vp, 0, 1); mesh.Dispose(); }
+        foreach (var (mesh, mat) in _overlayTop) { Emit(mesh, mat, Matrix4x4.Identity, id, false, vp, 0, 1, null, vpFlipped); mesh.Dispose(); }
         _cOverlay += _overlayTop.Count;
         _overlayTop.Clear();
         _boundPipeline = null;
@@ -711,77 +721,48 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (_skipFrame || !_inFrame || mesh is not VulkanMesh vm || vm.IndexCount == 0) return;
         var mat = material as VulkanMaterial ?? _defaultMaterial;
 
-        bool objectMesh = vm.IsObjectFormat;
-        bool objectMat = mat.Kind is MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water
-            or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-            or MaterialKind.Lightning or MaterialKind.Avatar;
-        if (mat.Kind == MaterialKind.Overlay) return;
-        if (objectMesh != objectMat)
+        // DrawClass/ObjectFormatOk/Pipe sind in WriteMaterial vorberechnet – dieselben Entscheidungen wie vorher,
+        // nur ohne ~20 Kind-Tests je Aufruf (MapStreamer.Render: 3,36 ms Self/Bild).
+        if (mat.DrawClass == 10) return;   // Overlay wie vorher vor dem Formattest
+        if (vm.IsObjectFormat != mat.ObjectFormatOk)
         {
             if (!_warnedFormat) { _warnedFormat = true; Log.Warn($"DrawMesh: Material {mat.Kind} does not match the vertex format—skipped."); }
             return;
         }
-        if (mat.Kind == MaterialKind.Water)
+        switch (mat.DrawClass)
         {
-            // Unity: Queue "Transparent-10" -> vor allen anderen transparenten Objekten; Meer: Insel-, dann Area-, dann Sektorebene
-            _transparent.Add((vm, mat, model, mat.WaterSort));
-            return;
+            case 10: return;   // Overlay
+            case 1:            // Water: Queue "Transparent-10", Meer Insel/Area/Sektor in Aufrufreihenfolge
+                _transparent.Add((vm, mat, model, mat.WaterSort)); return;
+            case 2:            // Himmelskuppel-Teile direkt nach dem Himmel (Tiefe auf Fernebene, kein ZWrite)
+                _background.Add((vm, mat, model)); return;
+            case 3:            // Skidmark: Queue "Transparent-60"
+            case 7:            // CarShadow: Queue "Transparent-50"
+                _transparent.Add((vm, mat, model, float.MaxValue)); return;
+            case 4:            // Flare: Queue "Transparent+20"
+                _transparent.Add((vm, mat, model, -1f)); return;
+            case 5:            // MapRoad: ganz zuletzt, untereinander in Aufrufreihenfolge
+                _transparent.Add((vm, mat, model, -2f - _transparent.Count * 1e-4f)); return;
+            case 6:            // Particle: Staubwolke zuletzt
+                _transparent.Add((vm, mat, model, 0f)); return;
+            case 8:            // additives Overlay: kommutativ, sortierbar und instanzierbar
+                _additive.Add((vm, mat, model)); return;
+            case 9:            // Transparent/SpriteGlow/CarGlass/Lightning/AvatarBlend: hinten -> vorn
+                var p = new Vector3(model.M41, model.M42, model.M43);
+                _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition))); return;
+            default:
+                _opaque.Add((vm, mat, model)); return;   // gezeichnet in EndFrame
         }
-        if (mat.Kind is MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon)
-        {
-            // Himmelskuppel-Teile (Sterne, Wolken): direkt nach dem Himmel und vor allem anderen, in Aufrufreihenfolge
-            // (Tiefe im VS auf die Fernebene, kein Tiefenschreiben) – sonst überdeckten sie das Meer (schreibt keine Tiefe)
-            _background.Add((vm, mat, model));
-            return;
-        }
-        if (mat.Kind == MaterialKind.Skidmark)
-        {
-            // Unity: Queue "Transparent-60" -> vor allen anderen transparenten
-            _transparent.Add((vm, mat, model, float.MaxValue));
-            return;
-        }
-        if (mat.Kind == MaterialKind.Flare)
-        {
-            _transparent.Add((vm, mat, model, -1f));   // Unity: Queue "Transparent+20" -> nach allem
-            return;
-        }
-        if (mat.Kind == MaterialKind.MapRoad)
-        {
-            // Unity: Queue "Overlay" -> ganz zuletzt; untereinander in Aufrufreihenfolge (Straßen, darüber die GPS-Route)
-            _transparent.Add((vm, mat, model, -2f - _transparent.Count * 1e-4f));
-            return;
-        }
-        if (mat.Kind == MaterialKind.Particle)
-        {
-            _transparent.Add((vm, mat, model, 0f));   // Staubwolke: zuletzt
-            return;
-        }
-        if (mat.Kind == MaterialKind.CarShadow)
-        {
-            // Unity: Queue "Transparent-50" -> vor den übrigen transparenten Objekten, direkt auf dem Boden
-            _transparent.Add((vm, mat, model, float.MaxValue));
-            return;
-        }
-        if (mat.Kind == MaterialKind.Transparent && mat.Additive)
-        {
-            // Checkpoint-Tore: keine Entfernungs-Sortierung nötig, dafür sortierbar und instanzierbar.
-            _additive.Add((vm, mat, model));
-            return;
-        }
-        if (mat.Kind is MaterialKind.Transparent or MaterialKind.SpriteGlow or MaterialKind.CarGlass or MaterialKind.Lightning)
-        {
-            var p = new Vector3(model.M41, model.M42, model.M43);
-            _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition)));
-            return;
-        }
-        if (mat.Kind == MaterialKind.Avatar && mat.Blend)
-        {
-            // Unity TDU2/AvatarBlend: Queue "Transparent", ZWrite Off (Augenbrauen, Wimpern, Haar-Strähnen)
-            var p = new Vector3(model.M41, model.M42, model.M43);
-            _transparent.Add((vm, mat, model, Vector3.DistanceSquared(p, _globals.CameraPosition)));
-            return;
-        }
-        _opaque.Add((vm, mat, model));   // gezeichnet in EndFrame (erst Schattenkarten, dann Bild)
+    }
+
+    public void DrawEnvOnly(IGpuMesh mesh, IGpuMaterial? material, Matrix4x4 model)
+    {
+        if (_skipFrame || !_inFrame || mesh is not VulkanMesh vm || vm.IndexCount == 0) return;
+        var mat = material as VulkanMaterial ?? _defaultMaterial;
+        // Nur opake Vegetation (Impostor/Objekt-Format) – transparente Sortierung ist für die Sonde nicht nötig.
+        if (!vm.IsObjectFormat || mat.Kind is not (MaterialKind.Object or MaterialKind.Foliage or MaterialKind.Sprite
+            or MaterialKind.Grass or MaterialKind.Impostor)) return;
+        _envOnly.Add((vm, mat, model));
     }
 
     public void DrawShadowOnly(IGpuMesh mesh, IGpuMaterial material, Matrix4x4 model)
@@ -812,7 +793,16 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void ComputeCascades()
     {
         float dist = MathF.Max(1f, _globals.ShadowDistance);
-        float[] ends = { dist * 0.067f, dist * 0.2f, dist * 0.467f, dist };
+        int active = System.Math.Clamp(GraphicsSettings.ActiveShadowCascades, 2, ShadowCascades);
+        // Bei weniger Kaskaden die Schnittweiten proportional auf die volle Schattendistanz verteilen.
+        // Die ungenutzten split-Komponenten werden auf dist gepaddet, damit der Shader nie einen
+        // Kaskadenindex >= active erreicht (shadowVP[3], shadowVP[2] bleiben dann unbenutzt).
+        float[] ends = active switch
+        {
+            2 => new[] { dist * 0.2f, dist, dist, dist },
+            3 => new[] { dist * 0.1f, dist * 0.35f, dist, dist },
+            _ => new[] { dist * 0.067f, dist * 0.2f, dist * 0.467f, dist },
+        };
         _shadowSplits = new Vector4(ends[0], ends[1], ends[2], ends[3]);
         if (!Matrix4x4.Invert(_view, out var camWorld)) camWorld = Matrix4x4.Identity;
         float tanY = MathF.Abs(_proj.M22) > 1e-6f ? 1f / MathF.Abs(_proj.M22) : 1f;
@@ -822,7 +812,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         float near = 0.5f;
         var tw = new float[ShadowCascades];
         Span<Vector3> c = stackalloc Vector3[8];
-        for (int k = 0; k < ShadowCascades; k++)
+        // Nur aktive Kaskaden berechnen; ungenutzte Slots bleiben unbenutzt (Shader wählt nie ci >= active).
+        for (int k = 0; k < active; k++)
         {
             float n = k == 0 ? near : ends[k - 1], f = ends[k];
             int ci = 0;
@@ -978,7 +969,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var clear = new ClearValue { DepthStencil = new ClearDepthStencilValue(1f, 0) };
         var vp = new Viewport { X = 0, Y = 0, Width = ShadowSize, Height = ShadowSize, MinDepth = 0, MaxDepth = 1 };
         var sc = new Rect2D { Offset = new Offset2D(0, 0), Extent = new Extent2D(ShadowSize, ShadowSize) };
-        for (int k = 0; k < ShadowCascades; k++)
+        int activeCascades = System.Math.Clamp(GraphicsSettings.ActiveShadowCascades, 2, ShadowCascades);
+        for (int k = 0; k < activeCascades; k++)
         {
             var rp = new RenderPassBeginInfo
             {
@@ -1100,46 +1092,24 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _lastSet = default; _lastVb = default;
     }
 
-    private static PipeId PipeFor(VulkanMaterial mat) => mat.Kind switch
-    {
-        MaterialKind.Terrain => PipeId.Terrain,
-        MaterialKind.Object => PipeId.Object,
-        MaterialKind.Transparent => mat.Additive ? PipeId.TransparentAdd : mat.Glow ? PipeId.TransparentAlphaGlow : PipeId.TransparentAlpha,
-        MaterialKind.Foliage => PipeId.Foliage,
-        MaterialKind.Sprite => PipeId.Sprite,
-        MaterialKind.SpriteGlow => mat.Additive ? PipeId.GlowAdd : PipeId.GlowAlpha,
-        MaterialKind.Overlay => PipeId.Overlay,
-        MaterialKind.Grass => PipeId.Grass,
-        MaterialKind.Water => PipeId.Water,
-        MaterialKind.Car => PipeId.Car,
-        MaterialKind.CarGlass => PipeId.CarGlass,
-        MaterialKind.CarShadow => PipeId.CarShadow,
-        MaterialKind.Skidmark => PipeId.Skidmark,
-        MaterialKind.Cloud => PipeId.Cloud,
-        MaterialKind.SkyStars => PipeId.SkyStars,
-        MaterialKind.SkyMoon => PipeId.SkyMoon,
-        MaterialKind.Lightning => PipeId.Lightning,
-        MaterialKind.Avatar => mat.Blend ? PipeId.AvatarBlend : PipeId.Avatar,
-        MaterialKind.Particle => mat.Additive ? PipeId.ParticleAdd : PipeId.Particle,
-        MaterialKind.Flare => PipeId.Flare,
-        MaterialKind.MapTerrain => PipeId.MapTerrain,
-        MaterialKind.MapRoad => PipeId.MapRoad,
-        _ => PipeId.Simple,
-    };
+    /// <summary>Nur noch lesen – berechnet und gecacht in VulkanMaterial.CacheDrawProperties (WriteMaterial).</summary>
+    private static PipeId PipeFor(VulkanMaterial mat) => mat.Pipe;
 
     private void DrawNow(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model)
         => Emit(vm, mat, model, PipeFor(mat), false, _viewProj, 0, 1);
 
     /// <summary>Ein Zeichenaufruf (count Instanzen ab firstInstance im Instanzpuffer, sonst die Modellmatrix als Push-Constant).</summary>
-    private void Emit(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj, int firstInstance, int count, bool? modelFlip = null)
+    private void Emit(VulkanMesh vm, VulkanMaterial mat, Matrix4x4 model, PipeId id, bool shadow, Matrix4x4 viewProj, int firstInstance, int count,
+                      bool? modelFlip = null, bool? viewFlipped = null)
     {
         var cmd = _commandBuffers[_currentFrame];
         var layout = _layouts[(int)id];
         // Cull-Modus wie im Original: Material nicht beidseitig -> Rückseiten weg; gespiegelter Durchgang (Bodenspiegel, Sonde)
         // oder gespiegelte Modellmatrix kehrt die Wicklung um (Exe-Tabelle {2,3,2,1 | 3,2,3,1}, Index Modus + Invert*4).
+        // Det der View-Projektion liegt je Durchgang bereit (vorher je Draw neu berechnet).
         int cull = 0;
         if (!shadow && !mat.TwoSided && _cullPipes[(int)id].Handle != 0)
-            cull = (Det3(viewProj) > 0f) ^ (modelFlip ?? (count == 1 && Det3(model) < 0f)) ? 2 : 1;
+            cull = (viewFlipped ?? _viewProjFlipped) ^ (modelFlip ?? (count == 1 && Det3(model) < 0f)) ? 2 : 1;
         if (_boundPipeline != id || _boundCull != cull)
         {
             _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, cull == 0 ? _pipelines[(int)id] : cull == 1 ? _cullPipes[(int)id] : _cullPipesInv[(int)id]);
@@ -1176,7 +1146,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private static float Det3(in Matrix4x4 m)
         => m.M11 * (m.M22 * m.M33 - m.M23 * m.M32) - m.M12 * (m.M21 * m.M33 - m.M23 * m.M31) + m.M13 * (m.M21 * m.M32 - m.M22 * m.M31);
 
-    private static bool Instanceable(PipeId id) => id is PipeId.Object or PipeId.Foliage or PipeId.Sprite
+    /// <summary>Neue View-Projektion samt vorberechnetem Cull-Vorzeichen (Spiegel/Sonde haben anderes Vorzeichen als das Hauptbild).</summary>
+    private void SetViewProj(in Matrix4x4 vp) { _viewProj = vp; _viewProjFlipped = Det3(vp) > 0f; }
+
+    private static bool Instanceable(PipeId id) => id is PipeId.Object or PipeId.Foliage or PipeId.Sprite or PipeId.Impostor
         or PipeId.ShadowObject or PipeId.ShadowFoliage or PipeId.ShadowSprite
         or PipeId.TransparentAdd;   // additives Overlay: kommutativ, kein ZWrite -> Reihenfolge egal
 
@@ -1203,7 +1176,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             }
         }
         FlushBatch();
-        if (!Instanceable(id)) { Emit(vm, mat, model, id, shadow, viewProj, 0, 1); return; }
+        if (!Instanceable(id)) { Emit(vm, mat, model, id, shadow, viewProj, 0, 1, flip); return; }
         _rMesh = vm; _rMat = mat; _rPipe = id; _rShadow = shadow; _rVP = viewProj; _rFirst = model; _rCount = 1; _rFlip = flip;
     }
 
@@ -1211,7 +1184,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
     private void FlushBatch()
     {
         if (_rCount == 0) return;
-        if (_rCount == 1) Emit(_rMesh!, _rMat!, _rFirst, _rPipe, _rShadow, _rVP, 0, 1);
+        if (_rCount == 1) Emit(_rMesh!, _rMat!, _rFirst, _rPipe, _rShadow, _rVP, 0, 1, _rFlip);
         else
         {
             // Modellmatrix nur Null: [3][3] == 0 -> Shader liest inst.m[gl_InstanceIndex]
@@ -1282,31 +1255,38 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _boundPipeline = null;
         s_mEfOpaque.Begin();
         SegBegin(cmd0);   // GPU-Zeit je Objektart (nur bei laufender Profiler-Aufnahme)
-        if (!_globals.NoSky) DrawSky(cmd0);
-        if (!_globals.NoSky) foreach (var (mesh, mat, model) in _background) DrawNow(mesh, mat, model);
-        int bgCount = _globals.NoSky ? 0 : _background.Count + 1;
-        _background.Clear();
-        SegMark(cmd0, s_gSky, bgCount);
+        using (s_mEfOpaqueSky.Auto())
+        {
+            if (!_globals.NoSky) DrawSky(cmd0);
+            if (!_globals.NoSky) foreach (var (mesh, mat, model) in _background) DrawNow(mesh, mat, model);
+            int bgCount = _globals.NoSky ? 0 : _background.Count + 1;
+            _background.Clear();
+            SegMark(cmd0, s_gSky, bgCount);
+        }
         PipeId? segPipe = null;
         int segObj = 0;
-        foreach (var (mesh, mat, model) in _opaque)
+        using (s_mEfOpaqueBatches.Auto())
         {
-            // Original-Renderer: eigene Pipelines, nach den übrigen opaken Objekten (Schatten zeichnet weiter der eigene Shader)
-            if (UseOriginal(mat)) { _origDraws.Add((mesh, mat, model)); continue; }
-            var pid = PipeFor(mat);
-            if (_segActive && segPipe != pid)
+            foreach (var (mesh, mat, model) in _opaque)
             {
-                // Liste ist nach Pipeline sortiert: an jedem Wechsel den laufenden Stapel zeichnen und einen Zeitstempel setzen
-                if (segPipe.HasValue) { FlushBatch(); SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj); }
-                segPipe = pid;
-                segObj = 0;
+                // Original-Renderer: eigene Pipelines, nach den übrigen opaken Objekten (Schatten zeichnet weiter der eigene Shader)
+                if (UseOriginal(mat)) { _origDraws.Add((mesh, mat, model)); continue; }
+                var pid = PipeFor(mat);
+                if (_segActive && segPipe != pid)
+                {
+                    // Liste ist nach Pipeline sortiert: an jedem Wechsel den laufenden Stapel zeichnen und einen Zeitstempel setzen
+                    if (segPipe.HasValue) { FlushBatch(); SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj); }
+                    segPipe = pid;
+                    segObj = 0;
+                }
+                segObj++;
+                Batch(mesh, mat, model, pid, false, _viewProj);
             }
-            segObj++;
-            Batch(mesh, mat, model, pid, false, _viewProj);
+            FlushBatch();
+            if (segPipe.HasValue) SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj);
         }
-        FlushBatch();
-        if (segPipe.HasValue) SegMark(cmd0, SegMarkerFor(segPipe.Value), segObj);
-        DrawOriginals(cmd0);
+        using (s_mEfOpaqueOriginal.Auto())
+            DrawOriginals(cmd0);
         s_mEfOpaque.End();
         JoinShadows();   // Schatten-Thread fertig, bevor _opaque geleert wird
         _opaque.Clear();
@@ -1353,11 +1333,11 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             if (_overlay.Count == 0 || _extent.Width == 0 || _extent.Height == 0) return;
             var keep = _viewProj;
-            _viewProj = new Matrix4x4(2f / _extent.Width, 0, 0, 0, 0, 2f / _extent.Height, 0, 0, 0, 0, 1, 0, -1, -1, 0, 1);
+            SetViewProj(new Matrix4x4(2f / _extent.Width, 0, 0, 0, 0, 2f / _extent.Height, 0, 0, 0, 0, 1, 0, -1, -1, 0, 1));
             foreach (var (mesh, mat) in _overlay) { DrawNow(mesh, mat, Matrix4x4.Identity); mesh.Dispose(); }
             _cOverlay = _overlay.Count;
             _overlay.Clear();
-            _viewProj = keep;
+            SetViewProj(keep);
         }
         bool uiPassUsed = _uiPass.Handle != 0 && _imageIndex < _uiFramebuffers.Length;
         s_mEfUi.Begin();
@@ -1389,6 +1369,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         }
         else
         {
+            Ts(cmd0, 4); Ts(cmd0, 5);   // kein PostFX-Durchgang: Volumenzeit = 0, alle Queries trotzdem beschrieben
             RejectSceneCaptureWithoutUi();
             // Flash-Oberfläche (Menüs/HUD) über der Welt, unter dem Debug-Overlay
             DrawFlashBatches();
@@ -1409,7 +1390,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var cmd = _commandBuffers[_currentFrame];
         _vk.CmdEndRenderPass(cmd);
         if (Msaa && !uiPassUsed) CopyResolveToSwapchain(cmd, false);
-        Ts(cmd, 4);
+        Ts(cmd, 6);   // letzter Zeitstempel (Index 4/5 liegen im Volumen-Durchgang, 6 = Ende des Bildes)
         if (_vk.EndCommandBuffer(cmd) != Result.Success)
             throw new Exception("EndCommandBuffer failed.");
 
@@ -1606,6 +1587,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         DeviceName = Marshal.PtrToStringAnsi((nint)props.DeviceName) ?? "Vulkan";
         _stats.DeviceName = DeviceName;
         _stats.DeviceType = props.DeviceType.ToString();
+        _stats.VendorId = props.VendorID;
+        _stats.DeviceId = props.DeviceID;
         _stats.Api = $"Vulkan {props.ApiVersion >> 22}.{(props.ApiVersion >> 12) & 0x3FF}.{props.ApiVersion & 0xFFF}";
         _stats.Driver = props.VendorID == 0x10DE
             ? $"{props.DriverVersion >> 22}.{(props.DriverVersion >> 14) & 0xFF}"          // NVIDIA-Schema
@@ -1723,6 +1706,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         var presentMode = ChoosePresentMode(modes, _vsync);
         _extent = ChooseExtent(caps);
         _format = surfaceFormat.Format;
+        _formatSrgb = _format.ToString().EndsWith("Srgb", StringComparison.Ordinal);
 
         _swapTransferSrc = (caps.SupportedUsageFlags & ImageUsageFlags.TransferSrcBit) != 0;
         uint imageCount = caps.MinImageCount + 1;
@@ -1985,7 +1969,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         _ => w * h * 4,
     };
 
+    /// <summary>Persistente Rgba8-Zwischenpuffer für UpdateTexture (ein Puffer je Textur, kein Allokieren pro Bild).</summary>
     private readonly Dictionary<VulkanTexture, byte[]> _texUpdates = new();
+    /// <summary>Seit dem letzten Flush geänderte Texturen; die Puffer bleiben im Cache.</summary>
+    private readonly HashSet<VulkanTexture> _texDirty = new();
 
     /// <summary>
     /// Inhalt einer Rgba8-Textur (nur Mip 0, gleiche Größe) ersetzen – ohne Warten: die Kopie läuft im nächsten Bild vor dem Zeichnen
@@ -1998,14 +1985,15 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         if (rgba.Length < size) return;
         if (!_texUpdates.TryGetValue(vt, out var buf) || buf.Length != size) _texUpdates[vt] = buf = new byte[size];
         rgba[..size].CopyTo(buf);
+        _texDirty.Add(vt);
     }
 
     private void FlushTextureUpdates(CommandBuffer cmd)
     {
-        if (_texUpdates.Count == 0) return;
-        foreach (var (vt, data) in _texUpdates)
+        if (_texDirty.Count == 0) return;
+        foreach (var vt in _texDirty)
         {
-            if (vt.Disposed) continue;
+            if (vt.Disposed || !_texUpdates.TryGetValue(vt, out var data)) continue;
             if (vt.Staging == null)
             {
                 vt.Staging = new Silk.NET.Vulkan.Buffer[MaxFramesInFlight];
@@ -2041,16 +2029,17 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             toRead.SrcAccessMask = AccessFlags.TransferWriteBit; toRead.DstAccessMask = AccessFlags.ShaderReadBit;
             _vk.CmdPipelineBarrier(cmd, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit, 0, 0, null, 0, null, 1, in toRead);
         }
-        _texUpdates.Clear();
+        _texDirty.Clear();
     }
 
     public IGpuTexture CreateTexture(TextureUpload t)
     {
         int mips = 0, total = 0;
+        int avail = t.Blocks.Length - t.BlockOffset;   // BC-Mips liegen direkt im .2db-Puffer (BlockOffset), RGBA bei 0
         for (int i = 0; i < System.Math.Max(1, t.Mips); i++)
         {
             int s = MipSize(t.Format, System.Math.Max(1, t.Width >> i), System.Math.Max(1, t.Height >> i));
-            if (total + s > t.Blocks.Length) break;
+            if (total + s > avail) break;
             total += s; mips++;
         }
         if (mips == 0) throw new Exception($"Texture ‘{t.Name}’: Insufficient data.");
@@ -2069,7 +2058,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
         var fmt = VkFormat(t.Format, t.Linear);
         CreateHostBuffer((ulong)total, BufferUsageFlags.TransferSrcBit, out var staging, out var stagingMem);
-        fixed (byte* src = t.Blocks) System.Buffer.MemoryCopy(src + skipBytes, stagingMem.Mapped, total, total);
+        fixed (byte* src = t.Blocks) System.Buffer.MemoryCopy(src + t.BlockOffset + skipBytes, stagingMem.Mapped, total, total);
 
         CreateImage((uint)tw, (uint)th, (uint)mips, fmt, ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit, out var image, out var mem);
 
@@ -2255,7 +2244,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         MaterialKind.Terrain => _terrainSetLayout,
         MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
             or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-            or MaterialKind.Lightning or MaterialKind.Avatar => _objectSetLayout,
+            or MaterialKind.Lightning or MaterialKind.Avatar or MaterialKind.Impostor => _objectSetLayout,
         _ => _simpleSetLayout,
     };
 
@@ -2266,7 +2255,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
             MaterialKind.Terrain => _terrainSetLayout,
             MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Flash
                 or MaterialKind.Car or MaterialKind.CarGlass or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon
-                or MaterialKind.Lightning or MaterialKind.Avatar => _objectSetLayout,
+                or MaterialKind.Lightning or MaterialKind.Avatar or MaterialKind.Impostor => _objectSetLayout,
             _ => _simpleSetLayout,
         };
         var alloc = new DescriptorSetAllocateInfo { SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _descriptorPool, DescriptorSetCount = 1, PSetLayouts = &layout };
@@ -2282,7 +2271,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 ? new[] { T(d.Main, _white), T(d.Shadow ?? d.NightLm, _white), T(d.Detail, _gray), T(d.Tint, _gray), T(d.GlossTex, _black), T(d.WinTex, _black) }   // Fenster: Gloss/WindowMap
                 : new[] { T(d.Main, _white), T(d.Shadow ?? d.NightLm, _white), T(d.Detail, _gray), T(d.Tint, _gray), T(d.Marks, _black), T(d.Marks2, _black) },   // Binding 1: SHADOW oder NIGHTLIGHTMAP
             MaterialKind.Transparent => new[] { T(d.Main, _white), _white, T(d.Detail, _white), _gray, _black, _black },
-            MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow => new[] { T(d.Main, _white), _white, _gray, _gray, _black, _black },
+            MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Impostor => new[] { T(d.Main, _white), _white, _gray, _gray, _black, _black },
             MaterialKind.Grass => new[] { T(d.Main, _white), T(d.Ground, _white), T(d.Splat, _white), _gray, _black, _black },
             MaterialKind.Water => new[] { T(d.Main, _gray), T(d.Ground, _gray), _gray, _gray, _black, _black },   // 1: Colormap (TD_Ocean samplerColorMap)
             MaterialKind.Flash => new[] { T(d.Main, _white), T(d.Detail, _white), _gray, _gray, _black, _black },   // _MainTex, _MaskTex
@@ -2326,6 +2315,10 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
                 SetVec(f, 10, d.DetailST.X, d.DetailST.Y, d.DetailST.Z, d.DetailST.W);
                 SetVec(f, 11, d.WinParams.X, d.WinParams.Y, d.WinParams.Z, d.WinParams.W);
                 SetVec(f, 12, d.ReflMix, 0f, 0f, 0f);   // p11.x _ReflMix (Bodenspiegelung)
+                break;
+            case MaterialKind.Impostor:
+                SetVec(f, 0, col.X, col.Y, col.Z, col.W);
+                SetVec(f, 1, d.Cutoff, 0f, 0f, 0f);   // p0.x = _Cutoff (Alpha-Test der Fernkarte)
                 break;
             case MaterialKind.Grass:
                 SetVec(f, 0, col.X, col.Y, col.Z, col.W);
@@ -2452,6 +2445,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         mat.Blend = d.Kind == MaterialKind.Avatar && d.AvBlend;
         mat.TwoSided = d.TwoSided;
         mat.WaterSort = d.Kind == MaterialKind.Water && d.Ocean ? (d.OceanLevel >= 2 ? float.MaxValue : d.OceanLevel == 1 ? 3e38f : 2e38f) : float.MaxValue;
+        mat.CacheDrawProperties();
         if (d.Original != null || mat.OrigSet.Handle != 0) WriteOriginalSet(mat, d);   // Original-Renderer (VulkanRenderer.Original.cs)
     }
 
@@ -2481,6 +2475,20 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
 
     public IGpuMesh CreateMesh(ReadOnlySpan<ObjectVertex> vertices, ReadOnlySpan<uint> indices)
         => UploadMesh(MemoryMarshal.AsBytes(vertices), indices, true);
+
+    /// <summary>Gespeicherte .3dg-Tangenten für den Original-Shader übernehmen (kein UV0-Finite-Difference).</summary>
+    public void SetMeshTangents(IGpuMesh mesh, ReadOnlySpan<Vector4> tangents)
+    {
+        if (mesh is not VulkanMesh vm || !vm.IsObjectFormat || tangents.Length != vm.VCount) return;
+        vm.SourceTangents = tangents.ToArray();
+    }
+
+    /// <summary>Wie <see cref="SetMeshTangents(IGpuMesh, ReadOnlySpan{Vector4})"/>, aber ohne zweite Kopie des fertigen Arrays.</summary>
+    public void SetMeshTangents(IGpuMesh mesh, Vector4[] tangents)
+    {
+        if (mesh is not VulkanMesh vm || !vm.IsObjectFormat || tangents.Length != vm.VCount) return;
+        vm.SourceTangents = tangents;
+    }
 
     private VulkanMesh UploadMesh(ReadOnlySpan<byte> vbytes, ReadOnlySpan<uint> indices, bool objectFormat)
     {
@@ -2539,6 +2547,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         {
             if (_disposed) return;
             _disposed = true;
+            _r._texUpdates.Remove(this);
+            _r._texDirty.Remove(this);
             if (_r._live.Remove(this)) _r._liveTextures--;
             var r = _r; var view = View; var img = Image; var mem = Mem; var st = Staging; var stm = StagingMem;
             r.DeferDestroy(() =>
@@ -2570,11 +2580,74 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public OriginalMaterial? Orig;
         public DescriptorSet OrigSet;
         public uint OrigMask;
+        /// <summary>Original-Pfad: Lookups pro Draw vermeiden (Programmwechsel z. B. Regen-Permutation berücksichtigt).</summary>
+        public OriginalProgram? OrigConstProgram;
+        public OriginalConstants.CachedProgramConstants? OrigConstCache;
+        public (OriginalProgram Program, int Cull, int States) OrigPipeKey;
+        public Pipeline OrigPipe;
+        /// <summary>Swapchain-/RenderPass-Wechsel invalidiert die gecachte Pipeline (wie _origGen).</summary>
+        public int OrigPipeGen;
         public MaterialKind Kind { get; set; }
+        /// <summary>Vorberechnet in WriteMaterial: ~20 Kind-Tests je DrawMesh-Aufruf und PipeFor in Sort/Env/Batchesersparen.</summary>
+        public byte DrawClass;   // 0 Opaque, 1 Water, 2 Background, 3 Skidmark, 4 Flare, 5 MapRoad, 6 Particle, 7 CarShadow, 8 Additive, 9 TransparentDist, 10 Overlay
+        public bool ObjectFormatOk;
+        public PipeId Pipe;
         private bool _disposed;
 
         public VulkanMaterial(VulkanRenderer r, MaterialKind kind, Silk.NET.Vulkan.Buffer ubo, GpuAllocator.Allocation mem)
         { _r = r; Kind = kind; Ubo = ubo; UboMem = mem; }
+
+        /// <summary>Kind/Additive/Blend ändern sich nur in WriteMaterial – daraus die Entscheidungen einmal ableiten.</summary>
+        public void CacheDrawProperties()
+        {
+            ObjectFormatOk = Kind is MaterialKind.Object or MaterialKind.Transparent or MaterialKind.Foliage or MaterialKind.Sprite
+                or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Car or MaterialKind.CarGlass
+                or MaterialKind.CarShadow or MaterialKind.Skidmark or MaterialKind.Particle or MaterialKind.Flare or MaterialKind.MapRoad
+                or MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon or MaterialKind.Lightning or MaterialKind.Avatar
+                or MaterialKind.Impostor;
+            DrawClass = Kind switch
+            {
+                MaterialKind.Overlay => 10,
+                MaterialKind.Water => 1,
+                MaterialKind.Cloud or MaterialKind.SkyStars or MaterialKind.SkyMoon => 2,
+                MaterialKind.Skidmark => 3,
+                MaterialKind.Flare => 4,
+                MaterialKind.MapRoad => 5,
+                MaterialKind.Particle => 6,
+                MaterialKind.CarShadow => 7,
+                MaterialKind.Transparent when Additive => 8,
+                MaterialKind.Transparent or MaterialKind.SpriteGlow or MaterialKind.CarGlass or MaterialKind.Lightning => 9,
+                MaterialKind.Avatar when Blend => 9,
+                _ => 0,
+            };
+            Pipe = Kind switch
+            {
+                MaterialKind.Terrain => PipeId.Terrain,
+                MaterialKind.Object => PipeId.Object,
+                MaterialKind.Transparent => Additive ? PipeId.TransparentAdd : Glow ? PipeId.TransparentAlphaGlow : PipeId.TransparentAlpha,
+                MaterialKind.Foliage => PipeId.Foliage,
+                MaterialKind.Sprite => PipeId.Sprite,
+                MaterialKind.Impostor => PipeId.Impostor,
+                MaterialKind.SpriteGlow => Additive ? PipeId.GlowAdd : PipeId.GlowAlpha,
+                MaterialKind.Overlay => PipeId.Overlay,
+                MaterialKind.Grass => PipeId.Grass,
+                MaterialKind.Water => PipeId.Water,
+                MaterialKind.Car => PipeId.Car,
+                MaterialKind.CarGlass => PipeId.CarGlass,
+                MaterialKind.CarShadow => PipeId.CarShadow,
+                MaterialKind.Skidmark => PipeId.Skidmark,
+                MaterialKind.Cloud => PipeId.Cloud,
+                MaterialKind.SkyStars => PipeId.SkyStars,
+                MaterialKind.SkyMoon => PipeId.SkyMoon,
+                MaterialKind.Lightning => PipeId.Lightning,
+                MaterialKind.Avatar => Blend ? PipeId.AvatarBlend : PipeId.Avatar,
+                MaterialKind.Particle => Additive ? PipeId.ParticleAdd : PipeId.Particle,
+                MaterialKind.Flare => PipeId.Flare,
+                MaterialKind.MapTerrain => PipeId.MapTerrain,
+                MaterialKind.MapRoad => PipeId.MapRoad,
+                _ => PipeId.Simple,
+            };
+        }
 
         public void Dispose()
         {
@@ -2606,6 +2679,8 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         public Silk.NET.Vulkan.Buffer TanBuf;
         public GpuAllocator.Allocation TanMem;
         public bool TanTried;
+        /// <summary>Aus dem .3dg gespeicherte Tangenten (xyz = Detail-UV-Richtung), falls vorhanden.</summary>
+        public Vector4[]? SourceTangents;
         /// <summary>Original-Renderer TD_HeightMap: (Höhe, Rasterindex x, Rasterindex z, 0) je Vertex (VulkanRenderer.Original.cs).</summary>
         public Silk.NET.Vulkan.Buffer HmBuf;
         public GpuAllocator.Allocation HmMem;
@@ -2850,6 +2925,7 @@ public sealed unsafe partial class VulkanRenderer : IRenderer
         CreatePipeline(c, PipeId.TransparentAlphaGlow, GameShaders.TransparentVert, GameShaders.TransparentFrag, _objectSetLayout, true, blend: 1, cullVariants: true);
         CreatePipeline(c, PipeId.Foliage, GameShaders.FoliageVert, GameShaders.FoliageFrag, _objectSetLayout, true, blend: 0, cullVariants: true);
         CreatePipeline(c, PipeId.Sprite, GameShaders.SpriteVert, GameShaders.SpriteFrag, _objectSetLayout, true, blend: 0);
+        CreatePipeline(c, PipeId.Impostor, GameShaders.ImpostorVert, GameShaders.ImpostorFrag, _objectSetLayout, true, blend: 0);
         CreatePipeline(c, PipeId.GlowAlpha, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 1);
         CreatePipeline(c, PipeId.GlowAdd, GameShaders.SpriteGlowVert, GameShaders.SpriteGlowFrag, _objectSetLayout, true, blend: 2);
         CreatePipeline(c, PipeId.Grass, GameShaders.GrassVert, GameShaders.GrassFrag, _objectSetLayout, true, blend: 0);

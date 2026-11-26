@@ -36,7 +36,7 @@ public sealed class LightingConfig
     public float TransitionSeconds { get; set; } = 120f;
     /// <summary>&gt;= 0: feste Wetterart (0 Sonne, 1 Wolken, 2 Regen, 3 vor Regen, 4 nach Regen, 5 Gewitter).</summary>
     public int ForceKind { get; set; } = -1;
-    public bool ApplyFog { get; set; } = true;
+    public bool ApplyFog { get; set; } = false;
     public float FogStrength { get; set; } = 0.1f;
     public float StreetLightStrength { get; set; } = 1f;
     /// <summary>Straßenlampen-Lichter an den nächsten Masten (max. 32).</summary>

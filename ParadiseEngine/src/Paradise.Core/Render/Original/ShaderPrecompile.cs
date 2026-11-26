@@ -14,7 +14,7 @@ namespace Paradise.Core.Render.Original;
 public static class ShaderPrecompile
 {
     /// <summary>Bei jeder Änderung an <see cref="DxsoToGlsl"/> erhöhen – dann wird neu übersetzt.</summary>
-    public const int TranslatorVersion = 1;
+    public const int TranslatorVersion = 2;
 
     public static string CacheDir => Path.Combine(UserPaths.Root, "ShaderCache", "v" + TranslatorVersion);
     static string DoneMarker => Path.Combine(CacheDir, "complete.ok");

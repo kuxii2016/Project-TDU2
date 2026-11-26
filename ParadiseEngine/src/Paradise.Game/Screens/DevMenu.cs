@@ -52,6 +52,8 @@ public sealed partial class DevMenu : GameModule
     readonly TerrainModule _terrain;
     readonly VehicleModule _vehicles;
     readonly LaunchOptions _opts;
+    readonly GpuMonitor _gpu;
+    double _nextGpuSample;
     readonly List<Page> _stack = new();
     List<Item> _items = new();
     bool _open, _blockedByMe;
@@ -73,6 +75,7 @@ public sealed partial class DevMenu : GameModule
     public DevMenu(IRenderer renderer, TerrainModule terrain, VehicleModule vehicles, IGameWindow window, LaunchOptions opts)
     {
         _r = renderer; _terrain = terrain; _vehicles = vehicles; _window = window; _opts = opts;
+        _gpu = new GpuMonitor(renderer.Stats.DeviceName, renderer.Stats.VendorId, renderer.Stats.DeviceId);
     }
 
     public bool IsOpen => _open;
@@ -80,6 +83,7 @@ public sealed partial class DevMenu : GameModule
     public override void Update(in GameTime time)
     {
         _time = time.TotalTime;
+        if (_time >= _nextGpuSample) { _nextGpuSample = _time + 0.5; _gpu.Sample(); }
 #if WINDOWS
         FlashBrowser.Pump();   // Flash-Browser (F1 > Flash Debug > Browse Flash) – auch bei geschlossenem Menü aktiv
         EditorUpdate();   // Szenen-Editor: Strg + Linksklick im Spiel = Auswahl (DevMenu.Editor.cs)
@@ -209,6 +213,7 @@ public sealed partial class DevMenu : GameModule
         AnimViewer.Instance?.Close();
         Close();
         _font?.Dispose(); _font = null;
+        _gpu.Dispose();
     }
 
     static Item Head(string t) => new Item { Label = t, Header = true };

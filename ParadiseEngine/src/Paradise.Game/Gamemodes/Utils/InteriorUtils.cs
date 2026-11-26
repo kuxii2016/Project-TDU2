@@ -500,6 +500,7 @@ public abstract partial class InteriorUtils : GameModeHandler
     // ------------------------------------------------------------------ Betreten / Verlassen
     internal static void EnterInterior(Spot s, SpotBanks b, bool Ladingscreen = true)
     {
+
         var vm = Vm!;
         // während der Testfahrt ein Interieur betreten: Testfahrt endet, beim Verlassen kommt das eigene Auto (Unity AbortTestDriveOnEnter)
         if (GAME_MODE_TESTCAR.TestDriveActive) { var prev = GAME_MODE_TESTCAR._testPrev; GAME_MODE_TESTCAR.StopTestDrive(); _lastCar = prev; }

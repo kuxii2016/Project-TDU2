@@ -45,7 +45,7 @@ public static class RenderFx
     public static bool ProbeOn;
     public static Vector3 ProbePos;
     /// <summary>Unity probe.farClipPlane.</summary>
-    public static float ProbeFar = 450f;
+    public static float ProbeFar = 600f;
     /// <summary>
     /// Sonde an fester Stelle in einer unbewegten Umgebung (Interieur: Raummitte, ohne Autos): die 6 Seiten einmal rendern und
     /// dann stehen lassen, bis sich Stelle oder <see cref="ProbeVersion"/> ändert (z.B. Möbel nachgeladen). Gleiches Bild wie

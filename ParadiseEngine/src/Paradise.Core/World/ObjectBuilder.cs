@@ -70,9 +70,12 @@ public sealed class RenderObject
     {
         if (Lods.Length == 0) return null;
         if (Lods.Length == 1 && !CullLastLod) return Lods[0];
-        float d = Vector3.Distance(cameraGame, Center);
+        float d2 = Vector3.DistanceSquared(cameraGame, Center);
         for (int i = 0; i < Lods.Length; i++)
-            if (d < Lods[i].MaxDistance * LodBias) return Lods[i];
+        {
+            float max = Lods[i].MaxDistance * LodBias;
+            if (max > 0f && d2 < max * max) return Lods[i];
+        }
         return CullLastLod ? null : Lods[^1];
     }
 }
@@ -162,9 +165,10 @@ public static class ObjectBuilder
             }
             if (mat == null) continue; // ausgeblendet (z.B. Leuchteffekte am Tag, noch fehlender Shader)
 
-            var (v, idx) = ToObjectVertices(md, i, ref min, ref max);
+            var (v, idx, tan) = ToObjectVertices(md, i, ref min, ref max);
             if (idx.Length == 0) continue;
             var mesh = r.CreateMesh(v, idx);
+            if (tan != null) r.SetMeshTangents(mesh, tan);   // Original-Shader: Normalenmapping aus dem gespeicherten Detail-UV-Raum
             if (i < md.SubMeshUvSets.Count && md.SubMeshUvSets[i] >= 4) r.SetFourUvSets(mesh);   // Original-Renderer: TEXCOORD2/3 = Satz 2/3 (MeshData: Uv2 = letzter Satz)
             res.Owned.Add(mesh);
             parts.Add(new RenderPart { Mesh = mesh, Material = mat });
@@ -191,7 +195,7 @@ public static class ObjectBuilder
         foreach (var p in parts)
         {
             var mat = p.Material;
-            if (mat.Kind is MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water) continue;
+            if (mat.Kind is MaterialKind.Foliage or MaterialKind.Sprite or MaterialKind.SpriteGlow or MaterialKind.Grass or MaterialKind.Water or MaterialKind.Impostor) continue;
             bool cutout = false, transparent = mat.Kind == MaterialKind.Transparent;
             if (MaterialFactory.TryGetInfo(mat, out var info))
             {
@@ -238,7 +242,7 @@ public static class ObjectBuilder
     }
 
     /// <summary>Ein Submesh von MeshData in Objekt-Vertices umsetzen (ersetzt MeshData.ToMesh()).</summary>
-    public static (ObjectVertex[] V, uint[] I) ToObjectVertices(MeshData md, int subMesh, ref Vector3 min, ref Vector3 max)
+    public static (ObjectVertex[] V, uint[] I, Vector4[]? T) ToObjectVertices(MeshData md, int subMesh, ref Vector3 min, ref Vector3 max)
     {
         var tris = md.SubMeshes[subMesh];
         int n = md.Positions.Count;
@@ -246,6 +250,7 @@ public static class ObjectBuilder
         bool h0 = md.UV0.Count == n, h1 = md.UV1.Count == n, h2 = md.UV2.Count == n, h3 = md.UV3.Count == n;
         var map = new Dictionary<int, uint>();
         var verts = new List<ObjectVertex>();
+        var tangents = new List<Vector4>();
         var ind = new uint[tris.Count];
         for (int k = 0; k < tris.Count; k++)
         {
@@ -258,6 +263,7 @@ public static class ObjectBuilder
                 min = Vector3.Min(min, p); max = Vector3.Max(max, p);
                 var c = hasC ? md.Colors[gi] : new Rgba32(128, 128, 128, 255);   // fehlende Farben = 128 (neutral bei x2)
                 var uv0 = h0 ? md.UV0[gi] : Vector2.Zero;
+                tangents.Add(md.HasTangents && gi < md.Tangents.Count ? md.Tangents[gi] : Vector4.Zero);
                 verts.Add(new ObjectVertex
                 {
                     Position = p,
@@ -272,7 +278,10 @@ public static class ObjectBuilder
             }
             ind[k] = li;
         }
-        return (verts.ToArray(), ind);
+        var hasSaved = false;
+        for (int i = 0; i < tangents.Count; i++)
+            if (tangents[i].LengthSquared() > 0.5f) { hasSaved = true; break; }
+        return (verts.ToArray(), ind, hasSaved ? tangents.ToArray() : null);
     }
 
     /// <summary>Alle Objekte einer Bank (Hierarchie HIE -> INS -> LODs). Positionen = Spielkoordinaten (Bank-Ursprung + lokal).</summary>

@@ -4,6 +4,7 @@ using Paradise.Core.Formats;
 using Paradise.Core.Online;
 using Paradise.Core.Render;
 using System.Numerics;
+using System.Text.RegularExpressions;
 
 namespace Paradise.Core.Flash
 {
@@ -14,6 +15,9 @@ namespace Paradise.Core.Flash
     ///   * Data is saved when the image appears (TDU2Session.SaveAsync); the save icon (general.bnk saving_logo) is superimposed over the image.
     ///   * It is not hidden until the scene is complete (caller’s condition), saving is complete, and a minimum amount of time
     ///     has elapsed—the setup is not visible.
+    ///
+    /// Legal slideshow at game start (ShowLegalScreen): the three &lt;IMAGE&gt; entries of frontend/legal_&lt;language&gt;.bnk/slideshow.xml
+    /// are shown in that exact order, each for its "duration" seconds; afterwards onDone starts the intro videos.
     /// </summary>
     public sealed class LoadingScreen : FlashHost.IGuiLayer
     {
@@ -24,12 +28,28 @@ namespace Paradise.Core.Flash
         /// <summary>World around the camera (Radius) – set by the game (Streamer + Camera).</summary>
         public static Func<float, bool> WorldReadyCheck;
 
+        sealed class LegalSlide
+        {
+            public string Name;
+            public float Duration;
+            public float MinDuration;
+            public byte[] Rgba;
+            public int W, H;
+            public IGpuTexture Texture;
+        }
+
         static LoadingScreen _inst;
         IGpuTexture _tex, _black;
         Task<(byte[] rgba, int w, int h, string name)?> _decode;
+        Task<List<LegalSlide>> _legalDecode;
         readonly List<Func<bool>> _ready = new List<Func<bool>>();
         float _shownAt, _minUntil, _alpha;
         bool _closing;
+        bool _legal;
+        List<LegalSlide> _slides;
+        int _slideIndex;
+        float _slideUntil;
+        Action _legalDone;
 
         public int GuiDepth => -2000;
 
@@ -69,6 +89,104 @@ namespace Paradise.Core.Flash
             }
         }
 
+        /// <summary>
+        /// Startup legal slideshow: shows the three images from legal_&lt;lang&gt;.bnk/slideshow.xml in XML order,
+        /// each for its "duration" seconds. <paramref name="onDone"/> is called once the last image faded out.
+        /// </summary>
+        public static void ShowLegalScreen(string reason, Action onDone, float minSeconds = 1f)
+        {
+            float now = Time.unscaledTime;
+            if (_inst != null && !_inst._closing) return;   // schon aktiv: keine zweite Slideshow
+            _inst?.Destroy();
+            _inst = new LoadingScreen { _shownAt = now, _alpha = 1f, _legal = true, _legalDone = onDone };
+            _inst._legalDecode = StartDecodeLegalSlides();
+            _inst._minUntil = now + minSeconds;
+            FlashHost.AddLayer(_inst);
+            Log.Info("Legal screen: " + reason);
+        }
+
+        /// <summary>
+        /// Liest slideshow.xml aus legal_&lt;lang&gt;.bnk und dekodiert alle &lt;IMAGE&gt; in der dortigen Reihenfolge
+        /// auf einem MTA-Hintergrundthread (der Spielthread wartet nie darauf). Fallback: alle JPG/PNG der Bank.
+        /// </summary>
+        static Task<List<LegalSlide>> StartDecodeLegalSlides()
+        {
+            var tcs = new TaskCompletionSource<List<LegalSlide>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            string dir = FlashHost.BnkDir, lang = FlashHost.Language;
+            if (FlashHost.Renderer == null || string.IsNullOrEmpty(dir) || !OperatingSystem.IsWindows()) { tcs.SetResult(null); return tcs.Task; }
+            var th = new Thread(() =>
+            {
+                try
+                {
+                    string path = null;
+                    foreach (var l in new[] { lang, "us", "ge" })
+                    {
+                        if (string.IsNullOrEmpty(l)) continue;
+                        var p = FlashHost.FindFile(Path.Combine(dir, "frontend"), "legal_" + l + ".bnk");
+                        if (p != null) { path = p; break; }
+                    }
+                    if (path == null) { Log.Warn("Legal screen: keine legal_<lang>.bnk gefunden."); tcs.SetResult(null); return; }
+                    var bank = BnkArchive.Open(path);
+                    var slides = new List<LegalSlide>();
+                    var xml = bank.Find("slideshow.xml");
+                    if (xml != null)
+                    {
+                        string text = System.Text.Encoding.Latin1.GetString(bank.Read(xml));
+                        foreach (Match m in Regex.Matches(text, @"<IMAGE\b[^>]*>", RegexOptions.IgnoreCase))
+                        {
+                            string tag = m.Value;
+                            string name = Attr(tag, "name");
+                            float dur = AttrFloat(tag, "duration", 5f);
+                            float minDur = AttrFloat(tag, "minDuration", dur);
+                            if (string.IsNullOrEmpty(name)) continue;
+                            var e = bank.Find(name);
+                            if (e == null) { Log.Warn("Legal screen: Bild fehlt in " + path + ": " + name); continue; }
+                            var rgba = WicImage.Decode(bank.Read(e), out int w, out int h);
+                            if (rgba == null) { Log.Warn("Legal screen: Bild nicht lesbar: " + name); continue; }
+                            slides.Add(new LegalSlide { Name = name, Duration = dur, MinDuration = minDur, Rgba = rgba, W = w, H = h });
+                        }
+                    }
+                    if (slides.Count == 0)
+                    {
+                        foreach (var e in bank.Entries)
+                        {
+                            if (e.Extension != ".jpg" && e.Extension != ".png") continue;
+                            var rgba = WicImage.Decode(bank.Read(e), out int w, out int h);
+                            if (rgba == null) continue;
+                            slides.Add(new LegalSlide { Name = e.Name, Duration = 5f, MinDuration = 5f, Rgba = rgba, W = w, H = h });
+                        }
+                    }
+                    tcs.SetResult(slides.Count > 0 ? slides : null);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Legal screen: " + ex.Message);
+                    tcs.TrySetResult(null);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "LegalSlides"
+            };
+            th.SetApartmentState(ApartmentState.MTA);
+            th.Start();
+            return tcs.Task;
+        }
+
+        static string Attr(string tag, string name)
+        {
+            var m = Regex.Match(tag, @"\b" + Regex.Escape(name) + @"\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value;
+            m = Regex.Match(tag, @"\b" + Regex.Escape(name) + @"\s*=\s*'([^']*)'", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : "";
+        }
+
+        static float AttrFloat(string tag, string name, float fallback)
+        {
+            string v = Attr(tag, name);
+            return float.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f) ? f : fallback;
+        }
+
         /// <summary>The world around the camera is ready—a prerequisite for fading out after leaving an interior or switching islands.</summary>
         public static bool WorldReady(float radius = 350f) => WorldReadyCheck == null || WorldReadyCheck(radius);
 
@@ -103,7 +221,6 @@ namespace Paradise.Core.Flash
                     if (imgs.Count == 0) { tcs.SetResult(null); return; }
                     var pick = imgs[Random.Shared.Next(imgs.Count)];
                     var bytes = bank.Read(pick);
-                    var sw = System.Diagnostics.Stopwatch.StartNew();
                     var rgba = WicImage.Decode(bytes, out int w, out int h);
                     tcs.SetResult(rgba != null ? (rgba, w, h, pick.Name) : null);
                 }
@@ -132,7 +249,9 @@ namespace Paradise.Core.Flash
             if (d.Result is not { } img || r == null) return;
             try
             {
-                _tex = r.CreateTexture(new TextureUpload { Width = img.w, Height = img.h, Format = GpuTextureFormat.Rgba8, Blocks = img.rgba, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Name = "Loadingscreen " + img.name });
+                // UnityGui=true zeichnet die Werte unverändert in die UNORM-Sicht: die Textur muss deshalb UNORM (linear) sein,
+                // sonst dekodiert die GPU sRGB->linear und der Flash-Shader kodiert nicht nach (Bild wird zu dunkel).
+                _tex = r.CreateTexture(new TextureUpload { Width = img.w, Height = img.h, Format = GpuTextureFormat.Rgba8, Blocks = img.rgba, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Linear = true, Name = "Loadingscreen " + img.name });
             }
             catch (Exception ex)
             {
@@ -156,14 +275,68 @@ namespace Paradise.Core.Flash
         {
             var s = _inst;
             if (s == null) return;
-            if (!s._closing) s.TakeDecoded();
             float t = Time.unscaledTime;
-            if (!s._closing && t >= s._minUntil && !TDU2Session.Saving && s.Ready()) s._closing = true;
-            if (!s._closing && t - s._shownAt > MaxSeconds) { s._closing = true; Log.Warn("Loading Screen: Timeout"); }
+
+            if (s._legal)
+            {
+                if (!s._closing)
+                {
+                    if (s._slides == null && s._legalDecode != null && s._legalDecode.IsCompleted)
+                    {
+                        s._slides = s._legalDecode.Result;
+                        s._legalDecode = null;
+                        var r = FlashHost.Renderer;
+                        if (s._slides != null && r != null)
+                            foreach (var sl in s._slides)
+                            {
+                                try
+                                {
+                                    sl.Texture = r.CreateTexture(new TextureUpload { Width = sl.W, Height = sl.H, Format = GpuTextureFormat.Rgba8, Blocks = sl.Rgba, WrapU = TextureWrap.Clamp, WrapV = TextureWrap.Clamp, Linear = true, Name = "Legal " + sl.Name });
+                                }
+                                catch (Exception ex) { Log.Error("Legal screen: Texture " + sl.Name + ": " + ex.Message); }
+                            }
+                        if (s._slides != null && s._slides.Count > 0) s._slideUntil = t + MathF.Max(1f, s._slides[0].Duration);
+                    }
+                    if (s._slides != null && s._slides.Count > 0)
+                    {
+                        while (t >= s._slideUntil && s._slideIndex < s._slides.Count)
+                        {
+                            s._slideIndex++;
+                            if (s._slideIndex < s._slides.Count) s._slideUntil = t + MathF.Max(1f, s._slides[s._slideIndex].Duration);
+                        }
+                        if (s._slideIndex >= s._slides.Count)
+                            s._closing = true;
+                        else
+                            s._tex = s._slides[s._slideIndex].Texture;
+                    }
+                    else if (t - s._shownAt > MaxSeconds)
+                    {
+                        s._closing = true;
+                        Log.Warn("Legal screen: Timeout beim Laden der Bilder");
+                    }
+                }
+            }
+            else
+            {
+                if (!s._closing) s.TakeDecoded();
+                if (!s._closing && t >= s._minUntil && !TDU2Session.Saving && s.Ready()) s._closing = true;
+                if (!s._closing && t - s._shownAt > MaxSeconds) { s._closing = true; Log.Warn("Loading Screen: Timeout"); }
+            }
+
             float step = Time.unscaledDeltaTime / (s._closing ? 0.35f : 0.12f);
             s._alpha = s._closing ? MathF.Max(0f, s._alpha - step) : MathF.Min(1f, s._alpha + step);
             if (General != null) General.GuiDepth = s._alpha > 0.01f ? -2001 : -30;
-            if (s._closing && s._alpha <= 0f) { s.Destroy(); _inst = null; }
+            if (s._closing && s._alpha <= 0f)
+            {
+                var done = s._legalDone;
+                s._legalDone = null;
+                s.Destroy();
+                _inst = null;
+                if (done != null)
+                {
+                    try { done(); } catch (Exception ex) { Log.Error("Legal screen: onDone: " + ex.Message); }
+                }
+            }
         }
 
         void Destroy()
@@ -172,6 +345,11 @@ namespace Paradise.Core.Flash
             if (General != null) General.GuiDepth = -30;
             _tex?.Dispose(); _tex = null;
             _black?.Dispose(); _black = null;
+            if (_slides != null)
+            {
+                foreach (var sl in _slides) sl.Texture?.Dispose();
+                _slides = null;
+            }
         }
 
         public void Render(IRenderer r)

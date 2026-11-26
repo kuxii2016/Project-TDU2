@@ -36,6 +36,8 @@ public sealed class GamePC
     public string[] DefaultCar = Array.Empty<string>();
     public readonly List<int> GarageCars = new();
     public long DefaultMoney;
+    public bool NetworkDebug = false;
+
 
     private static GamePC? _cached;
     private static string? _cachedKey;
@@ -201,6 +203,11 @@ public sealed class GamePC
             }
             else if (Is(e, "DefaultMoney") && e.Args.Length > 0)
                 long.TryParse(e.Args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out DefaultMoney);
+            else if (Is(e, "NetworkDebugInfo"))
+            {
+                if (e.Args[0] == "ON")
+                    NetworkDebug = true;
+            }
         }
     }
 

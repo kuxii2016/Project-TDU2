@@ -35,6 +35,10 @@ public sealed class GrassRenderer : IDisposable
     private readonly Dictionary<(int x, int z), Chunk> _chunks = new();
     private readonly List<(int x, int z)> _tmpRemove = new();
     private readonly List<(float d, (int x, int z) c)> _todo = new();
+    // Ein Sektor baut seine Chunks nacheinander; danach hat UploadMesh die Daten längst kopiert. Die Listen werden
+    // wiederverwendet statt pro Chunk vier neue Arrays (ToArray) zu erzeugen – das war ein GC-Brokengem bei jedem Nachladen.
+    private readonly List<ObjectVertex> _grassV = new(4096), _bushV = new(1024);
+    private readonly List<uint> _grassI = new(8192), _bushI = new(2048);
     private double _nextCheck;
     private bool _pending;
 
@@ -104,8 +108,9 @@ public sealed class GrassRenderer : IDisposable
 
     Chunk BuildChunk(IRenderer r, (int x, int z) c)
     {
-        var grassV = new List<ObjectVertex>(); var grassI = new List<uint>();
-        var bushV = new List<ObjectVertex>(); var bushI = new List<uint>();
+        var grassV = _grassV; var grassI = _grassI;
+        var bushV = _bushV; var bushI = _bushI;
+        grassV.Clear(); grassI.Clear(); bushV.Clear(); bushI.Clear();
 
         float x0 = c.x * ChunkSize, z0 = c.z * ChunkSize;
         int steps = System.Math.Max(1, (int)MathF.Round(ChunkSize / Spacing));
@@ -163,8 +168,9 @@ public sealed class GrassRenderer : IDisposable
             }
 
         var ch = new Chunk();
-        if (grassI.Count > 0) ch.Grass = r.CreateMesh(grassV.ToArray(), grassI.ToArray());
-        if (bushI.Count > 0) ch.Bush = r.CreateMesh(bushV.ToArray(), bushI.ToArray());
+        // Span direkt auf die Liste: CreateMesh/UploadMesh kopiert synchron in den Hostpuffer, danach dürfen die Listen weiterleben.
+        if (grassI.Count > 0) ch.Grass = r.CreateMesh(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(grassV), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(grassI));
+        if (bushI.Count > 0) ch.Bush = r.CreateMesh(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bushV), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bushI));
         return ch;
     }
 

@@ -49,6 +49,8 @@ public static class MaterialFactory
     public static bool HasFoliageShader => true;
 
     private const ulong ShaderGouraud = 0x73078865ca37336dUL, ShaderNeonDecal = 0x63078165ca37416dUL, ShaderActors = 0xd5013ed0dcacafafUL, ShaderCasinoScroll = 0xfafafafafafafafaUL;
+    /// <summary>TD_Impostor: GUID der fernen 2D-Baumkarten (V_*_H-I, 4 Vertices).</summary>
+    private const ulong ShaderImpostor = 0x83078865caca336dUL;
 
     private static IGpuMaterial? _fallback;
 
@@ -345,6 +347,23 @@ public static class MaterialFactory
             marks = getTexture(mk.TextureKey, TextureDef.WrapFromEden(mk.AddressU), TextureDef.WrapFromEden(mk.AddressV));
         if (def.IsRoad && fourUv && def.TryGetLayer(SemMarks2, out var mk2))
             marks2 = getTexture(mk2.TextureKey, TextureDef.WrapFromEden(mk2.AddressU), TextureDef.WrapFromEden(mk2.AddressV));
+        // TD_Impostor (V_*_H-I): 4-Vertices-Quad in der YZ-Ebene. Als gewöhnliches Object-Material gezeichnet
+        // steht die Karte fest in der Welt und wirkt aus schrägen Blickwinkeln verzerrt. Eigener Pfad richtet
+        // nur die horizontale Ausdehnung zur Kamera aus; die Höhe bleibt exakt unverändert.
+        bool impostor = def.ShaderSet == ShaderImpostor || def.Name.EndsWith("_H-I", StringComparison.OrdinalIgnoreCase);
+        if (impostor && color != null)
+        {
+            var id = new MaterialDesc
+            {
+                Kind = MaterialKind.Impostor,
+                Name = def.Name + "_Impostor",
+                Main = color,
+                TwoSided = true,
+                Cutoff = blend == EdenBlend.Cutout ? System.Math.Clamp(alphaRef, 0.05f, 0.95f) : 0.5f,
+            };
+            info = new MaterialInfo { Def = def, Desc = id, Blend = blend, MainTexture = color.Name };
+            return id;
+        }
         if (sprite && (blend == EdenBlend.Additive || blend == EdenBlend.AlphaBlend))
         {
             // Halos (SF_TLight_Halo ...): additives Billboard statt beleuchteter Cutout-Karte (die wäre schwarz)

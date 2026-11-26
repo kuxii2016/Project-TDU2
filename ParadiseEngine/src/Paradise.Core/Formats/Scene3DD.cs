@@ -63,6 +63,8 @@ public sealed class Scene3DD
     public Dictionary<ulong, int> ObjHash = new();
     public Dictionary<ulong, int> InsHash = new();
     public Dictionary<ulong, int> HieHash = new();
+    // MBNK listen sind unveränderlich pro Datei; BuildObjectsAt las dieselben Offset mehrfach.
+    readonly Dictionary<int, ulong[]> _materialBankCache = new();
     public readonly List<int> ObjOffsets = new();
     public readonly List<int> InsOffsets = new();
     public readonly List<HieRecord> Hierarchy = new();
@@ -196,6 +198,7 @@ public sealed class Scene3DD
     /// <summary>Material list (MBNK) for an instance. Index = PRIM.materialIndex.</summary>
     public ulong[] ReadMaterialBank(int mbnkOffset)
     {
+        if (_materialBankCache.TryGetValue(mbnkOffset, out var cached)) return cached;
         var d = Data;
         if (mbnkOffset <= 0 || mbnkOffset + 16 > d.Length || !Bin.TagIs(d, mbnkOffset, "MBNK"))
             return Array.Empty<ulong>();
@@ -204,6 +207,7 @@ public sealed class Scene3DD
         if (n <= 0) return Array.Empty<ulong>();
         var r = new ulong[n];
         for (int i = 0; i < n; i++) r[i] = Bin.U64(d, mbnkOffset + 16 + i * 16);
+        _materialBankCache[mbnkOffset] = r;
         return r;
     }
 

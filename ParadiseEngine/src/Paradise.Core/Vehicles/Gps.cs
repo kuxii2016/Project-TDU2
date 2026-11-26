@@ -40,6 +40,13 @@ namespace Paradise.Core.Vehicles
         readonly Dictionary<int, RoadPoly> _roads = new();
         readonly Dictionary<int, List<RoadPoly>> _adj = new();
         readonly Dictionary<long, List<(RoadPoly r, int seg)>> _grid = new();
+        // Perf: Dijkstra-Arbeitsdaten wiederverwenden (Profiler: GPS-Route alle 0,75 s mit mehreren frischen Collections).
+        readonly Dictionary<int, float> _spDist = new();
+        readonly Dictionary<int, (int node, RoadPoly road)> _spPrev = new();
+        readonly Heap _spHeap = new();
+        readonly HashSet<int> _spDone = new();
+        readonly List<V3> _spPath = new();
+        readonly List<(int node, RoadPoly road)> _spChain = new();
         const float Cell = 64f;
         Task<IaNetwork>? _netTask;
         Task? _buildTask;
@@ -187,6 +194,7 @@ namespace Paradise.Core.Vehicles
         {
             readonly List<(float d, int n)> _h = new();
             public int Count => _h.Count;
+            public void Clear() => _h.Clear();
             public void Push(float d, int n)
             {
                 _h.Add((d, n)); int i = _h.Count - 1;
@@ -216,41 +224,39 @@ namespace Paradise.Core.Vehicles
         {
             len = 0f;
             junctions?.Clear();
-            bool F(RoadPoly x) => !oneWay || x.Fwd;
-            bool B(RoadPoly x) => !oneWay || x.Back;
             float bestDirect = float.MaxValue;
-            if (ra == rb && ((sb >= sa && F(ra)) || (sb < sa && B(ra)))) bestDirect = MathF.Abs(sb - sa);
+            if (ra == rb && ((sb >= sa && (!oneWay || ra.Fwd)) || (sb < sa && (!oneWay || ra.Back)))) bestDirect = MathF.Abs(sb - sa);
 
-            var dist = new Dictionary<int, float>();
-            var prev = new Dictionary<int, (int node, RoadPoly road)>();   // node -> (vorheriger Knoten, Straße); node 0 = Start
-            var heap = new Heap();
-            if (ra.Start != 0 && B(ra)) { dist[ra.Start] = sa; prev[ra.Start] = (0, ra); heap.Push(sa, ra.Start); }
-            if (ra.End != 0 && F(ra) && (!dist.TryGetValue(ra.End, out var de) || ra.Len - sa < de)) { dist[ra.End] = ra.Len - sa; prev[ra.End] = (0, ra); heap.Push(ra.Len - sa, ra.End); }
+            var dist = _spDist; dist.Clear();
+            var prev = _spPrev; prev.Clear();
+            var heap = _spHeap; heap.Clear();
+            var done = _spDone; done.Clear();
+            if (ra.Start != 0 && (!oneWay || ra.Back)) { dist[ra.Start] = sa; prev[ra.Start] = (0, ra); heap.Push(sa, ra.Start); }
+            if (ra.End != 0 && (!oneWay || ra.Fwd) && (!dist.TryGetValue(ra.End, out var de) || ra.Len - sa < de)) { dist[ra.End] = ra.Len - sa; prev[ra.End] = (0, ra); heap.Push(ra.Len - sa, ra.End); }
             float best = bestDirect; int bestNode = 0; bool bestAtStart = false;
-            var done = new HashSet<int>();
             while (heap.Count > 0)
             {
                 var (d, n) = heap.Pop();
                 if (!done.Add(n)) continue;
                 if (d >= best) break;
-                if (n == rb.Start && F(rb) && d + sb < best) { best = d + sb; bestNode = n; bestAtStart = true; }
-                if (n == rb.End && B(rb) && d + rb.Len - sb < best) { best = d + rb.Len - sb; bestNode = n; bestAtStart = false; }
+                if (n == rb.Start && (!oneWay || rb.Fwd) && d + sb < best) { best = d + sb; bestNode = n; bestAtStart = true; }
+                if (n == rb.End && (!oneWay || rb.Back) && d + rb.Len - sb < best) { best = d + rb.Len - sb; bestNode = n; bestAtStart = false; }
                 if (!_adj.TryGetValue(n, out var list)) continue;
                 foreach (var r in list)
                 {
                     int to; bool ok;
-                    if (r.Start == n) { to = r.End; ok = F(r); } else { to = r.Start; ok = B(r); }
+                    if (r.Start == n) { to = r.End; ok = !oneWay || r.Fwd; } else { to = r.Start; ok = !oneWay || r.Back; }
                     if (!ok || to == 0) continue;
                     float nd = d + r.Len;
                     if (!dist.TryGetValue(to, out var od) || nd < od) { dist[to] = nd; prev[to] = (n, r); heap.Push(nd, to); }
                 }
             }
             if (best == float.MaxValue) return null;
-            var o = new List<V3>();
+            var o = _spPath; o.Clear();
             len = best;
             if (bestNode == 0) { AppendSub(o, ra, sa, sb); return o; }
             // Knotenkette rückwärts
-            var chain = new List<(int node, RoadPoly road)>();
+            var chain = _spChain; chain.Clear();
             int cur = bestNode;
             int guard = 0;
             while (cur != 0 && guard++ < 100000)
@@ -309,6 +315,8 @@ namespace Paradise.Core.Vehicles
         // ------------------------------------------------------------------ Ablauf
         float _nextRoute, _time;
         string? _lastCue;
+        // Perf: SetVariable nur bei Änderung (die HUD-Variable selbst wird sonst jeden Frame neu aufgelöst).
+        VmfPlayer? _textHud; string? _lastDistText, _lastUnitText;
         // Jede Ansage je Abzweig nur einmal (Route wird alle 0,75 s neu gerechnet, Punkte verschieben sich leicht)
         readonly HashSet<string> _played = new();
         // Wenden wie im Original (0xCFC066): erst nach 10 s Abweichung, einmalig bis zur Rückkehr auf die Route
@@ -567,25 +575,30 @@ namespace Paradise.Core.Vehicles
                     hud.SetVisible("/HUD/minimap/gps_distance", false);
                     hud.SetVariable("/:obj_Distance", ""); hud.SetVariable("/:gps_Unit", "");
                 }
+                _textHud = hud; _lastDistText = ""; _lastUnitText = "";
                 return;
             }
+            if (_textHud != hud) { _textHud = hud; _lastDistText = null; _lastUnitText = null; }
             if (_dotsFor != hud || _dots.Count == 0) InitDots(hud);
             _hudShown = true;
             hud.SetVisible("/HUD/minimap/distance", true);
             hud.SetVisible("/HUD/minimap/gps_distance", true);
             float m = Remaining >= 0f ? Remaining : 0f;
             var de = Paradise.Core.Util.GermanFormat.Number;
+            string dist, unit;
             if (TDU2GpsSettings.Miles)
             {
                 float mi = m / 1609.344f;
-                hud.SetVariable("/:obj_Distance", mi < 0.1f ? ((int)MathF.Round(m * 1.09361f)).ToString() : mi.ToString(mi < 10f ? "0.0" : "0", de));
-                hud.SetVariable("/:gps_Unit", mi < 0.1f ? "yd" : "mi");
+                dist = mi < 0.1f ? ((int)MathF.Round(m * 1.09361f)).ToString() : mi.ToString(mi < 10f ? "0.0" : "0", de);
+                unit = mi < 0.1f ? "yd" : "mi";
             }
             else
             {
-                hud.SetVariable("/:obj_Distance", m < 1000f ? ((int)MathF.Round(m / 10f) * 10).ToString() : (m / 1000f).ToString(m < 10000f ? "0.0" : "0", de));
-                hud.SetVariable("/:gps_Unit", m < 1000f ? "m" : "km");
+                dist = m < 1000f ? ((int)MathF.Round(m / 10f) * 10).ToString() : (m / 1000f).ToString(m < 10000f ? "0.0" : "0", de);
+                unit = m < 1000f ? "m" : "km";
             }
+            if (dist != _lastDistText) { hud.SetVariable("/:obj_Distance", dist); _lastDistText = dist; }
+            if (unit != _lastUnitText) { hud.SetVariable("/:gps_Unit", unit); _lastUnitText = unit; }
             // Richtungs-Kranz: Punkte in Richtung Ziel (Luftlinie) hell, nach außen ausblendend
             if (car == null) return;
             var tw = TargetGame - car.Value; tw.Y = 0f;
