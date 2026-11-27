@@ -3,6 +3,7 @@ using Paradise.Core.Formats;
 using Paradise.Core.Math;
 using Paradise.Core.Render;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 
 namespace Paradise.Core.Flash
@@ -243,6 +244,15 @@ namespace Paradise.Core.Flash
             for (var i = inst; i != null && i.Owner != null; i = i.Owner.Parent) parts.Add(i.Owner.Name ?? ("#" + i.Owner.Depth));
             parts.Reverse();
             return "/" + string.Join("/", parts);
+        }
+
+        /// <summary>Absolute path of a display object (button/text/shape), including its own name or depth.</summary>
+        public static string PathOf(DisplayObject d)
+        {
+            if (d == null) return "/";
+            string parent = PathOf(d.Parent);
+            string name = d.Name ?? ("#" + d.Depth);
+            return parent == "/" ? "/" + name : parent + "/" + name;
         }
 
         /// <summary>Variable name (relative to ctx, null = root) -> canonical key “/path:name” (root “/:name”).</summary>
@@ -506,6 +516,18 @@ namespace Paradise.Core.Flash
 
         /// <summary>The mouse is hovering over a Flash button (the click is part of the movie).</summary>
         public bool MouseOverButton => _hoverBtn != null;
+        /// <summary>Diagnostics: absolute path of the button currently under the mouse ("/" when none).</summary>
+        public string MouseOverButtonPath => PathOf(_hoverBtn);
+        /// <summary>Diagnostics: absolute path of the button bound to the current press, if any.</summary>
+        public string MousePressedButtonPath => PathOf(_pressBtn);
+        /// <summary>Diagnostics: whether this movie still thinks a mouse button is held down.</summary>
+        public bool MouseIsDown => _mouseDown;
+        /// <summary>Discard hover/press state and queued mouse events (e.g. after the browser stole focus).</summary>
+        public void ResetMouseState()
+        {
+            _hoverBtn = null; _pressBtn = null; _rPressBtn = null; _mouseDown = false; _dragD = null;
+            FlashInput.ResetMouseButtons();
+        }
         /// <summary>
         /// Clips whose buttons the mouse should not hit (paths as in Find), e.g., the map cursor /curseur, which is itself
         /// located under the mouse: otherwise, it reports “mouse over button” and flickers with the mouse pointer.
@@ -631,6 +653,9 @@ namespace Paradise.Core.Flash
 #endif
         }
 
+        /// <summary>Diagnostics: topmost Flash button path at GUI coordinates (y down).</summary>
+        public string HitButtonPath(Vector2 gui) => PathOf(HitButton(Root, StageMatrix(), gui));
+
         /// <summary>Topmost visible button under the item (GUI pixels); hit based on the hit records (otherwise Up).</summary>
         DisplayObject HitButton(Instance inst, Matrix2D m, Vector2 pt)
         {
@@ -743,6 +768,7 @@ namespace Paradise.Core.Flash
             using (s_mApply.Auto())
             {
                 ApplyForcedVisibility();   // ForceVisible (VmfHelpers) gilt auch nach _visible-Änderungen des Films
+                ApplyForcedAlpha();        // ForceAlpha (VmfHelpers) gilt auch nach Timeline-Alpha-Animationen
                 ApplyPins();               // festgehaltene Werte/Labels (VmfHelpers: PinText/PinValue/PinLabel/PinScope)
                 ApplyPatches();            // Korrekturen aus TDU2FlashPatches (VmfPatches.cs)
             }
@@ -1083,6 +1109,8 @@ namespace Paradise.Core.Flash
         /// <summary>Set the mask shape if the mask consists of exactly one (unrotated) shape; otherwise, use only the rectangle.</summary>
         void SetMaskShape(DisplayObject d, Matrix2D m)
         {
+            // Eine neue Maske ersetzt immer die Textur der äußeren Maske; ohne eigene Form gilt nur das Rechteck.
+            _maskTex = null; _maskRect = default;
             var mw = m * LocalMatrix(d);
             VmfMovie.Shape sh = null;
             if (Movie.Chars.TryGetValue(d.CharId, out var ch))
@@ -1094,6 +1122,12 @@ namespace Paradise.Core.Flash
             }
             if (sh == null || Mathf.Abs(mw.B) > 1e-3f || Mathf.Abs(mw.C) > 1e-3f) return;
             if (sh.Morph) return;   // Morph-Maske (z.B. Füllbalken der Fahrzeugdaten): nur als Rechteck nach Ratio (MaskRect)
+            // Einige Masken haben einen vollständig transparenten Fill (tdmedia.bnk /lists/details/text_area:
+            // #8FEFA3/00). Als Texture gerastert würde der Alpha-Test jedes Zeichen verwerfen -> Info-Box leer.
+            // Für diese Masken reicht das aus den Bounds berechnete Rechteck (MaskRect).
+            bool invisibleFill = sh.Fills.Count > 0 && sh.Fills.All(f =>
+                f.Color.a == 0 && (f.Colors == null || f.Colors.Length == 0 || f.Colors.All(c => c.a == 0)));
+            if (invisibleFill) return;
             var (tex, rect) = ShapeTexture(sh, mw);
             if (tex == null) return;
             var a = mw.Apply(new Vector2(rect.xMin, rect.yMin)); var b = mw.Apply(new Vector2(rect.xMax, rect.yMax));

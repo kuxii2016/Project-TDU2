@@ -88,6 +88,8 @@ namespace Paradise.Core.Online
         public bool storyGaveCar;
         /// <summary>TDU Media: gelesene News/Updates des Servers (höchste gelesene Id).</summary>
         public int newsSeen, updatesSeen;
+        /// <summary>TDU Media Updates/Packs: höchste gelesene GitHub-Release-Version (Reiter "!"-Marker).</summary>
+        public string releasesSeen = "";
         /// <summary>Schon gesehene Renn-Kinos (RaceCinematics: Einführungen je Meisterschaft/Prüfung).</summary>
         public List<string> raceCinSeen = new List<string>();
         /// <summary>Rennschule und Meisterschaften (RaceProgress): Schlüssel/Wert wie Unity PlayerPrefs "TDU2.School.*"/"TDU2.Cup.*".</summary>

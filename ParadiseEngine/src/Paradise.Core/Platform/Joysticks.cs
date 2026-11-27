@@ -1,6 +1,9 @@
 using Paradise.Core.Diagnostics;
 using System.Runtime.InteropServices;
 
+// Hinweis: XInput-Vibration und DirectInput-Force-Feedback liegen in derselben Plattform-Schicht wie die Achsen,
+// damit Gerätelisten und COM-Schnittstellen nur einmal verwaltet werden.
+
 namespace Paradise.Core.Platform;
 
 /// <summary>
@@ -41,6 +44,39 @@ public static class Joysticks
 
     /// <summary>Gerätenamen (Index + 1 = Joystick-Nummer), leere Einträge = frei – Unity Input.GetJoystickNames().</summary>
     public static string[] Names { get { Poll(); return _names; } }
+
+    /// <summary>Fenster im Vordergrund (Unity Application.isFocused) – Pause/Vibration/FFB werden sonst beim Alt-Tab nicht gestoppt.</summary>
+    public static bool IsFocused
+    {
+        get
+        {
+            var w = Win32Window.Current;
+            if (w == null || w.Handle == IntPtr.Zero) return true;
+            try { return GetForegroundWindow() == w.Handle; }
+            catch (Exception) { return true; }
+        }
+    }
+
+    /// <summary>Joystick ist ein XInput-Gamepad (Vibration möglich), kein DirectInput-Lenkrad.</summary>
+    public static bool IsGamepad(int joy) { Poll(); var d = Get(joy); return d != null && d.XUser >= 0; }
+
+    /// <summary>
+    /// Vibration eines XInput-Pads setzen (joy = 0: erstes verbundenes Pad). Stärken 0..1, low = großer Motor.
+    /// false = kein Pad/XInput nicht verfügbar – der Aufrufer soll dann später erneut suchen.
+    /// </summary>
+    public static bool SetVibration(int joy, float low, float high)
+    {
+        Poll();
+        if (joy <= 0)
+        {
+            joy = 0;
+            for (int j = 1; j <= MaxJoysticks; j++) if (IsGamepad(j)) { joy = j; break; }
+            if (joy == 0) return false;
+        }
+        var d = Get(joy);
+        if (d == null || d.XUser < 0) return false;
+        return XInputSetState((uint)d.XUser, low, high) == 0;
+    }
 
     /// <summary>Achse 1..10 eines Joysticks 1..8 (−1..+1) – Unity Input.GetAxisRaw("… Joy&lt;j&gt; Axis &lt;i&gt;").</summary>
     public static float Axis(int joy, int axis) { Poll(); var d = Get(joy); return d != null && axis >= 1 && axis <= MaxAxes ? d.Axis[axis] : 0f; }
@@ -154,8 +190,13 @@ public static class Joysticks
     struct XINPUT_GAMEPAD { public ushort wButtons; public byte bLeftTrigger, bRightTrigger; public short sThumbLX, sThumbLY, sThumbRX, sThumbRY; }
     [StructLayout(LayoutKind.Sequential)]
     struct XINPUT_STATE { public uint dwPacketNumber; public XINPUT_GAMEPAD Gamepad; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct XINPUT_VIBRATION { public ushort wLeftMotorSpeed, wRightMotorSpeed; }
     [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")] static extern int XInputGetState14(uint user, out XINPUT_STATE state);
     [DllImport("xinput9_1_0.dll", EntryPoint = "XInputGetState")] static extern int XInputGetState910(uint user, out XINPUT_STATE state);
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputSetState")] static extern int XInputSetState14(uint user, ref XINPUT_VIBRATION vibration);
+    [DllImport("xinput9_1_0.dll", EntryPoint = "XInputSetState")] static extern int XInputSetState910(uint user, ref XINPUT_VIBRATION vibration);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     static bool _xi910;
 
     static int XInputGetState(uint user, out XINPUT_STATE s)
@@ -167,6 +208,22 @@ public static class Joysticks
             catch (EntryPointNotFoundException) { _xi910 = true; }
         }
         return XInputGetState910(user, out s);
+    }
+
+    static int XInputSetState(uint user, float low, float high)
+    {
+        var v = new XINPUT_VIBRATION
+        {
+            wLeftMotorSpeed = (ushort)(System.Math.Clamp(low, 0f, 1f) * 65535f),
+            wRightMotorSpeed = (ushort)(System.Math.Clamp(high, 0f, 1f) * 65535f),
+        };
+        if (!_xi910)
+        {
+            try { return XInputSetState14(user, ref v); }
+            catch (DllNotFoundException) { _xi910 = true; }
+            catch (EntryPointNotFoundException) { _xi910 = true; }
+        }
+        return XInputSetState910(user, ref v);
     }
 
     static void ReadXInput(Device d)

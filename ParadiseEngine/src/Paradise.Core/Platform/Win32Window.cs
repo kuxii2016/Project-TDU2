@@ -222,6 +222,15 @@ public sealed class Win32Window : IGameWindow
             case WM_SYSCHAR:
                 if ((int)wParam == '\r') return 0;   // Alt+Enter ohne Systemton
                 break;
+            // Fokusverlust (z.B. der Release-Link öffnet den Browser): eine hängende gedrückte Maustaste
+            // würde sonst den nächsten Klick als releaseOutside einer alten Zeile interpretieren.
+            case WM_KILLFOCUS:
+            case WM_CANCELMODE:
+                Flash.FlashInput.ResetMouseButtons();
+                return 0;
+            case WM_ACTIVATEAPP:
+                if (wParam == 0) Flash.FlashInput.ResetMouseButtons();
+                break;
             case WM_MOUSEMOVE:
                 Input.OnMouseMove((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));
                 Flash.FlashInput.OnMouseMove((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));
@@ -399,6 +408,7 @@ public sealed class Win32Window : IGameWindow
     private const int SW_SHOW = 5;
     private const uint PM_REMOVE = 0x0001;
     private const uint WM_SIZE = 0x0005, WM_CLOSE = 0x0010, WM_DESTROY = 0x0002, WM_QUIT = 0x0012;
+    private const uint WM_KILLFOCUS = 0x0008, WM_ACTIVATEAPP = 0x001C, WM_CANCELMODE = 0x001F;
     private const uint WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105, WM_MOUSEMOVE = 0x0200,
                        WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
                        WM_MBUTTONDOWN = 0x0207, WM_MBUTTONUP = 0x0208, WM_CHAR = 0x0102, WM_MOUSEWHEEL = 0x020A;

@@ -131,6 +131,66 @@ namespace Paradise.Core.Flash
             SyncScrollBar(l);
         }
 
+        /// <summary>
+        /// Native list rows are hidden by the movie until its own list code opens them. Our list replacement only writes
+        /// the row variables, so make every row with data visible (and restore its content alpha/frame). Called from the
+        /// host for the house-TV lists; empty rows stay hidden.
+        /// </summary>
+        // Statische Zeilenframes: der Film schaltet bei Auswahl/Hover auf "on"/"valid", deren Actions bkgd/content
+        // endlos weiterspielen. Die Haus-TV-Liste soll dagegen stillstehen und nach dem Browser-Dialog wieder anklickbar sein.
+        readonly Dictionary<string, string> _rowFramePins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void PinRowFrame(string path, string label)
+        {
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(label)) return;
+            if (_rowFramePins.TryGetValue(path, out string old) && string.Equals(old, label, StringComparison.OrdinalIgnoreCase)) return;
+            _rowFramePins[path] = label;
+            PinLabel(path, label, true);
+        }
+
+        void ReleaseRowFrames(string pathPrefix)
+        {
+            if (string.IsNullOrEmpty(pathPrefix)) return;
+            foreach (string k in new List<string>(_rowFramePins.Keys))
+                if (k.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase)) _rowFramePins.Remove(k);
+            Unpin(pathPrefix);
+        }
+
+        public void ListShowRows(FlashList l)
+        {
+            if (l == null || l.Owner == null) return;
+            string owner = PathOf(l.Owner);
+            string prefix = owner == "/" ? "" : owner;
+            for (int i = 1; i <= l.ViewSize; i++)
+            {
+                string path = prefix + "/line" + i;
+                var line = Find(path);
+                if (line == null) continue;
+                int row = l.Top + i - 1;
+                bool hasRow = row >= 0 && row < l.Rows.Count;
+                line.Visible = hasRow;
+                if (!hasRow) { ReleaseRowFrames(path); continue; }
+                var content = Child(line.Sprite, "content");
+                if (content?.Owner != null && content.Owner.Cx.Mul.w < 0.99f) content.Owner.Cx.Mul.w = 1f;
+                bool selected = i == l.SelectedLine;
+                // "on" und "valid" starten Animationen im Film; "stop"/"stop_on" sind die statischen Zustände
+                // und enthalten den Button der Zeile (bei "hide"/"open" fehlt er -> Zeile nicht anklickbar).
+                string want = selected ? "stop_on" : "stop";
+                if (!HasLabel(path, want)) want = selected ? "on" : "stop_on";
+                PinRowFrame(path, want);
+                var inst = line.Sprite;
+                if (inst != null)
+                {
+                    inst.Playing = false;
+                    foreach (var ch in inst.List.Values) if (ch.Sprite != null) ch.Sprite.Playing = false;
+                }
+                string contentPath = path + "/content";
+                string contentWant = selected ? "stop_on" : "stop";
+                if (!HasLabel(contentPath, contentWant)) contentWant = "stop";
+                if (HasLabel(contentPath, contentWant)) PinRowFrame(contentPath, contentWant);
+            }
+        }
+
         readonly List<FlashList> _lists = new List<FlashList>();
         FlashList _scrollHoldList, _liftDragList; int _scrollHoldDir; float _scrollHoldNext; float _liftGrab;
 
@@ -254,6 +314,22 @@ namespace Paradise.Core.Flash
         public void ListLoaded(FlashList l)
         {
             if (l?.Owner != null) StoreClipVar(l.Owner, "isListLoaded", true);
+        }
+
+        /// <summary>Activate a native list from the host (same as Flash calling list.Activate()).</summary>
+        public bool ActivateList(FlashList l)
+        {
+            if (l == null) return false;
+            ListMethod(l, "Activate");
+            return true;
+        }
+
+        /// <summary>Deactivate a native list from the host (same as Flash calling list.Deactivate()).</summary>
+        public bool DeactivateList(FlashList l)
+        {
+            if (l == null) return false;
+            ListMethod(l, "Deactivate");
+            return true;
         }
 
         void CallOn(Instance inst, string fn, params object[] args)

@@ -102,8 +102,9 @@ public sealed class Options
         Choice("opts:gase:gear", "gearbox", () => new[] { T("m_Automatic", "Automatik"), T("m_Manual", "Manuell"), T("m_HShifter", "H-Schaltung"), T("m_HShifterClutch", "H-Schaltung + Kupplung") }, _vehicle.AutomaticGearbox ? 0 : 1, i =>
         {
             if (Vm == null) return;
-            Vm.AutomaticGearbox = i == 0;   // H-Schaltung/Kupplung folgen mit den Eingabegeräten
-            if (Vm.Current != null) Vm.Current.AutomaticGearbox = i == 0;
+            Vm.Gearbox = (VehicleManager.GearboxMode)System.Math.Clamp(i, 0, 3);
+            Vm.AutomaticGearbox = i == 0;
+            Vm.ApplyGearboxMode();   // H-Schaltung/Kupplung ans aktuelle Auto geben
         });
         Choice("opts:gase:invc", "InvertCam", () => OffOn, 0, null);
         Choice("opts:gase:inax", "InvertYAxis", () => OffOn, 0, null);
@@ -128,11 +129,11 @@ public sealed class Options
             i => TDU2InputDevices.Mode = (TDU2InputDevices.DeviceMode)System.Math.Clamp(i, 0, 2));
         Slider("opts:cont:mous:mose", "mouse_sensitivity", 100, 50, v => TDU2InputDevices.MouseSensitivity = System.Math.Max(0.1f, v / 50f));
         Choice("opts:cont:mous:moin", "mouse_invert", () => OffOn, 0, i => TDU2InputDevices.MouseInvert = i == 1);
-        Slider("opts:cont:weel:vibr", "vibration", 10, 5, null);
-        Choice("opts:cont:weel:ffbk", "force_feedback", () => OffOn, 1, null);
+        Slider("opts:cont:weel:vibr", "vibration", 10, 5, v => TDU2ForceFeedback.Strength = System.Math.Clamp(v / 10f, 0f, 1f));
+        Choice("opts:cont:weel:ffbk", "force_feedback", () => OffOn, 1, i => TDU2ForceFeedback.Enabled = i == 1);
         Slider("opts:cont:weel:lisl", "linearity", 10, 5, v => TDU2InputDevices.SteerLinearity = v / 10f);
         Slider("opts:cont:weel:spfa", "speed_dfactor", 10, 5, v => TDU2InputDevices.SpeedFactor = v / 10f);
-        Slider("opts:cont:weel:damp", "damping", 10, 5, null);
+        Slider("opts:cont:weel:damp", "damping", 10, 5, v => TDU2ForceFeedback.Damping = System.Math.Clamp(v / 10f, 0f, 1f));
         Slider("opts:cont:weel:dezo", "dead_zone", 10, 1, v => TDU2InputDevices.DeadZone = v / 20f);
         Slider("opts:cont:weel:clut", "clutch", 10, 5, v => TDU2InputDevices.ClutchLinearity = v / 10f);
         Slider("opts:cont:weel:thro", "throttle", 10, 5, v => TDU2InputDevices.ThrottleLinearity = v / 10f);

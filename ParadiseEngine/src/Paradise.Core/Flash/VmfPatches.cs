@@ -1,4 +1,5 @@
 ﻿#nullable disable
+using Paradise.Core.Formats;
 using Paradise.Core.Math;
 using System.Globalization;
 
@@ -129,5 +130,36 @@ namespace Paradise.Core.Flash
         public void SetAlpha(string path, float alpha) { var d = Find(path); if (d != null) { d.Cx.Mul.w = Mathf.Clamp01(alpha); d.ScriptCx = true; } }
         /// <summary>Set the text of a text field directly (even without a variable); null = variable/initial text.</summary>
         public void SetObjectText(string path, string text) { var d = Find(path); if (d != null) d.TextOverride = text; }
+
+        /// <summary>
+        /// Set the text of every text field inside a clip. Used for detail panes whose Flash timeline recreates
+        /// the text object at different depths (c266/c271) — a single "#1" override can miss the visible field.
+        /// Returns the number of text fields changed.
+        /// </summary>
+        public int SetTextRecursive(string path, string text)
+        {
+            var d = Find(path);
+            if (d == null) return 0;
+            int count = 0;
+            void Walk(Instance inst)
+            {
+                foreach (var child in inst.List.Values)
+                {
+                    if (child.Sprite != null) Walk(child.Sprite);
+                    if (Movie.Chars.TryGetValue(child.CharId, out var ch) && ch is VmfMovie.EditText)
+                    {
+                        child.TextOverride = text;
+                        count++;
+                    }
+                }
+            }
+            if (d.Sprite != null) Walk(d.Sprite);
+            else if (Movie.Chars.TryGetValue(d.CharId, out var ch) && ch is VmfMovie.EditText)
+            {
+                d.TextOverride = text;
+                count++;
+            }
+            return count;
+        }
     }
 }

@@ -41,9 +41,6 @@ namespace Paradise.Core.Vehicles
             public float SteerSign = 1f;
         }
 
-        /// <summary>Untergrund aus dem Straßennetz (Unity-Raum -> 0 Asphalt, 2 Erde/Feldweg); null = nur Material.</summary>
-        public Func<Vector3, int>? RoadSurfaceAt;
-
         public CarPhysics Car;
         public PhysicsConfig Config;
         public Curve TorqueMax, TorqueMin;
@@ -96,6 +93,8 @@ namespace Paradise.Core.Vehicles
         int _nbGears;
 
         const float Rho = 1.225f;
+        /// <summary>Maximale Gas-Kürzung durch die Traktionskontrolle (vorher fest 0,9 = fast kein Antrieb in Kurven).</summary>
+        public static float TractionCutMax = 0.55f;
 
         /// <summary>
         /// Init new Vehicle
@@ -406,8 +405,6 @@ namespace Paradise.Core.Vehicles
             {
                 w.Grounded = true; dist = hit.distance; w.ContactNormal = hit.normal; w.ContactPoint = hit.point; w.GroundCollider = hit.collider;
                 w.Surface = hit.surface >= 0 ? hit.surface : SurfaceOf(hit.collider);   // Untergrund je Objekt (Unity: SurfaceOf(Collider))
-                // Feldwege: Straßennetz des Spiels (ROAD_DETAIL Typ 1) – deren Belag-Texturen heißen nicht immer nach Erde
-                if (w.Surface == 0 && RoadSurfaceAt != null) w.Surface = RoadSurfaceAt(hit.point);
             }
             else if (GroundFallback != null)
             {
@@ -656,11 +653,20 @@ namespace Paradise.Core.Vehicles
             }
 
             // ---- Traktionskontrolle
-            // Schlupfgrenze der DB als Vielfaches des Peak-Schlupfs (Sport 0.8 = knapp unter dem Optimum, HyperSport 10 = fast aus)
+            // Schlupfgrenze der DB als Vielfaches des Peak-Schlupfs (Sport 0.8 = knapp unter dem Optimum, HyperSport 10 = fast aus).
+            // Proportionaler Eingriff statt harter 90%-Sperre: beim Lenken fliesst wegen der Reibellipse ohnehin weniger
+            // Längskraft an die Räder, der alte Ein/Aus-Regler hat dafür fast das ganze Gas weggekürzt -> Auto kroch nur
+            // geradeaus wieder los. Maximal TractionCutMax kürzen und bei nachlassendem Schlupf schnell freigeben.
             bool isBikeT = Car != null && Car.IsBike;
             float tcKappa = 0.10f * Mathf.Clamp(tcSlip, 0.6f, 10f);
-            if (tcOn && tcMaxSlip > tcKappa) _tcCut = Mathf.MoveTowards(_tcCut, 0.9f, h * (isBikeT ? 12f : 8f));
-            else _tcCut = Mathf.MoveTowards(_tcCut, 0f, h * 4f);
+            float tcTarget = 0f;
+            if (tcOn && tcMaxSlip > tcKappa)
+            {
+                float excess = (tcMaxSlip - tcKappa) / Mathf.Max(0.04f, tcKappa);
+                tcTarget = Mathf.Clamp01(excess * 0.5f) * TractionCutMax;
+            }
+            float tcRate = tcTarget > _tcCut ? (isBikeT ? 12f : 8f) : 12f;
+            _tcCut = Mathf.MoveTowards(_tcCut, tcTarget, h * tcRate);
             return sumFx;
         }
 
@@ -991,12 +997,17 @@ namespace Paradise.Core.Vehicles
             float throttle = Mathf.Clamp01(AccelPedal);
             // Hochschalt-Drehzahl: bevorzugt Tacho-Blauwert aus der DB (_blue_line / _blue_line_sport),
             // sonst Nennleistungsdrehzahl; bei wenig Gas früher schalten.
-            float blue = c.BlueLine > 0f ? Mathf.Lerp(c.BlueLine * 0.55f, c.BlueLine, throttle) : 0f;
-            if (blue < c.TorqueRpm) blue = Mathf.Lerp(Mathf.Max(c.TorqueRpm, c.RpmMin * 2.5f), Mathf.Min(c.RedLine, c.PowerRpm * 1.06f) * 0.97f, throttle);
+            float blue = c.BlueLine > 0f ? Mathf.Lerp(c.BlueLine * 0.75f, c.BlueLine, throttle) : 0f;
+            if (blue < c.TorqueRpm) blue = Mathf.Lerp(Mathf.Max(c.TorqueRpm, c.RpmMin * 2.5f), Mathf.Min(c.RedLine, c.PowerRpm * 1.06f) * 0.97f, Mathf.Max(0.2f, throttle));
             float upRpm = Mathf.Min(blue, c.RedLine * 0.99f);
+            // Gas komplett weg: nicht automatisch hochschalten, solange der Motor nicht nahe am Begrenzer ist.
+            // Vorher war die Schwelle beim Loslassen nur 55 % des Blauwerts -> sofort Gangsprung, danach hing
+            // das Auto im zu hohen Gang, weil runtergeschaltet erst bei fast Leerlaufdrehzahl wurde.
+            bool coasting = throttle < 0.05f;
+            float coastUpRpm = Mathf.Max(c.TorqueRpm, c.RedLine * 0.85f);
             bool drivenSlip = false;
             foreach (var w in Wheels) if (w.Driven && Mathf.Abs(w.SlipRatio) > 0.3f) drivenSlip = true;
-            if (Gear < _nbGears && rpm > upRpm && !drivenSlip && ForwardSpeed > 1f)
+            if (Gear < _nbGears && rpm > (coasting ? coastUpRpm : upRpm) && !drivenSlip && ForwardSpeed > 1f)
             {
                 Shift(Gear + 1, c.ShiftTimeUp);
                 _shiftCooldown = Mathf.Max(0.4f, c.ShiftTimeUp + 0.25f);
@@ -1006,10 +1017,11 @@ namespace Paradise.Core.Vehicles
             {
                 float lowerRatio = _gearRatios[Gear - 2] * c.FinalDrive / Mathf.Max(0.01f, UpgradeTopSpeed);
                 float rpmLower = rpm * lowerRatio / Mathf.Max(0.01f, CurrentRatio());
-                // Runterschalten erst, wenn der Motor wirklich abwürgt (deutlich unter der Hochschaltschwelle,
-                // Hysterese ~45 %) – verhindert das Hoch/Runter-Pendeln kurz nach dem Hochschalten.
-                float downRpm = Mathf.Max(c.RpmMin * 1.2f, upRpm * 0.45f);
-                if (rpm < downRpm && rpmLower < c.RedLine * 0.88f)
+                // Runterschalten deutlich vor dem Abwürgen (alt: nur 45 % der Hochschaltschwelle). Gasgeben im
+                // zu hohen Gang zieht den Gang zusätzlich runter (Kickdown), damit er in Kurven wieder zieht.
+                float downRpm = Mathf.Max(c.RpmMin * 1.6f, upRpm * 0.60f);
+                if (throttle > 0.35f && rpm < c.TorqueRpm) downRpm = Mathf.Max(downRpm, c.TorqueRpm * 1.05f);
+                if (rpm < downRpm && rpmLower < c.RedLine * 0.9f)
                 {
                     Shift(Gear - 1, c.ShiftTimeDown);
                     _shiftCooldown = Mathf.Max(0.4f, c.ShiftTimeDown + 0.25f);
@@ -1029,10 +1041,18 @@ namespace Paradise.Core.Vehicles
             Gear = 0;
         }
 
-        public void ShiftUp() { if (Gear < _nbGears) Shift(Gear + 1, Car.ShiftTimeUp); }
+        public void ShiftUp()
+        {
+            if (Shifting || Car == null || Gear >= _nbGears) return;
+            Shift(Gear < 1 ? 1 : Gear + 1, Car.ShiftTimeUp);   // aus R/N direkt in den 1. Gang, nicht in die Schaltlücke
+        }
         /// <summary>Zahl der Vorwärtsgänge.</summary>
         public int GearCount => _nbGears;
-        public void ShiftDown() { if (Gear > -1) Shift(Gear - 1, Car.ShiftTimeDown); }
+        public void ShiftDown()
+        {
+            if (Shifting || Car == null || Gear <= 0) return;   // in R/N und während des Schaltens kein versehentlicher Rückwärtsgang
+            Shift(Gear - 1, Car.ShiftTimeDown);
+        }
 
         /// <summary>Auto aufrichten und anhalten.</summary>
         public void ResetVehicle(Vector3 position, Quaternion rotation)

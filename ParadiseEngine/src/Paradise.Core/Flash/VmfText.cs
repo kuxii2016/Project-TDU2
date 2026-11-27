@@ -174,6 +174,33 @@ namespace Paradise.Core.Flash
             return size * (asc + Mathf.Max(200f, 1024f - asc * 0.85f)) / 1024f * 0.92f + t.Leading;
         }
 
+        /// <summary>Number of wrapped lines of <paramref name="text"/> in the text field at <paramref name="path"/>.
+        /// Used by host-side scrolling of long release notes (the movie has no detail scroller).</summary>
+        public int MeasureTextLines(string path, string text, out float lineHeight)
+        {
+            lineHeight = 20f;
+            var d = Find(path);
+            if (d == null || !Movie.Chars.TryGetValue(d.CharId, out var ch) || ch is not VmfMovie.EditText t) return 0;
+            float size = t.Height > 0 ? t.Height : 12f;
+            var font = Movie.Fonts.TryGetValue(t.FontId, out var f) && f.Glyphs.Count > 0 ? f : null;
+            if (font == null && Movie.Fonts.TryGetValue(t.FontId, out var empty) && SharedFont(empty?.Name, out _, out var shared)) font = shared;
+            if (font != null)
+            {
+                lineHeight = LineHeight(t, font, size);
+                return Layout(t, font, text ?? "", size).LineWidth.Count;
+            }
+            // Font hat keine Glyphen (z.B. "Berlin Sans FB" in medres.bnk) und der gemeinsame Font
+            // aus main.bnk ist nicht geladen: trotzdem Zeilen schätzen, damit Scrollen funktioniert.
+            lineHeight = Mathf.Max(1f, size * 1.05f + t.Leading);
+            if (string.IsNullOrEmpty(text)) return 0;
+            float avail = Mathf.Max(1f, t.Bounds.width - 4f - t.LeftMargin - t.RightMargin);
+            float charW = Mathf.Max(1f, size * 0.55f);
+            int lines = 0;
+            foreach (string line in PlainText(text, t.Html).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+                lines += line.Length == 0 ? 1 : System.Math.Max(1, (int)MathF.Ceiling(line.Length * charW / avail));
+            return lines;
+        }
+
         void DrawTextLaidOut(VmfMovie.EditText t, VmfMovie.Font font, Texture tex, string s, float size, Matrix2D m, Vector4 baseMul, ColorTransform cx)
         {
             var lay = Layout(t, font, s, size);

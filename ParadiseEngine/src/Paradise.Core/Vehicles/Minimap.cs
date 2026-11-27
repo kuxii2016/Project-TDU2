@@ -264,6 +264,8 @@ namespace Paradise.Core.Vehicles
         /// <summary>Kreuzungsfläche (JDET, Unity AddJunctionAreas): Umrisse (x,z) – gefüllt nach Gerade-Ungerade-Regel, so bleibt
         /// bei Kreiseln die Mittelinsel (innerer Umriss) frei.</summary>
         sealed class Area { public List<float[]> Rings = new(); public byte Cls; public float MinX, MinZ, MaxX, MaxZ; }
+        /// <summary>Rohpunkt aus ROAD_DETAIL für die Straßenabfrage (Unity TDU2Minimap._roadGrid/_roadGridType).</summary>
+        struct RoadPoint { public V3 P; public byte Type; }
 
         VmfPlayer? _hud;
         string? _bnkDir;
@@ -278,11 +280,14 @@ namespace Paradise.Core.Vehicles
         /// <summary>hud.bnk (Minimap, Radio-Anzeige /HUD/radio – Unity TDU2Radio.SetHudPlayer).</summary>
         public VmfPlayer? Hud => _hud;
         string? _hudBank, _bank;
-        Task<(Line[] lines, Dictionary<long, List<int>> grid, int segs, Area[] areas, HudMapRoads roads)>? _task;
+        Task<(Line[] lines, Dictionary<long, List<int>> grid, int segs, Area[] areas, HudMapRoads roads, Dictionary<long, List<RoadPoint>> roadGrid)>? _task;
         Line[] _lines = System.Array.Empty<Line>();
         Area[] _areas = System.Array.Empty<Area>();
         Dictionary<long, List<int>> _grid = new Dictionary<long, List<int>>();
         const float Cell = 128f;
+        /// <summary>Straßenpunkte samt Typ aus ROAD_DETAIL – getrennt vom gerasterten Minimap-Netz (mit JDET-Kreuzungen).</summary>
+        Dictionary<long, List<RoadPoint>> _roadGrid = new Dictionary<long, List<RoadPoint>>();
+        const float RoadCell = 256f;
         Texture2D? _tex;
         /// <summary>GPS (Unity: von der Minimap angelegt) – Ziel, Route, Anzeige in hud.bnk.</summary>
         public readonly Gps Gps = new();
@@ -304,7 +309,7 @@ namespace Paradise.Core.Vehicles
             Gps.Bind(bnkDir, islandBank);
             if (islandBank == null || islandBank == _bank) return;
             _bank = islandBank; Error = null;
-            _lines = System.Array.Empty<Line>(); _grid = new Dictionary<long, List<int>>();
+            _lines = System.Array.Empty<Line>(); _grid = new Dictionary<long, List<int>>(); _roadGrid = new Dictionary<long, List<RoadPoint>>();
             string b = islandBank;
             // Laden + Aufbereiten (Kurven, Kreuzungen, Raster) komplett im Hintergrund
             _areas = System.Array.Empty<Area>();
@@ -314,9 +319,11 @@ namespace Paradise.Core.Vehicles
             {
                 var (segs, jn) = Load(b);
                 var (l, g) = Build(segs);
+                // Straßenpunkte für Abfragen wie Unity: nur ROAD_DETAIL, keine JDET-Kreuzungs-/Verlängerungslinien
+                var roadGrid = BuildRoadIndex(segs);
                 // Minimap-Straßen wie die exe (HudMapRoads): Netz aus ROAD_MAP + ROAD_DETAIL, Farben/Breiten aus GamePC.cpr [HudMap]
                 var roads = HudMapRoads.Build(IaNetwork.LoadFromBank(b), World.GamePC.Load(dir));
-                return (l, g, segs.Count, BuildAreas(jn, segs), roads);
+                return (l, g, segs.Count, BuildAreas(jn, segs), roads, roadGrid);
             });
         }
 
@@ -500,6 +507,35 @@ namespace Paradise.Core.Vehicles
 
         static V3 V(byte[] d, int o) => new V3(BitConverter.ToSingle(d, o), BitConverter.ToSingle(d, o + 4), BitConverter.ToSingle(d, o + 8));
 
+        /// <summary>
+        /// Straßenpunkte für NearestRoad/NearestRoadType wie Unity BuildRoadIndex: alle ~8 m entlang der
+        /// ROAD_DETAIL-Béziers, mit Straßenart je Punkt (1 = Feldweg). Keine JDET-Kreuzungsflächen, keine
+        /// Verbindungs-/Verlängerungslinien des gerasterten Minimap-Netzes.
+        /// </summary>
+        static Dictionary<long, List<RoadPoint>> BuildRoadIndex(List<Segment> segs)
+        {
+            var grid = new Dictionary<long, List<RoadPoint>>();
+            foreach (var s in segs)
+            {
+                byte type = (byte)System.Math.Clamp(s.Type, 0, 255);
+                int pieces = (s.Pts.Length - 1) / 3;
+                for (int k = 0; k < pieces; k++)
+                {
+                    V3 a = s.Pts[3 * k], c1 = s.Pts[3 * k + 1], c2 = s.Pts[3 * k + 2], b = s.Pts[3 * k + 3];
+                    int n = System.Math.Clamp((int)MathF.Ceiling((b - a).Length() / 8f), 1, 64);
+                    for (int i = 0; i < n; i++)
+                    {
+                        float t = i / (float)n, u = 1f - t;
+                        V3 p = u * u * u * a + 3f * u * u * t * c1 + 3f * u * t * t * c2 + t * t * t * b;
+                        long key = Key((int)MathF.Floor(p.X / RoadCell), (int)MathF.Floor(p.Z / RoadCell));
+                        if (!grid.TryGetValue(key, out var l)) grid[key] = l = new List<RoadPoint>();
+                        l.Add(new RoadPoint { P = p, Type = type });
+                    }
+                }
+            }
+            return grid;
+        }
+
         /// <summary>Bézierkurven wie Unity BuildRoadMesh abtasten (Schritte ~20 m, 1..16 je Stück) und ins Raster legen.</summary>
         static (Line[] lines, Dictionary<long, List<int>> grid) Build(List<Segment> segs)
         {
@@ -655,47 +691,46 @@ namespace Paradise.Core.Vehicles
 
         static float HalfOf(byte cls) => cls == 0 ? 0f : cls == 1 ? 3.2f : cls == 3 ? 3.8f : 5.5f;
 
-        /// <summary>Straßenart an einer Stelle (Spielkoordinaten): 1 Feldweg, 3 Stadt, 6 Land/Haupt; 0 = keine Straße im Umkreis.
-        /// Passt nicht zum Orginal spiel, Wir haben "Autobahnen" was eigentlich keine Sind.
-        /// TODO:Recheck</summary>
+        /// <summary>
+        /// Art der nächsten Straße im Umkreis maxDist (Spielkoordinaten): 1 = Feldweg/Schotter, 3 = Stadt, sonst Landstraße;
+        /// -1 = keine Straße in der Nähe (Gelände). Wie Unity TDU2Minimap.NearestRoadType aus den ROAD_DETAIL-Punkten,
+        /// nicht aus dem gerasterten Netz mit Kreuzungen.
+        /// </summary>
         public int NearestRoadType(V3 game, float maxDist)
         {
-            if (_lines.Length == 0) return 0;
-            int cx = (int)MathF.Floor(game.X / Cell), cz = (int)MathF.Floor(game.Z / Cell);
-            float best = maxDist * maxDist; int type = 0;
-            for (int x = cx - 1; x <= cx + 1; x++)
-                for (int z = cz - 1; z <= cz + 1; z++)
+            if (_roadGrid.Count == 0) return -1;
+            int r = (int)MathF.Ceiling(maxDist / RoadCell);
+            int cx = (int)MathF.Floor(game.X / RoadCell), cz = (int)MathF.Floor(game.Z / RoadCell);
+            float best = maxDist * maxDist; int type = -1;
+            for (int x = cx - r; x <= cx + r; x++)
+                for (int z = cz - r; z <= cz + r; z++)
                 {
-                    if (!_grid.TryGetValue(Key(x, z), out var lst)) continue;
-                    foreach (int i in lst)
+                    if (!_roadGrid.TryGetValue(Key(x, z), out var lst)) continue;
+                    foreach (var p in lst)
                     {
-                        var l = _lines[i];
-                        float d2 = SegDist2(game.X, game.Z, l.Ax, l.Az, l.Bx, l.Bz);
-                        if (d2 < best) { best = d2; type = l.Cls; }
+                        float dx = p.P.X - game.X, dz = p.P.Z - game.Z, d2 = dx * dx + dz * dz;
+                        if (d2 < best) { best = d2; type = p.Type; }
                     }
                 }
             return type;
         }
 
-        /// <summary>Nächster Straßenpunkt im Umkreis maxDist (Spiel-XZ, Y = 0) – Unity NearestRoad (Teleport der großen Karte).</summary>
+        /// <summary>Nächster Straßenpunkt im Umkreis maxDist (Spielkoordinaten, mit Höhe) – Unity NearestRoad (große Karte).</summary>
         public bool NearestRoad(V3 game, float maxDist, out V3 point)
         {
             point = default;
-            if (_lines.Length == 0) return false;
-            int r = (int)MathF.Ceiling(maxDist / Cell);
-            int cx = (int)MathF.Floor(game.X / Cell), cz = (int)MathF.Floor(game.Z / Cell);
+            if (_roadGrid.Count == 0) return false;
+            int r = (int)MathF.Ceiling(maxDist / RoadCell);
+            int cx = (int)MathF.Floor(game.X / RoadCell), cz = (int)MathF.Floor(game.Z / RoadCell);
             float best = maxDist * maxDist; bool found = false;
             for (int x = cx - r; x <= cx + r; x++)
                 for (int z = cz - r; z <= cz + r; z++)
                 {
-                    if (!_grid.TryGetValue(Key(x, z), out var lst)) continue;
-                    foreach (int i in lst)
+                    if (!_roadGrid.TryGetValue(Key(x, z), out var lst)) continue;
+                    foreach (var p in lst)
                     {
-                        var l = _lines[i];
-                        float dx = l.Bx - l.Ax, dz = l.Bz - l.Az, l2 = dx * dx + dz * dz;
-                        float t = l2 > 1e-8f ? System.Math.Clamp(((game.X - l.Ax) * dx + (game.Z - l.Az) * dz) / l2, 0f, 1f) : 0f;
-                        float px = l.Ax + dx * t, pz = l.Az + dz * t, ex = px - game.X, ez = pz - game.Z, d2 = ex * ex + ez * ez;
-                        if (d2 < best) { best = d2; point = new V3(px, 0f, pz); found = true; }
+                        float dx = p.P.X - game.X, dz = p.P.Z - game.Z, d2 = dx * dx + dz * dz;
+                        if (d2 < best) { best = d2; point = p.P; found = true; }
                     }
                 }
             return found;
@@ -722,7 +757,7 @@ namespace Paradise.Core.Vehicles
                 else
                 {
                     var res = _task.Result;
-                    _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads;
+                    _lines = res.lines; _grid = res.grid; _areas = res.areas; _hudRoads = res.roads; _roadGrid = res.roadGrid;
                     RoadsRebuilt?.Invoke(_hudRoads);
                 }
                 _task = null;

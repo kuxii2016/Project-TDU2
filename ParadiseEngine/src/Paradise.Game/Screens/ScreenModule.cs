@@ -93,6 +93,15 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         if (same) OnModeChanged(StartMode, StartMode);   // kein Wechsel-Ereignis: Modus trotzdem starten
     }
 
+    /// <summary>
+    /// Eingaben vor Flash-Update und allen Modulen übernehmen (früher mitten in Update – Boot/Shader-Ladebildschirm
+    /// und Flash-Menüs haben beim Gamepad/Lenkrad deshalb oft keine Tasten gesehen).
+    /// </summary>
+    public override void EarlyUpdate(in GameTime time)
+    {
+        TDU2Controls.Update(_window.Input, time.FrameCount);
+    }
+
     public override void Update(in GameTime time)
     {
         Paradise.Core.Render.Original.ShaderPrecompileScreen.Update();   // Shader-Cache-Anzeige (blendet nach Abschluss aus)
@@ -111,7 +120,6 @@ public sealed class ScreenModule : GameModule, IGameModeContext
             _waitShaders = false;
             StartFirstMode();
         }
-        TDU2Controls.Update(_window.Input, time.FrameCount);   // Tastenbelegung (Game/Config/KeyConfig.cs)
         if (TDU2Controls.Pressed("dev_login")) GameMode.Set(Gamemode.GAME_MODE_LOGIN);
         if (TDU2Controls.Pressed("dev_freeride")) GameMode.Set(Gamemode.GAME_MODE_FREERIDE);
         if (TDU2Controls.Pressed("dev_map")) GameMode.Set(GameMode.Current == Gamemode.GAME_MODE_MAP ? Gamemode.GAME_MODE_FREERIDE : Gamemode.GAME_MODE_MAP);

@@ -15,6 +15,7 @@ using Paradise.Game.Online;
 using Paradise.Game.Screens;
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Paradise.Game.Gamemodes;
@@ -29,7 +30,8 @@ namespace Paradise.Game.Gamemodes;
 ///  * My House (myhs_*): Möbel tauschen (DBFurniture, gleicher Typ, Gruppen gemeinsam), Böden/Tapeten (DBMaterial, Spender-Bänke
 ///    ground_NN / wall_NN mit Vorschaubildern), Kaufen, gespeichert je Haus-Spot (SaveData.houses, ownedFurniture/ownedMaterials).
 ///  * TDU Media (Fernseher, Typ 57, tdmedia.bnk): Uhr, Wetter beider Inseln (jetzt / +2 h / +4 h), News (Spielfortschritt, Community =
-///    Server-News + Freundes-Meldungen, Club), Updates-Kanal mit Patch-Notes vom Server (TDU2News); Umfragen ausgelassen.
+///    Server-News + Freundes-Meldungen, Club), Updates-Kanal mit Patch-Notes vom Server (TDU2News) – Reiter Packs zeigt die
+///    GitHub-Releases von kuxii2016/Project-TDU2 (Liste links, Release-Notes rechts); Umfragen ausgelassen.
 /// Interieur-Ablauf (Betreten, Szene, Laufen, Hotspots): InteriorUtils.
 /// </summary>
 public class GAME_MODE_LIVING : InteriorUtils
@@ -2104,29 +2106,45 @@ public class GAME_MODE_LIVING : InteriorUtils
     }
 
     // ================================================================== TDU Media (Unity TDU2TDUMedia, tdmedia.bnk)
-    // Kanäle: Wetter, News (Reiter Spielfortschritt / Community = Server-News + Freundes-Meldungen / Club), Updates (Patch-Notes
-    // vom Server im Original-DLC-Kanal: Reiter Packs/Vehicles/Avatar/Furnitures/Stickers, Version statt Datum, Bild).
+    // Kanäle: Wetter, News (Reiter Spielfortschritt / Community = Server-News + Freundes-Meldungen / Club), Updates im Original-
+    // DLC-Kanal: Reiter Packs = GitHub-Releases (Liste/Info-Box), Vehicles/Avatar/Furnitures/Stickers = Patch-Notes vom Server.
     // Umfragen (Unity TDU2Surveys, Hilfe-DLC-Kachel) sind auf Wunsch ausgelassen: IsDLCHsys = false.
     internal static bool _mediaOpen;
     internal static VmfPlayer? _media;
     internal static float _mediaOpenedAt, _mediaNextWeather, _mediaForceCloseAt = -1f;
     internal static VmfPlayer.FlashList? _newsList;
     internal static int _shownNews = -1, _clockShown = -1;
-    internal static bool _german, _mediaHooked, _mediaNewsHooked;
+    internal static bool _german, _mediaHooked, _mediaNewsHooked, _mediaReleasesHooked;
     internal static string _newsTab = "game_progress";   // Reiter des News-Kanals: game_progress, community, club
-    internal sealed class News { public string Title = "", Text = "", Icon = "", Version = ""; public DateTime Date; public int ServerId; public NewsEntry? Entry; }
+    internal sealed class News
+    {
+        public string Title = "", Text = "", Icon = "", Version = ""; public DateTime Date; public int ServerId;
+        public NewsEntry? Entry; public GitHubRelease? Release;
+    }
     internal static readonly List<News> _news = new();
     // Detailansicht (lists/details/content, Sprite 272): Bild "default" = schmaler Text + Bildrahmen img (Textur auf img/lure,
     // PS-Store-Logo ausgeblendet), "pictured" = Text über die ganze Breite (ohne Bild). Der Film schaltet beim Blättern selbst um –
     // hier jedes Bild auf den Stand der gewählten Meldung gebracht.
     internal const string DetailPath = "/lists/details/content";
+    internal const string DetailTitlePath = "/lists/details/details_title";
+    private const string DetailTextField = DetailPath + "/#1";
+    private const int DetailVisibleLines = 12;     // Anzahl Zeilen im Text_area-Fenster (Maske ~270 px, Zeilenhöhe ~20 px)
     internal static string _detailLabel = "pictured";
     internal static Texture2D? _detailTex;
+    internal static string _detailText = "";      // Text-Override für /lists/details/content/#1 (Release-Notes)
+    internal static int _detailScrollLine;         // mit dem Mausrad geblätterte Zeilen der Release-Notes
     // Updates-Kanal (Patch-Notes)
     internal static bool _updatesMode;           // Liste im DLC-Kanal zeigt Patch-Notes
     internal static string _updCat = "gmodes";   // Reiter/Kategorie: gmodes (Packs), vehicles, avatar, furnitures, stickers
     internal static bool _updatesSeenPending;
+    internal static long _lastReleaseReadMs;   // verhindert doppelte "Read"-Aktion bei doppeltem dlci eines Klicks
+    internal static bool _pendingReleaseCleanup;  // dlci-Blockade erst außerhalb des FSCommand-Callbacks auflösen
+    internal static readonly bool[] _lastUpdateTabFlags = new bool[5];
+    internal static bool _updateTabFlagsInit;
+    internal static float _nextReleaseDetailLog;
+    internal static int _detailFields;
     internal const string UpdatesTitle = "Updates";
+    private const string PacksMarkerPath = "/lists/tabs/tab0/ic_news";
     internal static readonly string[] UpdateCats = { "gmodes", "vehicles", "avatar", "furnitures", "stickers" };
     internal static readonly string[] UpdateCatVars = { "IsNewsGM", "IsNewsVehicles", "IsNewsAvatar", "IsNewsFurnitures", "IsNewsStickers" };
 
@@ -2148,6 +2166,11 @@ public class GAME_MODE_LIVING : InteriorUtils
             Friends.NewsChanged += OnFriendNews;
             _mediaNewsHooked = true;
         }
+        if (!_mediaReleasesHooked)
+        {
+            GitHubReleases.Changed += OnGitHubReleases;
+            _mediaReleasesHooked = true;
+        }
         _german = (FlashHost.Language ?? "").StartsWith("ge", StringComparison.OrdinalIgnoreCase);
         _mediaOpen = true; _mediaOpenedAt = _time; _mediaForceCloseAt = -1f; _clockShown = -1;
         UpdateUiAim(null);
@@ -2164,6 +2187,7 @@ public class GAME_MODE_LIVING : InteriorUtils
         _updatesMode = false; _updCat = "gmodes";
         SetUpdateTexts();
         SetUpdateTabFlags();
+        GitHubReleases.Refresh();                          // Packs-Liste: GitHub-Releases holen (max. alle 10 min)
         _media.SetValue("/:IsDLCHsys", false);             // Umfrage-Kanal ausgelassen
         _media.SetValue("/:Input", true);
         _newsTab = "game_progress";
@@ -2196,10 +2220,49 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         if (_fp != null) _fp.LookEnabled = false;
         if (_media == null) { _mediaOpen = false; return; }
+        GitHubReleases.Tick(dt);
         if (_time >= _mediaNextWeather) { _mediaNextWeather = _time + 5f; SetWeather(); }
         if (_updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "main", StringComparison.OrdinalIgnoreCase)) LeaveUpdates();
         UpdateListChrome();
+        MarkHoveredRelease();
+        // Die Hilfeleiste zeigt in Packs den A/Read-Button (#92). Der Flash-Film öffnet darüber nur seinen
+        // Kauf-Dialog; der echte Lesevorgang muss unabhängig davon sofort beim Maus-Release starten.
+        // Zeilenklicks wählt der Host selbst (nur Auswahl, kein A/Dialog) – nach dem ersten Read
+        // regeneriert der Film die nativen Listen-Zeilen nicht zuverlässig, sonst geht der 2. Klick verloren.
+        if (_updatesMode && _updCat == "gmodes" && FlashInput.GetMouseButtonUp(0))
+        {
+            var mp = FlashInput.mousePosition;
+            var gui = new Paradise.Core.Flash.Vector2(mp.x, Paradise.Core.Flash.Screen.height - mp.y);
+            string hit = _media.HitButtonPath(gui);
+            if (string.Equals(hit, "/help/content/#28/#1", StringComparison.OrdinalIgnoreCase)
+                && Environment.TickCount64 - _lastReleaseReadMs > 250)
+            {
+                _lastReleaseReadMs = Environment.TickCount64;
+                ReadSelectedRelease();
+            }
+            else if (_newsList != null && TryReleaseRow(hit, _newsList, out int row))
+            {
+                int index = _newsList.Top + row - 1;
+                if (index >= 0 && index < _news.Count)
+                {
+                    bool changed = index != _newsList.Selected;
+                    if (changed) _media.ListSelect(_newsList, index, true);
+                    ShowNews(index);
+                    if (changed) Log.Info($"TDU Media Row-Klick: Zeile {row} -> Release {index} ausgewählt");
+                }
+            }
+        }
         UpdateNewsDetails();
+        if (_updatesMode)
+        {
+            // Der Kauf-Dialog darf nie die Eingabe blockieren (wir öffnen stattdessen die Release-Seite).
+            if (_pendingReleaseCleanup)
+            {
+                _pendingReleaseCleanup = false;
+                CancelReleaseDialog();
+            }
+            else KeepUpdatesUsable();
+        }
         UpdateClock();
         if (_mediaForceCloseAt > 0f && _time >= _mediaForceCloseAt)
         {
@@ -2213,10 +2276,125 @@ public class GAME_MODE_LIVING : InteriorUtils
         if (TDU2Controls.Pressed("menu_down")) _media.Input("Move", "down");
         if (TDU2Controls.Pressed("menu_left")) _media.Input("Move", "left");
         if (TDU2Controls.Pressed("menu_right")) _media.Input("Move", "right");
-        if (TDU2Controls.ConfirmPressed()
-            && !(_updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "dlc", StringComparison.OrdinalIgnoreCase)))
-            _media.Input("A");   // im Updates-Kanal (DLC-Liste) hätte A nur den Kauf ausgelöst
+        bool confirm = TDU2Controls.ConfirmPressed();
+        bool dlcChannel = _updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "dlc", StringComparison.OrdinalIgnoreCase);
+        if (confirm && dlcChannel && _newsList != null && _newsList.Selected >= 0 && _newsList.Selected < _news.Count
+            && _news[_newsList.Selected].Release != null)
+        {
+            ReadSelectedRelease();   // Release als gelesen markieren (statt "DLC kaufen"), "!" sofort aus
+            confirm = false;
+        }
+        if (confirm && !dlcChannel) _media.Input("A");   // im Updates-Kanal (DLC-Liste) hätte A nur den Kauf ausgelöst
         _media.ForceVisible("/dlc_popup", false);
+    }
+
+    /// <summary>Native Packs-Liste: Hit-Pfad einer sichtbaren Zeile auf 1-basierte Zeilennummer abbilden.</summary>
+    static bool TryReleaseRow(string hit, Paradise.Core.Flash.VmfPlayer.FlashList list, out int row)
+    {
+        row = 0;
+        if (string.IsNullOrEmpty(hit) || list == null || !list.Active) return false;
+        string owner = Paradise.Core.Flash.VmfPlayer.PathOf(list.Owner) ?? "";
+        string prefix = owner == "/" ? "" : owner;
+        if (prefix.Length > 0 && !hit.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        int p = hit.IndexOf("/line", StringComparison.OrdinalIgnoreCase);
+        if (p < 0) return false;
+        p += 5;
+        int end = p;
+        while (end < hit.Length && char.IsDigit(hit[end])) end++;
+        if (end == p || !int.TryParse(hit.Substring(p, end - p), out row)) return false;
+        return row >= 1 && row <= list.ViewSize;
+    }
+
+    /// <summary>Packs-Zeile unter der Maus: genau dieses Release beim Hover als gelesen markieren (kein Browser).</summary>
+    static void MarkHoveredRelease()
+    {
+        if (_media == null || !_updatesMode || _updCat != "gmodes" || _newsList == null || !_newsList.Active) return;
+        if (!TryReleaseRow(_media.MouseOverButtonPath, _newsList, out int row)) return;
+        int index = _newsList.Top + row - 1;
+        if (index < 0 || index >= _news.Count) return;
+        var release = _news[index].Release;
+        if (release == null || GitHubReleases.IsSeen(release)) return;
+        GitHubReleases.MarkSeen(release);
+        SetUpdateTabFlags();
+        UpdateListChrome();
+        ShowNews(index);
+        Log.Info($"TDU Media Hover gelesen: Zeile {row} -> Release {index}, releasesSeen='{TDU2Session.Save?.releasesSeen ?? "-"}' HasUnseen={GitHubReleases.HasUnseen} Packs-Marker={_lastUpdateTabFlags[0]}");
+    }
+
+    /// <summary>Ausgewähltes GitHub-Release als gelesen markieren (A-Taste oder "Read" per Maus/dlci).</summary>
+    internal static void ReadSelectedRelease()
+    {
+        if (_media == null || _newsList == null) return;
+        int sel = _newsList.Selected;
+        if (sel < 0 || sel >= _news.Count) return;
+        var release = _news[sel].Release;
+        if (release == null) return;
+        // Der DLC-Film öffnet bei "Read" seinen Kauf-Dialog, deaktiviert die Liste und schickt /lists nach "block".
+        // Die komplette Rücksetzung läuft im nächsten Update außerhalb des FSCommand-Callbacks.
+        _media.SetValue("/:DLC_Bought", false);
+        _pendingReleaseCleanup = true;
+        GitHubReleases.MarkSeen(release);   // nur dieses Release -> "!" genau hier aus
+        SetUpdateTabFlags();
+        UpdateListChrome();
+        ShowNews(sel);
+        Log.Info($"TDU Media Read: releasesSeen='{TDU2Session.Save?.releasesSeen ?? "-"}' HasUnseen={GitHubReleases.HasUnseen} Packs-Marker={_lastUpdateTabFlags[0]}");
+    }
+
+    /// <summary>
+    /// Nach "Read": den vom Film geöffneten Kauf-Dialog über seine eigene B()-Funktion abbrechen, die deaktivierte
+    /// Liste wieder aktivieren und /lists aus dem Zustand "block" zurück in die normale Listenansicht holen.
+    /// </summary>
+    internal static void CancelReleaseDialog()
+    {
+        if (_media == null || !_updatesMode) return;
+        Log.Info("TDU Media Read: Kaufdialog abbrechen, Liste reaktivieren");
+        // B() des Popups läuft nur bei Input == true und wertet DLC_step aus. dlci hat den Kauf-Schritt gesetzt;
+        // den Wert nicht vorher löschen, sonst verpufft der Abbruch.
+        string step = _media.GetVariable("/:DLC_step") ?? "";
+        if (string.IsNullOrEmpty(step) || step == "0") step = "confirm";
+        _media.SetValue("/:Input", true);
+        _media.SetValue("/:DLC_Bought", false);
+        _media.SetVariable("/:DLC_step", step);
+        _media.CallClip("/dlc_popup", "B");
+        _media.GotoLabel("/dlc_popup", "close", false);
+        _media.ForceVisible("/dlc_popup", false);
+        RestoreUpdatesList();
+        _media.SetValue("/:Input", true);
+        _media.SetVariable("/:DLC_step", "");
+        SetUpdateTabFlags();
+    }
+
+    /// <summary>Wiederholte Reinigungsarbeit im Updates-Kanal: keine blockierte Eingabe, kein Popup, volle Detail-Alpha.</summary>
+    internal static void KeepUpdatesUsable()
+    {
+        if (_media == null || !_updatesMode) return;
+        if (!string.Equals(_media.GetVariable("/:CurrentChannel"), "dlc", StringComparison.OrdinalIgnoreCase)) return;
+        _media.SetValue("/:Input", true);
+        _media.SetVariable("/:DLC_step", "");
+        _media.ForceAlpha("/lists/details", 1f);
+        string popup = _media.Label("/dlc_popup") ?? "";
+        if (popup.Length > 0 && popup != "default" && popup != "close")
+        {
+            _media.GotoLabel("/dlc_popup", "close", false);
+            _media.ForceVisible("/dlc_popup", false);
+        }
+        string lists = _media.Label("/lists") ?? "";
+        if (lists == "block" || lists == "kill") RestoreUpdatesList();
+    }
+
+    /// <summary>/lists aus dem blockierten DLC-Zustand zurückholen und die native Liste wieder anwählen.</summary>
+    internal static void RestoreUpdatesList()
+    {
+        if (_media == null || _newsList == null) return;
+        _media.GotoLabel("/lists", "stop", false);
+        // Der Kauf-Dialog setzt _root.Clip auf sich selbst. Danach ging der A/Read-Button der Hilfeleiste
+        // ins Leere. Fokus wieder auf die Listenansicht legen.
+        _media.SetValue("/:Clip", _media.Find("/lists"));
+        if (!_newsList.Active) _media.ActivateList(_newsList);
+        _media.ForceAlpha("/lists/details", 1f);
+        if (_newsList.Selected >= 0 && _newsList.Selected < _news.Count) ShowNews(_newsList.Selected);
+        _media.ResetMouseState();   // nach dem Dialog-Fokus darf keine alte Press-Bindung hängen bleiben
+        Log.Info($"TDU Media Liste wiederhergestellt: lists={_media.Label("/lists")}, Auswahl {_newsList.Selected}, aktiv={_newsList.Active}");
     }
 
     /// <summary>ESC/Rücktaste: B des Films (Kanal zurück bzw. Fernseher aus).</summary>
@@ -2231,9 +2409,20 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         if (!_mediaOpen) return;
         _mediaOpen = false; _mediaForceCloseAt = -1f;
-        if (_media != null) { _media.Visible = false; _media.GotoLabel("/", "default", false); }
+        if (_media != null)
+        {
+            _media.Visible = false; _media.GotoLabel("/", "default", false);
+            _media.Unpin("/:NewsDescription"); _media.Unpin("/:DetailsType");
+            _media.Unpin(DetailTitlePath);
+            _media.ReleaseForced(DetailTitlePath + "/txt_scroll2");
+            _media.ReleaseForced(DetailPath + "/img");
+            _media.ReleaseForced(DetailPath + "/ps_store");
+            _media.ReleaseForced("/dlc_popup");
+            _media.ReleaseAlpha("/lists/details");
+        }
         _newsList = null; _shownNews = -1;
         if (_updatesSeenPending) { _updatesSeenPending = false; TDU2News.MarkUpdatesSeen(); }
+        // GitHub-Releases werden beim Hover/Read einzeln markiert, nicht beim Schließen des TVs.
         _updatesMode = false;
         try { FrontendMusic.Stop(); } catch (Exception) { }
         _t.Input.CursorLocked = true;
@@ -2273,11 +2462,21 @@ public class GAME_MODE_LIVING : InteriorUtils
         // Kanal wechseln (sounds.ini "mdswitch" = Med_shift_01; die übrigen md*-Töne schickt der Film selbst als sndp:md…)
         if (lc.StartsWith("tdmd:") && lc.EndsWith(":open")) FrontendSounds.Play("mdswitch");
         if (lc.StartsWith("tdmd:weat:")) { SetWeather(); return; }          // Wetter-Kanal auf/zu
-        if (lc == "dlci") return;                                               // Kauf-Anfrage des DLC-Kanals: gibt es nicht
+        if (lc == "dlci")
+        {
+            // Im Updates-Kanal ist "Buy DLC" bei uns "Read": Release als gelesen markieren.
+            // Der Film schickt pro Mausklick zwei dlci-Ereignisse -> kurz entprellen.
+            if (_updatesMode && _updCat == "gmodes" && Environment.TickCount64 - _lastReleaseReadMs > 250)
+            {
+                _lastReleaseReadMs = Environment.TickCount64;
+                ReadSelectedRelease();
+            }
+            return;
+        }
         if (lc.StartsWith("tdmd:virt:") || lc.StartsWith("tdmd:surv:")) return; // Umfrage-Kanal ausgelassen
         if (lc.StartsWith("tdmd:cdlc:"))
         {
-            if (lc.EndsWith(":open")) { _updatesMode = true; SetUpdateTabFlags(); return; }
+            if (lc.EndsWith(":open")) { _updatesMode = true; SetUpdateTabFlags(); GitHubReleases.Refresh(); return; }
             if (lc.EndsWith(":clos")) { LeaveUpdates(); return; }
             int us = _newsList != null ? _newsList.Selected : 0;
             if (lc.Contains("del") && _updatesMode && us >= 0 && us < _news.Count)
@@ -2332,6 +2531,13 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         _news.Clear();
         var now = DateTime.Now;
+        // Reiter Packs des Updates-Kanals: GitHub-Releases statt der Patch-Notes vom Server
+        if (_updatesMode && _updCat == "gmodes")
+        {
+            BuildReleases();
+            FinishNews();
+            return;
+        }
         // Server-News (Web-Panel), neueste zuerst
         foreach (var e in TDU2News.Items)
         {
@@ -2394,6 +2600,74 @@ public class GAME_MODE_LIVING : InteriorUtils
         if (_newsList != null) { FillNews(_newsList); _media.ListRefresh(_newsList); }
     }
 
+    /// <summary>Reiter Packs: Releases von GitHub in die linke Liste, Release-Notes in die rechte Info-Box.</summary>
+    internal static void BuildReleases()
+    {
+        foreach (var r in GitHubReleases.Items)
+        {
+            string title = (string.IsNullOrWhiteSpace(r.Name) ? r.Tag : r.Name)
+                           + (r.IsCurrent ? (_german ? " (aktuell)" : " (current)") : "");
+            _news.Add(new News
+            {
+                Title = title,
+                Text = ReleaseText(r),
+                Version = r.Version + (r.Prerelease ? (_german ? " (Vorab)" : " (pre)") : ""),
+                Date = r.PublishedUtc.ToLocalTime(),
+                Release = r,
+            });
+        }
+        if (_news.Count > 0) return;
+        string placeholderTitle, placeholderText;
+        if (GitHubReleases.State == "loading")
+        {
+            placeholderTitle = _german ? "Releases werden geladen …" : "Loading releases …";
+            placeholderText = _german ? "Die Release-Liste wird von GitHub geholt." : "Fetching the release list from GitHub.";
+        }
+        else if (GitHubReleases.State == "error")
+        {
+            placeholderTitle = _german ? "Releases nicht verfügbar" : "Releases unavailable";
+            placeholderText = _german
+                ? $"GitHub ist nicht erreichbar ({GitHubReleases.Error}). Beim nächsten Öffnen wird es erneut versucht."
+                : $"Could not reach GitHub ({GitHubReleases.Error}). It will be retried the next time you open the TV.";
+        }
+        else
+        {
+            placeholderTitle = _german ? "Keine Releases" : "No releases";
+            placeholderText = _german ? "Für dieses Projekt sind keine Releases veröffentlicht." : "No releases published for this project.";
+        }
+        _news.Add(new News { Title = placeholderTitle, Text = placeholderText });
+    }
+
+    /// <summary>Text der rechten Info-Box: Datum, Marker, Release-Notes (Markdown flach), Download-Datei, A-Hinweis.</summary>
+    internal static string ReleaseText(GitHubRelease r)
+    {
+        var sb = new StringBuilder();
+        string date = r.PublishedUtc == DateTime.MinValue ? "-" : r.PublishedUtc.ToLocalTime().ToString("dd.MM.yyyy", CultureInfo.InvariantCulture);
+        sb.AppendLine((_german ? "Veröffentlicht: " : "Published: ") + date);
+        if (r.Prerelease) sb.AppendLine(_german ? "Vorab-Version" : "Pre-release");
+        if (r.IsCurrent) sb.AppendLine(_german ? "Diese Version ist installiert." : "This version is installed.");
+        string body = GitHubReleases.PlainBody(r.Body);
+        if (body.Length > 0) { sb.AppendLine(); sb.AppendLine(body); }
+        if (!string.IsNullOrEmpty(r.DownloadUrl))
+        {
+            sb.AppendLine();
+            sb.AppendLine((_german ? "Download: " : "Download: ") + Path.GetFileName(r.DownloadUrl));
+        }
+        sb.AppendLine();
+        sb.AppendLine(GitHubReleases.IsSeen(r) ? (_german ? "✓ Gelesen" : "✓ Read") : (_german ? "Neu – beim Überfahren lesen" : "New – hover to read"));
+        string text = sb.ToString();
+        return text.Length <= 1800 ? text : text[..1799].TrimEnd() + "…";
+    }
+
+    /// <summary>Neue GitHub-Releases (oder Cache geladen): Packs-Liste und "Neu"-Marker der Reiter auffrischen.</summary>
+    internal static void OnGitHubReleases()
+    {
+        if (!_mediaOpen || _media == null || !_updatesMode || _updCat != "gmodes") return;
+        BuildNews();
+        if (_newsList != null) ShowNews(_newsList.Selected);
+        SetUpdateTabFlags();
+    }
+
     internal static void OnMediaListCreated(VmfPlayer.FlashList l)
     {
         if (_media == null) return;
@@ -2407,6 +2681,7 @@ public class GAME_MODE_LIVING : InteriorUtils
             _updCat = lname.Substring(4).ToLowerInvariant();
             if (Array.IndexOf(UpdateCats, _updCat) < 0) _updCat = "gmodes";
             _newsList = l; _shownNews = -1;
+            _media.ForceAlpha("/lists/details", 1f);
             BuildNews();
             _media.ListRefresh(l);
             _media.ListLoaded(l);
@@ -2445,24 +2720,103 @@ public class GAME_MODE_LIVING : InteriorUtils
             l.Rows.Add(new[] { n.Title, !string.IsNullOrEmpty(n.Version) ? "v" + n.Version.TrimStart('v', 'V') : n.Date.ToString(_german ? "dd.MM.yyyy" : "MM/dd/yyyy", CultureInfo.InvariantCulture) });
         if (l.Selected >= l.Rows.Count) { l.Selected = Math.Max(0, l.Rows.Count - 1); l.Top = 0; }
         _media!.SetVariable("/:NbNews", _news.Count.ToString(CultureInfo.InvariantCulture));
+        if (_updatesMode && _updCat == "gmodes")
+            Log.Info($"TDU Media Packs-Liste: {l.Rows.Count} Zeilen, Auswahl {l.Selected}, erste \"{(_news.Count > 0 ? _news[0].Title : "")}\"");
     }
 
     internal static void UpdateNewsDetails()
     {
         if (_newsList == null || _media == null) return;
         if (_newsList.Selected != _shownNews) ShowNews(_newsList.Selected);
-        // Bild/Textlage halten (der Film setzt die Detailansicht beim Blättern selbst um)
-        string l = _media.Label(DetailPath);
+        int sel = _newsList.Selected;
+        if (sel < 0 || sel >= _news.Count || _news[sel].Release == null) return;
+        UpdateReleaseDetailScroll();
+        // Der DLC-Film setzt NewsDescription/DetailsType beim Blättern und beim Öffnen des Kauf-Dialogs
+        // selbst um. Deshalb jeden Frame neu aufbringen, sonst bleibt die Info-Box leer.
+        _media.SetVariable("/:DetailsType", _detailLabel);
+        _media.SetVariable("/:NewsDescription", _detailText);
+        _detailFields = _media.SetTextRecursive(DetailPath, _detailText);
+        string? l = _media.Label(DetailPath);
         if (l != null && l != _detailLabel) ApplyDetailLayout();
+        FreezeDetailTitle();
+        ApplyDetailScroll();
+        if (_time >= _nextReleaseDetailLog)
+        {
+            _nextReleaseDetailLog = _time + 2f;
+            string desc = _media.GetVariable("/:NewsDescription") ?? "";
+            string lists = _media.Label("/lists") ?? "-";
+            string popup = _media.Label("/dlc_popup") ?? "-";
+            float alpha = _media.Find("/lists/details")?.Cx.Mul.w ?? -1f;
+            Log.Info($"TDU Media Detail: {_detailFields} Felder, Frame \"{l}\", DetailsType \"{_media.GetVariable("/:DetailsType")}\", lists={lists}, detailsAlpha={alpha:0.##}, popup={popup}, aktiv={_newsList.Active}, Input={_media.GetVariable("/:Input")}, DLC_step=\"{_media.GetVariable("/:DLC_step")}\", Scroll={_detailScrollLine}, Text \"{desc[..Math.Min(40, desc.Length)]}…\"");
+        }
+    }
+
+    /// <summary>Mausrad über der rechten Info-Box: Release-Notes zeilenweise blättern (der Film hat keinen eigenen Scroller).</summary>
+    private static void UpdateReleaseDetailScroll()
+    {
+        float wheel = FlashInput.mouseScrollDelta;
+        if (MathF.Abs(wheel) < 0.01f || _media == null) return;
+        var rect = _media.ScreenRect("/lists/details/text_area") ?? _media.ScreenRect("/lists/details");
+        if (rect == null) return;
+        var mouse = FlashInput.mousePosition;
+        var gui = new Paradise.Core.Flash.Vector2(mouse.x, Paradise.Core.Flash.Screen.height - mouse.y);
+        if (!rect.Value.Contains(gui)) return;
+        _detailScrollLine += wheel > 0f ? -2 : 2;   // hoch = negativer Zeilenoffset
+    }
+
+    /// <summary>Textfeld der Release-Notes innerhalb der Maske verschieben (statt eigener Scrollbalken).</summary>
+    private static void ApplyDetailScroll()
+    {
+        if (_media == null || string.IsNullOrEmpty(_detailText)) return;
+        int lines = _media.MeasureTextLines(DetailTextField, _detailText, out float lineHeight);
+        int max = Math.Max(0, lines - DetailVisibleLines);
+        _detailScrollLine = Math.Clamp(_detailScrollLine, 0, max);
+        // Ursprung des Textfeldes im pictured-Frame: (7, 2). Position ersetzt die Timeline-Matrix.
+        _media.SetPosition(DetailTextField, new Paradise.Core.Flash.Vector2(7f, 2f - _detailScrollLine * lineHeight));
+    }
+
+    /// <summary>Den animierten Lauftext des Detail-Titels anhalten: die Release-Notes sollen stillstehen.</summary>
+    private static void FreezeDetailTitle()
+    {
+        if (_media == null) return;
+        _media.PinLabel(DetailTitlePath, "set");
+        _media.SetScriptValue(DetailTitlePath, "is_scroll", false);
+        _media.SetScriptValue(DetailTitlePath, "frame_length", 0);
+        _media.SetScriptValue(DetailTitlePath, "offset", 0);
+        _media.SetScriptValue(DetailTitlePath, "TxtLength", 0);
+        _media.SetPosition(DetailTitlePath + "/txt_scroll", new Paradise.Core.Flash.Vector2(0f, 0f));
+        _media.ForceVisible(DetailTitlePath + "/txt_scroll2", false);
     }
 
     internal static void ApplyDetailLayout()
     {
-        _media!.GotoLabel(DetailPath, _detailLabel, false);
-        if (_detailLabel == "default")
+        // Der Film schaltet /lists/details/content selbst über _root.DetailsType um.
+        // Ohne diesen Wert springt er auf einen leeren Frame und die Info-Box bleibt leer.
+        _media!.SetVariable("/:DetailsType", _detailLabel);
+        _media.GotoLabel(DetailPath, _detailLabel, false);
+        bool release = !string.IsNullOrEmpty(_detailText);
+        if (release)
         {
+            // Release-Notes: Bildrahmen und PS-Store-Icon bleiben immer ausgeblendet, auch wenn der Film
+            // beim Blättern "default" oder "pictured" neu setzt.
+            _media.ForceVisible(DetailPath + "/img", false);
+            _media.ForceVisible(DetailPath + "/ps_store", false);
+        }
+        else if (_detailLabel == "default")
+        {
+            _media.ReleaseForced(DetailPath + "/img");
+            _media.ReleaseForced(DetailPath + "/ps_store");
             _media.SetVisible(DetailPath + "/ps_store", false);
             _media.SetClipTexture(DetailPath + "/img/lure", _detailTex);
+        }
+        // GotoLabel setzt das Textfeld neu (c266/c271) -> Text-Override danach erneut aufbringen
+        if (release)
+        {
+            _media.SetVariable("/:NewsDescription", _detailText);
+            _detailFields = _media.SetTextRecursive(DetailPath, _detailText);
+            _media.PinText("/:NewsDescription", _detailText);
+            FreezeDetailTitle();
+            ApplyDetailScroll();
         }
     }
 
@@ -2474,9 +2828,36 @@ public class GAME_MODE_LIVING : InteriorUtils
         // Bild der Server-News (kommt es erst noch, zeigt OnServerNews die Meldung danach neu an)
         _detailTex = n?.Entry != null ? TDU2News.Image(n.Entry) : null;
         _detailLabel = _detailTex != null ? "default" : "pictured";
+        _detailText = n?.Release != null ? n.Text : "";
+        if (n?.Release != null && GitHubReleases.IsSeen(n.Release)
+            && _detailText.IndexOf("✓ Gelesen", StringComparison.Ordinal) < 0
+            && _detailText.IndexOf("✓ Read", StringComparison.Ordinal) < 0)
+            _detailText += (_detailText.Length > 0 ? "\n" : "") + (_german ? "✓ Gelesen" : "✓ Read");
+        _detailScrollLine = 0;
         if (_newsList != null) ApplyDetailLayout();
         _media.SetVariable("/:NewsTitle", n?.Title ?? "");
-        _media.SetVariable("/:NewsDescription", n?.Text ?? "");
+        if (n?.Release != null)
+        {
+            Log.Info($"TDU Media Release {i}: \"{n.Title}\", {_detailText.Length} Zeichen Notes, Detail {_detailLabel}");
+            // Der DLC-Film überschreibt _root.NewsDescription und _root.DetailsType beim Blättern selbst.
+            // PinText stellt beide Werte nach jedem Frame wieder her -> die Notes bleiben in der Info-Box.
+            _media.PinText("/:NewsDescription", _detailText);
+            _media.PinText("/:DetailsType", _detailLabel);
+            _detailFields = _media.SetTextRecursive(DetailPath, _detailText);
+            FreezeDetailTitle();
+            ApplyDetailScroll();
+        }
+        else
+        {
+            _media.Unpin("/:NewsDescription");   // normale News: Originalverhalten des Films
+            _media.Unpin("/:DetailsType");
+            _media.Unpin(DetailTitlePath);
+            _media.ReleaseForced(DetailTitlePath + "/txt_scroll2");
+            _media.ReleaseForced(DetailPath + "/img");
+            _media.ReleaseForced(DetailPath + "/ps_store");
+            _media.SetVariable("/:NewsDescription", n?.Text ?? "");
+            _media.SetTextRecursive(DetailPath, null!);
+        }
         _media.SetVariable("/:CurrentNewsIndex", (_news.Count == 0 ? 0 : Math.Max(0, i) + 1).ToString(CultureInfo.InvariantCulture));
         _media.SetVariable("/:NbNews", _news.Count.ToString(CultureInfo.InvariantCulture));
     }
@@ -2509,10 +2890,47 @@ public class GAME_MODE_LIVING : InteriorUtils
             }
         }
         if (_tabsShown != tabs) { ShowTabs(tabs); _tabsShown = tabs; }
+        // Der Film öffnet nur die erste Zeile der nativen Liste; ohne Nachziehen bleiben alle weiteren Releases unsichtbar
+        // und sind auch nicht mit der Maus anklickbar.
+        if (_newsList != null) f.ListShowRows(_newsList);
         if (dlc)
         {
+            // Der Film setzt das "!" beim Reiterwechsel und beim Schließen des Kauf-Dialogs erneut. Ohne diesen
+            // dauerhaften Override kommt es nach "Read" wieder zurück, obwohl der Spielstand schon als gelesen gilt.
+            if (!_lastUpdateTabFlags[0]) f.ForceVisible(PacksMarkerPath, false);
+            // Nach dem DLC-Dialog deaktiviert der Film die Liste gelegentlich erneut -> andere Zeilen nicht anklickbar.
+            if (_newsList != null && !_newsList.Active) f.ActivateList(_newsList);
+            FreezeUpdateListAnimations();
+            // Der Film setzt die Hilfeleiste im Updates-Kanal auf "back" (nur B/Zurück) und blendet damit
+            // den A/Read-Button (#92) aus. Im Reiter Packs brauchen wir genau diesen Button, deshalb "dlc"
+            // (A=Read, B=Zurück) erzwingen. UpdateListChrome läuft nach VmfPlayer.Update(): das Label steht
+            // damit für die Mausabfrage des nächsten Frames bereit. Andere Updates-Reiter behalten "back".
             string hl = f.Label("/help/content");
-            if (hl != null && hl != "back") f.GotoLabel("/help/content", "back", false);
+            string wantedHelp = _updatesMode && _updCat == "gmodes" ? "dlc" : "back";
+            if (hl != null && hl != wantedHelp) f.GotoLabel("/help/content", wantedHelp, false);
+        }
+    }
+
+    /// <summary>
+    /// Live-Befund: Die Zeilen selbst stehen auf stop/stop_on, aber die eingebetteten Hintergrund-Clips
+    /// der ausgewählten Zeile laufen weiter (bkgd=#231 "loop_on", #7=#236). Das ist das dauerhafte
+    /// Links-Rechts-Wackeln. Beide Clips werden auf statische Frames gepinnt. Die kleinen "!"-Symbole
+    /// verschwinden nur noch in den Zeilen, deren Release einzeln als gelesen markiert wurde.
+    /// </summary>
+    private static void FreezeUpdateListAnimations()
+    {
+        var f = _media!;
+        for (int i = 1; i <= 6; i++)
+        {
+            string bg = "/lists/news_list/bkgd" + i;
+            f.PinLabel(bg + "/bkgd", "valid", true);   // #231: statischer Endzustand statt loop_on
+            f.PinFrame(bg + "/#7", 1, true);           // #236: kein Label, Frame 1 = ruhiger Zustand
+            string icon = "/lists/news_list/line" + i + "/content/ic_new";
+            f.PinFrame(icon + "/#1", 1, true);
+            int row = _newsList != null ? _newsList.Top + i - 1 : i - 1;
+            GitHubRelease? release = row >= 0 && row < _news.Count ? _news[row].Release : null;
+            bool unread = release != null && !GitHubReleases.IsSeen(release);
+            f.ForceVisible(icon, unread);             // gelesen -> aus, ungelesen -> an
         }
     }
 
@@ -2553,12 +2971,36 @@ public class GAME_MODE_LIVING : InteriorUtils
     internal static void SetUpdateTabFlags()
     {
         if (_media == null) return;
-        for (int c = 0; c < UpdateCats.Length; c++)
+        bool changed = !_updateTabFlagsInit;
+        _updateTabFlagsInit = true;
+        for (int c = 0; c < UpdateCats.Length && c < _lastUpdateTabFlags.Length; c++)
         {
-            bool unread = false;
-            foreach (var e in TDU2News.Items)
-                if (e != null && TDU2News.IsUpdate(e) && UpdateCat(e) == UpdateCats[c] && TDU2News.IsUnread(e)) { unread = true; break; }
+            bool unread;
+            if (c == 0)
+            {
+                // Packs zeigt GitHub-Releases, nicht die Patch-Notes vom Server. Alte ungelesene gmodes-News
+                // dürfen das "!" des Packs-Reiters nicht wiederherstellen.
+                unread = GitHubReleases.HasUnseen;
+            }
+            else
+            {
+                unread = false;
+                foreach (var e in TDU2News.Items)
+                    if (e != null && TDU2News.IsUpdate(e) && UpdateCat(e) == UpdateCats[c] && TDU2News.IsUnread(e)) { unread = true; break; }
+            }
+            if (unread != _lastUpdateTabFlags[c]) changed = true;
+            _lastUpdateTabFlags[c] = unread;
             _media.SetValue("/:" + UpdateCatVars[c], unread);
+        }
+        // Der Film liest die IsNews*-Flags nur beim Aufbau der Reiter. Ohne neuen Aufruf bleibt das "!" nach "Read" stehen.
+        // Zusätzlich das Symbol direkt überschreiben: initTabs allein hat der Marker in der Praxis nicht immer ausgeschaltet.
+        _media.ForceVisible(PacksMarkerPath, _lastUpdateTabFlags[0] ? (bool?)null : false);
+        string channel = _media.GetVariable("/:CurrentChannel") ?? "";
+        if (changed && (string.Equals(channel, "dlc", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(channel, "news", StringComparison.OrdinalIgnoreCase)))
+        {
+            Log.Info($"TDU Media Reiter-Marker: Packs={_lastUpdateTabFlags[0]} (HasUnseen={GitHubReleases.HasUnseen}, releasesSeen='{TDU2Session.Save?.releasesSeen ?? "-"}'), Fahrzeuge={_lastUpdateTabFlags[1]}");
+            _media.CallClip("/lists", "initTabs");
         }
     }
 
@@ -2566,7 +3008,9 @@ public class GAME_MODE_LIVING : InteriorUtils
     {
         if (!_updatesMode) return;
         _updatesMode = false; _shownNews = -1;
+        _media?.ReleaseAlpha("/lists/details");
         if (_updatesSeenPending) { _updatesSeenPending = false; TDU2News.MarkUpdatesSeen(); }
+        // Releases werden beim Hover/Read einzeln als gelesen markiert, nicht beim Verlassen der Kategorie.
         SetUpdateTabFlags();
         BuildNews();
     }

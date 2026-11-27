@@ -38,6 +38,7 @@ namespace Paradise.Core.Flash
     public sealed partial class VmfPlayer
     {
         readonly Dictionary<string, bool> _forcedVisible = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, float> _forcedAlpha = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Makes the specified movie instance visible.</summary>
         /// <param name="path">The instance path.</param>
@@ -74,6 +75,29 @@ namespace Paradise.Core.Flash
         {
             if (_forcedVisible.Count == 0) return;
             foreach (var kv in _forcedVisible) { var d = Find(kv.Key); if (d != null) d.Visible = kv.Value; }
+        }
+
+        /// <summary>Enforces an instance's alpha after every frame, without pinning the timeline's color transform.</summary>
+        /// <param name="path">The instance path.</param>
+        /// <param name="alpha">Opacity 0..1.</param>
+        public void ForceAlpha(string path, float alpha)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            _forcedAlpha[path] = Mathf.Clamp01(alpha);
+            var d = Find(path); if (d != null) d.Cx.Mul.w = _forcedAlpha[path];
+        }
+
+        /// <summary>Releases one enforced alpha, or all alphas below a path prefix (or all when prefix is null).</summary>
+        public void ReleaseAlpha(string path = null)
+        {
+            if (string.IsNullOrEmpty(path)) { _forcedAlpha.Clear(); return; }
+            foreach (var k in new List<string>(_forcedAlpha.Keys)) if (k.StartsWith(path, StringComparison.OrdinalIgnoreCase)) _forcedAlpha.Remove(k);
+        }
+
+        void ApplyForcedAlpha()
+        {
+            if (_forcedAlpha.Count == 0) return;
+            foreach (var kv in _forcedAlpha) { var d = Find(kv.Key); if (d != null) d.Cx.Mul.w = kv.Value; }
         }
 
         sealed class PinVar { public object Value; public bool Typed; }
@@ -126,10 +150,11 @@ namespace Paradise.Core.Flash
         /// <summary>Pins a frame number and reapplies it when the clip instance is recreated.</summary>
         /// <param name="path">The instance path.</param>
         /// <param name="flashFrame">The target frame using Flash's 1-based numbering.</param>
+        /// <param name="always">Reapply every frame even while the instance still exists (stops running timelines).</param>
         /// <returns><see langword="true"/> if the frame could be applied; otherwise, <see langword="false"/>.</returns>
-        public bool PinFrame(string path, int flashFrame)
+        public bool PinFrame(string path, int flashFrame, bool always = false)
         {
-            var pp = new PinPos { Frame = flashFrame }; _pinPos[path] = pp;
+            var pp = new PinPos { Frame = flashFrame, Always = always }; _pinPos[path] = pp;
             _applyingPins = true; bool ok = SetFrame(path, flashFrame); _applyingPins = false;
             pp.Applied = InstanceOf(path); return ok;
         }

@@ -796,8 +796,9 @@ public sealed class PauseMenu
             // Tasten-Buttons des Films zuerst, sonst Move (Gamemodes/Utils/FlashNav, wie der Flash Player des Spiels)
             FlashNav.Directions(ui);
         }
-        // Texteingabe: nur Enter bestätigt (Buchstaben gehören dem Textfeld), sonst die belegbare Bestätigungstaste
-        if (typing ? _ctx.Pressed(VK_RETURN) : TDU2Controls.ConfirmPressed()) FlashNav.Send(ui, FlashKey.Confirm);
+        // Texteingabe: wie Unity Return/KeypadEnter/JoystickButton0 (Buchstaben gehören dem Textfeld),
+        // sonst die belegbare Bestätigungstaste inkl. Pad A (Unity TDU2PauseMenu.cs).
+        if (typing ? TDU2Controls.RawConfirmPressed() : TDU2Controls.ConfirmPressed()) FlashNav.Send(ui, FlashKey.Confirm);
         bool esc = _ctx.Pressed(VK_ESCAPE);
         bool back = !typing && TDU2Controls.BackPressed();
         if (esc || back)

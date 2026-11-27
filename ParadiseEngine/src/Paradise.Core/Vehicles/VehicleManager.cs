@@ -37,9 +37,15 @@ namespace Paradise.Core.Vehicles
             EngineRunning = false;
             if (_audio != null) { _audio.EngineOn = false; _audio.StopLoops(); }
         }
+        /// <summary>Getriebe wie im Optionsmenü (Unity TDU2VehicleManager.GearboxMode).</summary>
+        public enum GearboxMode { Automatic = 0, Manual = 1, HShifter = 2, HShifterClutch = 3 }
         public float GripScale = 0.62f;
         public DrivingAids Aids = DrivingAids.Sport;
         public bool AutomaticGearbox = true;
+        /// <summary>Aktueller Getriebemodus (Automatic/Manuell/H-Schaltung/H-Schaltung + Kupplung).</summary>
+        public GearboxMode Gearbox = GearboxMode.Automatic;
+        GearboxMode _lastManualGearbox = GearboxMode.Manual;
+        bool _lastAutomatic = true;
         /// <summary>Physik-Zeitschritt während der Fahrt (s). TDU2 rechnet die Räder zusätzlich in Unterschritten.</summary>
         public float FixedTimeStep = 0.01f;
 
@@ -127,10 +133,11 @@ namespace Paradise.Core.Vehicles
         public CarPhysics? FindCar(string fileName) => Available.Find(c => string.Equals(c.FileName, fileName, StringComparison.OrdinalIgnoreCase))
             ?? (Database != null ? Database.Cars.Find(c => string.Equals(c.FileName, fileName, StringComparison.OrdinalIgnoreCase)) : null);
 
-        /// <summary>Datenbank im Hintergrund laden (einmal). bnkDir = Euro/Bnk.</summary>
+        /// <summary>Datenbank im Hintergrund laden. bnkDir = Euro/Bnk. Wie Unity wird das jedes Bild geprüft;</summary>
+        /// <remarks>Nach einem Fehler (oder wenn der Ordner beim Start noch leer war) wird es erneut versucht.</remarks>
         public void EnsureDatabase(string? bnkDir)
         {
-            if (_dbTask != null) return;
+            if (_dbTask != null && !(_dbTask.IsCompleted && Database == null)) return;
             _bnkDir = bnkDir;
             if (string.IsNullOrEmpty(_bnkDir)) { _status = "bank folder not found"; return; }
             string bnk = _bnkDir;
@@ -370,6 +377,18 @@ namespace Paradise.Core.Vehicles
                 Camera.LateUpdate(dt, time, input);
         }
 
+        /// <summary>
+        /// Nur die Fahrzeugkamera weiterrechnen, während der Manager pausiert ist (Unity: TDU2VehicleCamera.LateUpdate
+        /// läuft unabhängig vom VehicleManager). So bleibt die Kamera in Pause/Karte mit Maus/Gamepad bewegbar,
+        /// ohne Fahreingaben, HUD-Audio oder Fahrzeugeffekte weiterlaufen zu lassen.
+        /// </summary>
+        public void UpdateCameraOnly(float dt, float time, InputState? input)
+        {
+            if (Current == null) return;
+            using (s_mLuCamera.Auto())
+                Camera.LateUpdate(dt, time, input);
+        }
+
         /// <summary>GPS weiterrechnen, wenn das Fahrzeug eingefroren ist (große Karte/Pausemenü; sonst über die Minimap).</summary>
         public void UpdateGps(float dt)
         {
@@ -404,6 +423,9 @@ namespace Paradise.Core.Vehicles
         public Vector3 ToGame(Vector3 unityLocal) => U.Mirror(unityLocal) + _world.Origin;
         /// <summary>Spielkoordinaten -> Unity-lokal.</summary>
         public Vector3 ToUnity(Vector3 game) => U.Mirror(game - _world.Origin);
+
+        /// <summary>Position des Spielerautos in Spielkoordinaten (für Straßenabfragen/FFB-Untergrund).</summary>
+        public Vector3 CurrentPositionGame => _rb != null ? ToGame(_rb.position) : Vector3.Zero;
 
         /// <summary>Matrix Unity-lokal -> Render-Raum (Spiegelung, Ursprung, Render-Wurzel; ohne Genauigkeitsverlust).</summary>
         public Matrix4x4 UnityToRender(Matrix4x4 gameToRender) => Matrix4x4.CreateScale(-1f, 1f, 1f) * Matrix4x4.CreateTranslation(_world.Origin) * gameToRender;
@@ -707,12 +729,11 @@ namespace Paradise.Core.Vehicles
             _gauges.Setup(veh, _model, a.Gauges);
             _hud ??= new VehicleHud();
             _hud.Bind(_bnkDir!, veh, a, Camera);
-            // Minimap (Unity TDU2Minimap.Bind) und Feldwege aus dem Straßennetz als Untergrund
+            // Minimap (Unity TDU2Minimap.Bind). Der Untergrund kommt wie in Unity ausschließlich aus dem
+            // getroffenen Collider (SurfaceOf) – nicht aus dem Straßennetz der Minimap.
             _minimap ??= new Minimap();
             _minimap.Database = Database;
             _minimap.Bind(_bnkDir, IslandBank?.Invoke());
-            var mm = _minimap;
-            veh.RoadSurfaceAt = p => mm.NearestRoadType(ToGame(p), 4f) == 1 ? 2 : 0;
 
             // Bodenschatten, Reifenspuren, Staub, glühende Bremsscheiben (TDU2VehicleEffects)
             _fx = new VehicleEffects(_r);
@@ -735,6 +756,7 @@ namespace Paradise.Core.Vehicles
 
             _assets = a;
             Current = veh;
+            ApplyGearboxMode();
             SnapPose();
             _status = $"{car.ModelName}, {a.Color?.Name ?? "standard color"}";
         }
@@ -790,10 +812,47 @@ namespace Paradise.Core.Vehicles
             _assets?.DestroyTextures(); _assets = null;
         }
 
+        // ------------------------------------------------------------------ Getriebe (Unity TDU2VehicleManager.ApplyGearboxMode)
+
+        /// <summary>Getriebemodus ans aktuelle Auto geben (Automatik/sequenziell/H-Schaltung/Kupplung).</summary>
+        public void ApplyGearboxMode()
+        {
+            // Rückwärtskompatibel: Wer nur AutomaticGearbox setzt (Konfig/Dev-Menü), behält den letzten Handschaltmodus.
+            if (AutomaticGearbox != _lastAutomatic)
+            {
+                Gearbox = AutomaticGearbox ? GearboxMode.Automatic : (Gearbox == GearboxMode.Automatic ? GearboxMode.Manual : Gearbox);
+            }
+            bool auto = Gearbox == GearboxMode.Automatic;
+            bool h = Gearbox == GearboxMode.HShifter || Gearbox == GearboxMode.HShifterClutch;
+            AutomaticGearbox = auto; _lastAutomatic = auto;
+            if (Current == null) return;
+            Current.AutomaticGearbox = auto;
+            Current.HShifter = h;
+            Current.ManualClutch = Gearbox == GearboxMode.HShifterClutch;
+            if (!Current.ManualClutch) Current.ClutchPedal = 0f;
+        }
+
+        /// <summary>Taste "Automatik/Manuell": zwischen Automatik und dem zuletzt gewählten Handschaltmodus wechseln.</summary>
+        public void ToggleGearbox()
+        {
+            if (AutomaticGearbox)
+            {
+                if (Gearbox != GearboxMode.Manual) _lastManualGearbox = Gearbox == GearboxMode.Automatic ? GearboxMode.Manual : Gearbox;
+                Gearbox = _lastManualGearbox;
+            }
+            else
+            {
+                _lastManualGearbox = Gearbox;
+                Gearbox = GearboxMode.Automatic;
+            }
+            AutomaticGearbox = Gearbox == GearboxMode.Automatic;
+            ApplyGearboxMode();
+        }
+
         // ------------------------------------------------------------------ Eingaben (Unity DriveInput, Tastatur)
 
         /// <summary>Pedale/Lenkung je Frame (Unity DriveInput): Lenkrad direkt (der Fahrer hält das Rad), Tastatur/Pad geglättet.</summary>
-        public void DriveInput(float accel, float brake, float steer, bool handbrake, float dt, bool analog = false, bool wheel = false)
+        public void DriveInput(float accel, float brake, float steer, bool handbrake, float dt, bool analog = false, bool wheel = false, float clutch = 0f)
         {
             if (Current == null) return;
             if (ExternalControl) { AfterInput?.Invoke(Current); return; }   // Unity ExternalControl: Autopilot steuert (RaceAutopilot)
@@ -813,6 +872,8 @@ namespace Paradise.Core.Vehicles
             Current.BrakePedal = brake;
             Current.Steer = _steerInput;
             Current.HandBrake = handbrake ? 1f : 0f;
+            // Kupplung nur bei H-Schaltung + Kupplung (Unity TDU2VehicleManager.DriveInput)
+            Current.ClutchPedal = Current.ManualClutch ? Mathf.Clamp01(clutch) : 0f;
             AfterInput?.Invoke(Current);   // Unity: LateUpdate der Rennlogik nach der Eingabe (Startsperre im Countdown)
         }
 
@@ -821,9 +882,9 @@ namespace Paradise.Core.Vehicles
         /// <summary>Nach jeder Fahreingabe (Unity: LateUpdate von TDU2RaceManager hält das Auto im Countdown fest).</summary>
         public Action<Vehicle>? AfterInput;
         /// <summary>
-        /// Harter Stoß der Karosserie gegen Wand/Verkehr (Unity RaceCarCollisionProbe.OnCollisionEnter: Kontakt mit nennenswert
-        /// waagrechter Normale, |n.y| &lt;= 0,7; Wert = relative Geschwindigkeit in m/s). Umfallende World Actors melden sich über
-        /// WorldActorBodies.Broken.
+        /// Harter Stoß der Karosserie gegen Wand/Verkehr (Unity RaceCarCollisionProbe.OnCollisionEnter): Normale mit nennenswerter
+        /// waagrechter Komponente, Wert = Betrag der Geschwindigkeit in Kontaktnormalenrichtung (m/s). Umfallende World Actors
+        /// melden sich über WorldActorBodies.Broken.
         /// </summary>
         public event Action<float>? BodyImpact;
         bool _wallContact;
@@ -831,20 +892,26 @@ namespace Paradise.Core.Vehicles
         void CheckBodyImpact(Vector3 velBefore, long stepStartMs)
         {
             if (BodyImpact == null || _rb == null) { _wallContact = false; return; }
-            bool wall = false;
+            // Unity: var n = c.contacts[0].normal; var vn = Mathf.Abs(Vector3.Dot(c.relativeVelocity, n));
+            // if (n.y > 0.75f && vn < 4f) continue;   -> flacher Boden wird nur bei sanfter Berührung ignoriert.
+            // velBefore und die Kontaktnormale liegen beide im Bepu-/Unity-Raum (X gespiegelt), deshalb direkt dotten.
+            bool wall = false; float strength = 0f;
             foreach (var c in PhysicsWorld.RecentContacts)
             {
                 if (c.ms < stepStartMs) continue;
-                if (MathF.Abs(c.normal.Y) > 0.7f) continue;   // Boden ignorieren
+                var n = c.normal;
+                float vn = MathF.Abs(Vector3.Dot(velBefore, n));
+                if (n.Y > 0.75f && vn < 4f) continue;   // wie Unity: Bodentouch ohne nennenswerten Aufprall
                 if (c.other.Mobility == BepuPhysics.Collidables.CollidableMobility.Static)
                 {
                     var sc = _world.StaticOf(c.other);
                     if (sc != null && sc.IgnoreRays) continue;   // World Actors/Props melden selbst (Unity: RacePropHit)
                 }
                 else if (c.other.Mobility == BepuPhysics.Collidables.CollidableMobility.Dynamic && c.other.BodyHandle.Value == _rb.Handle.Value) continue;
-                wall = true; break;
+                wall = true;
+                if (vn > strength) strength = vn;   // Unity meldet die Normalgeschwindigkeit des Kontakts
             }
-            if (wall && !_wallContact) BodyImpact?.Invoke(velBefore.Length());
+            if (wall && !_wallContact) BodyImpact?.Invoke(strength);
             _wallContact = wall;
         }
 

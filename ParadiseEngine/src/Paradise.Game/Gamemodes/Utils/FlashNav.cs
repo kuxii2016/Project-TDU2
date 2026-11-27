@@ -9,42 +9,26 @@ public enum FlashKey { Up, Down, Left, Right, Confirm, Back, X, Y }
 
 /// <summary>
 /// Gemeinsame Menü-Eingabe für alle Original-Filme (Tastatur, Gamepad/Steam Deck – Game/Config/KeyConfig.cs "menu_*" + TDU2Nav).
-/// Wie der Flash Player des Spiels: zuerst die Tasten-Buttons des Films (on(keyPress "&lt;Left&gt;") …, VmfPlayer.SendKey – so arbeiten
-/// z.B. die Auswahlboxen von shopsavatar.vmf: Pfeil -> Move der Box -> FSCommand …:scne/scpr). Reagiert kein Button, wie bisher die
-/// Film-Funktion am obersten Menü (Move("up") / A() / B() / X() / Y(), VmfPlayer.Input).
+/// Wie im Unity-Projekt rufen die Menüs die Film-Funktionen direkt auf: Move("up"/"down"/"left"/"right"), A(), B(), X(), Y()
+/// (VmfPlayer.Input). SendKey würde zuerst SWF-Buttons mit keyPress-Bedingung treffen und dort die Eingabe "verschlucken",
+/// obwohl der Film eigentlich auf seine Menü-Funktion wartet – deshalb hier keine Tastatur-Codes mehr an den Film schicken.
+/// Explizite SendKey-Aufrufe bleiben nur dort, wo sie das Unity-Projekt ebenfalls benutzt (z.B. Avatar-Auswahl).
 /// </summary>
 public static class FlashNav
 {
-    // Flash-Tastencodes der keyPress-Bedingung (SWF ButtonCondAction)
-    const int KeyLeft = 1, KeyRight = 2, KeyEnter = 13, KeyUp = 14, KeyDown = 15, KeyEscape = 19;
-
-    /// <summary>Eine Taste an den Film; true = Button oder Film-Funktion hat reagiert.</summary>
-    public static bool Send(VmfPlayer ui, FlashKey key)
+    /// <summary>Eine Menüaktion an den Film; true = die Film-Funktion hat reagiert.</summary>
+    public static bool Send(VmfPlayer ui, FlashKey key) => key switch
     {
-        int code = key switch
-        {
-            FlashKey.Up => KeyUp,
-            FlashKey.Down => KeyDown,
-            FlashKey.Left => KeyLeft,
-            FlashKey.Right => KeyRight,
-            FlashKey.Confirm => KeyEnter,
-            FlashKey.Back => KeyEscape,
-            _ => 0,
-        };
-        if (code > 0 && ui.SendKey(code)) return true;
-        return key switch
-        {
-            FlashKey.Up => ui.Input("Move", "up"),
-            FlashKey.Down => ui.Input("Move", "down"),
-            FlashKey.Left => ui.Input("Move", "left"),
-            FlashKey.Right => ui.Input("Move", "right"),
-            FlashKey.Confirm => ui.Input("A"),
-            FlashKey.Back => ui.Input("B"),
-            FlashKey.X => ui.Input("X"),
-            FlashKey.Y => ui.Input("Y"),
-            _ => false,
-        };
-    }
+        FlashKey.Up => ui.Input("Move", "up"),
+        FlashKey.Down => ui.Input("Move", "down"),
+        FlashKey.Left => ui.Input("Move", "left"),
+        FlashKey.Right => ui.Input("Move", "right"),
+        FlashKey.Confirm => ui.Input("A"),
+        FlashKey.Back => ui.Input("B"),
+        FlashKey.X => ui.Input("X"),
+        FlashKey.Y => ui.Input("Y"),
+        _ => false,
+    };
 
     public static bool Pressed(FlashKey key) => key switch
     {

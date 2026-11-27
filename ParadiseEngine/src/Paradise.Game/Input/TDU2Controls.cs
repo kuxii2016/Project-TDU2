@@ -201,8 +201,29 @@ public static class TDU2Controls
         return (IsJoystickKey(a.Key1) && JoyDown(a.Key1)) || (IsJoystickKey(a.Key2) && JoyDown(a.Key2));
     }
 
-    /// <summary>Bestätigen in Menüs/Filmen/Spots (belegbar, Standard Enter).</summary>
-    public static bool ConfirmPressed() => !Blocked && Pressed("validate");
+    /// <summary>
+    /// Bestätigen in Menüs/Filmen/Spots wie Unity TDU2Controls.ConfirmPressed(): belegbare Taste ("validate", Standard Enter),
+    /// Ziffernblock-Enter und Gamepad A. Win32 meldet das Ziffernblock-Enter als VK_RETURN (0x0D); Geräte mit Profil
+    /// melden A über MENU_VALIDATE, Geräte ohne Profil über den direkten Knopf 0.
+    /// </summary>
+    public static bool ConfirmPressed() => !Blocked && (Pressed("validate") || RawConfirmPressed());
+
+    /// <summary>
+    /// Bestätigung unabhängig von <see cref="Blocked"/> – Unitys Pausemenü fragt beim Tippen direkt
+    /// Return/KeypadEnter/JoystickButton0 ab, während die normale Belegung durch die Texteingabe gesperrt ist.
+    /// </summary>
+    public static bool RawConfirmPressed()
+    {
+        if (RawKeyPressed(KeyConfig.Return)) return true;   // Haupt- und Ziffernblock-Enter (WM_KEYDOWN: beide VK_RETURN)
+        // Gamepad A unabhängig vom aktiven Geräteprofil – sonst bestätigt bei angeschlossenem Lenkrad
+        // kein Pad-Knopf mehr (Unity KeyCode.JoystickButton0).
+        for (int j = 1; j <= Joysticks.MaxJoysticks; j++)
+            if (Joysticks.IsGamepad(j) && Joysticks.ButtonDown(j, 0)) return true;
+        if (!TDU2InputDevices.HasDevice || TDU2InputDevices.IsWheel) return false;
+        for (int j = 1; j <= Joysticks.MaxJoysticks; j++)
+            if (!Joysticks.IsGamepad(j) && Joysticks.ButtonDown(j, 0)) return true;
+        return false;
+    }
 
     /// <summary>Zurück in Menüs (belegbar, Standard Rücktaste). ESC bleibt das Pausemenü.</summary>
     public static bool BackPressed() => !Blocked && Pressed("back");

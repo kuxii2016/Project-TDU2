@@ -120,6 +120,11 @@ public sealed class GameLoop : IDisposable
             // Variable Update
             using (s_mUpdate.Auto())
             {
+                // Eingaben zuerst übernehmen: Flash-Menüs und alle Module lesen im selben Bild denselben
+                // Tastatur-/Gamepad-/Lenkradzustand (vorher setzte ein Modul Joysticks.Frame mitten im Frame).
+                for (int i = 0; i < _modules.Count; i++)
+                    _modules[i].EarlyUpdate(in time);
+
                 using (s_mFlashUpdate.Auto())
                     Flash.FlashHost.Update(_window.Width, _window.Height);
 

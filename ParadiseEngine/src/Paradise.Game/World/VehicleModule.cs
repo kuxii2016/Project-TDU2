@@ -54,6 +54,7 @@ public sealed class VehicleModule : GameModule
         Paradise.Game.Racing.RaceOpponents.Renderer = _renderer;   // Gegner im Rennen (Racing/RaceOpponents)
         Paradise.Game.Racing.RaceOpponents.World = _terrain.Physics;
         _overlay?.AddSection("Vehicle, keys F2 enter or exit, F3 F4 car, F8 color, F9 reset", () => _vm.DebugLines());
+        _overlay?.AddSection("Controller / Wheel / Force Feedback", () => new[] { TDU2ForceFeedback.DebugLines() });
     }
 
 
@@ -67,8 +68,8 @@ public sealed class VehicleModule : GameModule
     static readonly ProfilerMarker s_mTrafficRender = new("Traffic.Render", ProfilerCategory.Rendering);
     static readonly ProfilerMarker s_mRemoteRender = new("RemoteCars / Opponents Render", ProfilerCategory.Rendering);
     static readonly ProfilerMarker s_mDebugLines = new("DebugLines.Flush", ProfilerCategory.Rendering);
-    static readonly ProfilerMarker s_mControls = new("TDU2Controls.Update", ProfilerCategory.Scripts);
     static readonly ProfilerMarker s_mDriveInput = new("VehicleManager.DriveInput", ProfilerCategory.Scripts);
+    static readonly ProfilerMarker s_mFfb = new("ForceFeedback / Vibration", ProfilerCategory.Scripts);
     static readonly ProfilerMarker s_mLateUpdate = new("VehicleManager.LateUpdate (wheels/camera/HUD)", ProfilerCategory.Scripts);
     static readonly ProfilerMarker s_mLamps = new("CollectLamps (car/traffic/remote)", ProfilerCategory.Rendering);
 
@@ -88,30 +89,69 @@ public sealed class VehicleModule : GameModule
     public override void Update(in GameTime time)
     {
         DebugLines.Clear();
-        if (_vm == null) return;
+        var cam = _terrain.Camera;
+        var s = _terrain.Streamer;
+        if (_vm == null)
+        {
+            // Noch keine Physikwelt: die FlyCamera übernimmt, bis das Fahrzeugmodul aufgebaut ist.
+            _terrain.FlyCameraEnabled = true;
+            return;
+        }
+        // Unity TDU2VehicleManager.Update(): EnsureDatabase() jedes Bild – GameData.BnkDir kann beim ersten
+        // Laden noch leer sein; ohne Retry bleiben Auto, Kamera und Eingaben dauerhaft tot.
+        _vm.EnsureDatabase(GameData.BnkDir);
         using (s_mVmUpdate.Auto())
             _vm.Update();
+        bool active = !Suspended && !Frozen;
+        using (s_mFfb.Auto())
+            TDU2ForceFeedback.Update(_vm, active, time.DeltaTime);
 
-        bool trafficSpawn = !Suspended && !Frozen && Paradise.Game.Screens.GameMode.Current == Paradise.Game.Screens.Gamemode.GAME_MODE_FREERIDE
+        bool trafficSpawn = active && Paradise.Game.Screens.GameMode.Current == Paradise.Game.Screens.Gamemode.GAME_MODE_FREERIDE
                             && !Paradise.Game.Gamemodes.InteriorUtils.Inside && !_terrain.MapView;
         if (!Frozen)
             using (s_mTraffic.Auto())
                 _traffic?.Update(time.DeltaTime, trafficSpawn);
         if (_traffic != null) _traffic.Alpha = time.FixedAlpha;
         if (!_terrain.MapView) _traffic?.DrawDebug();
-        using (s_mControls.Auto())
-            TDU2Controls.Update(_window.Input, time.FrameCount);
-        if (Suspended || Frozen)
+
+        if (s != null)
         {
-            _terrain.FlyCameraEnabled = false;
-            _vm?.UpdateGps(time.DeltaTime); 
+            s.ExtraLamps.Clear();
+            s.HeadlightProjectors.Clear();
+            s.PlayerPostFxProjectors.Clear();
+        }
+
+        // Unity: TDU2VehicleCamera ist eine eigene MonoBehaviour und läuft auch im Pausemenü/auf der Karte weiter.
+        // Nur ohne Ziel oder im Freiflug übernimmt die FlyCamera – nicht mehr bei Suspended/Frozen.
+        var v = _vm.Current;
+        bool vehicleCam = v != null && !_terrain.FreeFly;
+        _terrain.FlyCameraEnabled = !vehicleCam;
+        if (!vehicleCam)
+        {
+            if (_terrain.FreeFly && v != null)
+            {
+                // Freiflug: Auto bremst, Kamera gehört der FlyCamera (Verhalten wie zuvor).
+                _vm.DriveInput(0f, 0f, 0f, true, time.DeltaTime, false, false);
+                using (s_mLateUpdate.Auto())
+                    _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+                if (s != null)
+                {
+                    var camR = cam != null ? cam.Position : System.Numerics.Vector3.Zero;
+                    _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
+                    _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, camR);
+                    _vm.CollectProjectors(s.PlayerPostFxProjectors, s.RootMatrix, camR, 1f);
+                    _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
+                    Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
+                }
+            }
+            _vm.UpdateGps(time.DeltaTime);
             return;
         }
-        bool f2 = TDU2Controls.Pressed("dev_car"), f3 = TDU2Controls.Pressed("dev_carnext"), f4 = TDU2Controls.Pressed("dev_carprev"),
-             f8 = TDU2Controls.Pressed("dev_color"), f9 = TDU2Controls.Pressed("dev_reload");
-        var cam = _terrain.Camera; var s = _terrain.Streamer;
-        if (_vm.Ready && cam != null && s != null)
+
+        if (active && _vm.Ready && cam != null && s != null)
         {
+            bool f2 = TDU2Controls.Pressed("dev_car"), f3 = TDU2Controls.Pressed("dev_carnext"), f4 = TDU2Controls.Pressed("dev_carprev"),
+                 f8 = TDU2Controls.Pressed("dev_color"), f9 = TDU2Controls.Pressed("dev_reload");
             #if DEBUG
             if (f2)
             {
@@ -125,66 +165,64 @@ public sealed class VehicleModule : GameModule
             #endif
         }
 
-        var v = _vm.Current;
-        _terrain.FlyCameraEnabled = v == null || _terrain.FreeFly;
-        s?.ExtraLamps.Clear();
-        s?.HeadlightProjectors.Clear();
-        s?.PlayerPostFxProjectors.Clear();
-        if (v == null) return;
-        if (_terrain.FreeFly)
-        {
-            _vm.DriveInput(0f, 0f, 0f, true, time.DeltaTime, false, false);
-            _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
-            if (s != null)
-            {
-                _vm.CollectLamps(s.ExtraLamps, s.RootMatrix);
-                var camR = cam != null ? cam.Position : System.Numerics.Vector3.Zero;
-                _vm.CollectProjectors(s.HeadlightProjectors, s.RootMatrix, camR);
-                _vm.CollectProjectors(s.PlayerPostFxProjectors, s.RootMatrix, camR, 1f);
-                _traffic?.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
-                Paradise.Game.Online.RemoteCars.CollectProjectors(_vm, s.HeadlightProjectors, s.RootMatrix, camR);
-            }
-            return;
-        }
-
-        float accel = TDU2Controls.Held("accel") ? 1f : 0f;
-        float brake = TDU2Controls.Held("brake") ? 1f : 0f;
-        float steer = 0f;
-        if (TDU2Controls.Held("left")) steer -= 1f;
-        if (TDU2Controls.Held("right")) steer += 1f;
-
-        bool analog = false; float devSteer = 0f;
-        if (!TDU2Controls.Blocked && TDU2InputDevices.HasDevice)
-        {
-            devSteer = TDU2InputDevices.Steer;
-            float t = TDU2InputDevices.Throttle, b = TDU2InputDevices.Brake;
-            if (MathF.Abs(steer) < 0.01f && MathF.Abs(devSteer) > 0.001f) { steer = devSteer; analog = true; }
-            if (accel < 0.01f && t > 0f) accel = t;
-            if (brake < 0.01f && b > 0f) brake = b;
-        }
-        using (s_mDriveInput.Auto())
-            _vm.DriveInput(accel, brake, steer, TDU2Controls.Held("handbrake"), time.DeltaTime, analog, analog && TDU2InputDevices.IsWheel);
-
-        if (TDU2Controls.Pressed("camera")) _vm.Camera.NextMode();
-        _vm.Camera.LookBack = TDU2Controls.Held("lookback");
-        if (TDU2Controls.Pressed("aids")) { _vm.Aids = (DrivingAids)(((int)_vm.Aids + 1) % 4); v.Aids = _vm.Aids; }
-        if (TDU2Controls.Pressed("gearbox")) { _vm.AutomaticGearbox = !_vm.AutomaticGearbox; v.AutomaticGearbox = _vm.AutomaticGearbox; }
-        if (TDU2Controls.Pressed("gearup")) v.ShiftUp();
-        if (TDU2Controls.Pressed("geardown")) v.ShiftDown();
-        if (TDU2Controls.Pressed("reset")) _vm.ResetUpright();
-        _vm.Audio?.SetHorn(TDU2Controls.Held("horn"));
         var lights = _vm.Lights;
-        if (lights != null)
+        if (active)
         {
-            if (TDU2Controls.Pressed("lights")) lights.Headlights = (lights.Headlights + 1) % 3;
-            if (TDU2Controls.Pressed("blinkl")) { lights.IndicatorLeft = !lights.IndicatorLeft; lights.IndicatorRight = false; }
-            if (TDU2Controls.Pressed("blinkr")) { lights.IndicatorRight = !lights.IndicatorRight; lights.IndicatorLeft = false; }
-            if (TDU2Controls.Pressed("hazard")) lights.Hazard = !lights.Hazard;
-            lights.Flash = TDU2Controls.Held("flash");
-        }
+            _vm.ApplyGearboxMode();   // Modus/Getriebe-Flags auch nach Änderungen außerhalb des Optionsmenüs synchronisieren
 
-        using (s_mLateUpdate.Auto())
-            _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+            float accel = TDU2Controls.Held("accel") ? 1f : 0f;
+            float brake = TDU2Controls.Held("brake") ? 1f : 0f;
+            float steer = 0f;
+            if (TDU2Controls.Held("left")) steer -= 1f;
+            if (TDU2Controls.Held("right")) steer += 1f;
+
+            bool analog = false;
+            if (!TDU2Controls.Blocked && TDU2InputDevices.HasDevice)
+            {
+                float devSteer = TDU2InputDevices.Steer;
+                float t = TDU2InputDevices.Throttle, b = TDU2InputDevices.Brake;
+                if (MathF.Abs(steer) < 0.01f && MathF.Abs(devSteer) > 0.001f) { steer = devSteer; analog = true; }
+                if (accel < 0.01f && t > 0f) accel = t;
+                if (brake < 0.01f && b > 0f) brake = b;
+            }
+            // Kupplung: Pedal des Lenkrads und/"oder" die Taste (Unity DriveInput: Max aus beidem)
+            float clutch = TDU2InputDevices.Clutch;
+            if (TDU2Controls.Held("clutch")) clutch = 1f;
+            using (s_mDriveInput.Auto())
+                _vm.DriveInput(accel, brake, steer, TDU2Controls.Held("handbrake"), time.DeltaTime, analog, analog && TDU2InputDevices.IsWheel, clutch);
+
+            if (TDU2Controls.Pressed("camera")) _vm.Camera.NextMode();
+            _vm.Camera.LookBack = TDU2Controls.Held("lookback");
+            if (TDU2Controls.Pressed("aids")) { _vm.Aids = (DrivingAids)(((int)_vm.Aids + 1) % 4); v.Aids = _vm.Aids; }
+            if (TDU2Controls.Pressed("gearbox")) _vm.ToggleGearbox();
+            if (_vm.Gearbox == VehicleManager.GearboxMode.HShifter || _vm.Gearbox == VehicleManager.GearboxMode.HShifterClutch)
+                UpdateHShifter(v);
+            else
+            {
+                if (TDU2Controls.Pressed("gearup")) v.ShiftUp();
+                if (TDU2Controls.Pressed("geardown")) v.ShiftDown();
+            }
+            if (TDU2Controls.Pressed("reset")) _vm.ResetUpright();
+            _vm.Audio?.SetHorn(TDU2Controls.Held("horn"));
+            if (lights != null)
+            {
+                if (TDU2Controls.Pressed("lights")) lights.Headlights = (lights.Headlights + 1) % 3;
+                if (TDU2Controls.Pressed("blinkl")) { lights.IndicatorLeft = !lights.IndicatorLeft; lights.IndicatorRight = false; }
+                if (TDU2Controls.Pressed("blinkr")) { lights.IndicatorRight = !lights.IndicatorRight; lights.IndicatorLeft = false; }
+                if (TDU2Controls.Pressed("hazard")) lights.Hazard = !lights.Hazard;
+                lights.Flash = TDU2Controls.Held("flash");
+            }
+
+            using (s_mLateUpdate.Auto())
+                _vm.LateUpdate(time.DeltaTime, (float)time.TotalTime, _window.Input, time.FixedAlpha);
+        }
+        else
+        {
+            // Pause/Karte: keine Fahreingaben, aber die Kamera bleibt wie in Unity beweglich (rechter Stick/Maus).
+            using (s_mLateUpdate.Auto())
+                _vm.UpdateCameraOnly(time.DeltaTime, (float)time.TotalTime, _window.Input);
+            _vm.UpdateGps(time.DeltaTime);
+        }
 
         // TD_DashBoard/HEADLIGHTSINTENSITY folgt dem Lichtschalter, nicht nur dem Wetter.
         // Ein: mindestens 1 (Nachthelligkeit des Wetters bleibt erhalten), aus: 0.
@@ -214,6 +252,31 @@ public sealed class VehicleModule : GameModule
         }
     }
 
+    // H-Schaltung: per Taste gewählter Gang bleibt eingelegt; eine echte Schaltung (TDU2InputDevices.HGear) hat Vorrang.
+    static int _hGearKey = int.MinValue;
+
+    /// <summary>Unity TDU2VehicleManager.UpdateHShifter – Gänge 1..7/−1, ohne Kupplung fliegt der Gang heraus.</summary>
+    static void UpdateHShifter(Vehicle v)
+    {
+        for (int g = 1; g <= 7; g++)
+            if (!TDU2Controls.IsJoystickBound("gear" + g) && TDU2Controls.Pressed("gear" + g)) _hGearKey = g;
+        if (!TDU2Controls.IsJoystickBound("gearR") && TDU2Controls.Pressed("gearR")) _hGearKey = -1;
+        if (TDU2Controls.Pressed("gearup")) _hGearKey = System.Math.Min((_hGearKey == int.MinValue ? v.Gear : _hGearKey) + 1, v.GearCount);
+        if (TDU2Controls.Pressed("geardown")) _hGearKey = System.Math.Max((_hGearKey == int.MinValue ? v.Gear : _hGearKey) - 1, -1);
+
+        int dev = TDU2InputDevices.HGear;   // int.MinValue = keine Schaltung, 0 = Leerlauf
+        if (dev != int.MinValue && dev != 0) _hGearKey = int.MinValue;
+        int want = dev != int.MinValue && (dev != 0 || _hGearKey == int.MinValue) ? dev : (_hGearKey == int.MinValue ? v.Gear : _hGearKey);
+        want = System.Math.Clamp(want, -1, System.Math.Max(1, v.GearCount));
+        if (want == v.Gear || v.Shifting) return;
+        if (v.ManualClutch && v.ClutchPedal < 0.5f)
+        {
+            if (v.Gear != 0) v.Shift(0, 0f);   // ohne Kupplung: Gang springt heraus
+            return;
+        }
+        v.Shift(want, 0.05f);
+    }
+
     public override void Render(in GameTime time)
     {
         var s = _terrain.Streamer;
@@ -239,6 +302,7 @@ public sealed class VehicleModule : GameModule
 
     public override void Unload()
     {
+        TDU2ForceFeedback.Shutdown();
         _traffic?.Dispose();
         _traffic = null;
         _vm?.Dispose();

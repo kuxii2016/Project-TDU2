@@ -64,6 +64,14 @@
     </None>
   </ItemGroup>
 
+  <!-- Logitech Steering Wheel SDK (wie im Unity-Projekt): Schaltblitz-LEDs und Logitech-spezifische Effekte.
+       Fehlt G HUB / die SDK-DLL, fängt TDU2ForceFeedback den Fehler ab und nutzt DirectInput-FFB. -->
+  <ItemGroup Condition="Exists('..\..\..\Client\Assets\Plugins\LogitechSDK\LogitechSteeringWheelEnginesWrapper.dll')">
+    <None Include="..\..\..\Client\Assets\Plugins\LogitechSDK\LogitechSteeringWheelEnginesWrapper.dll" Link="LogitechSteeringWheelEnginesWrapper.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- game.ico (liegt im ParadiseEngine-Hauptordner) als Fallback neben die exe. -->
   <ItemGroup Condition="Exists('..\..\game.ico')">
     <None Include="..\..\game.ico" Link="game.ico">

@@ -169,6 +169,14 @@ public static class FlashInput
         if (!down && _down[b]) _nextReleased[b] = true;
         _down[b] = down;
     }
+
+    /// <summary>Fokusverlust (Browser, anderes Fenster): hängende Mausereignisse verwerfen.</summary>
+    public static void ResetMouseButtons()
+    {
+        for (int i = 0; i < 3; i++)
+            _down[i] = _pressed[i] = _released[i] = _nextPressed[i] = _nextReleased[i] = false;
+    }
+
     public static void OnChar(char c) { lock (_nextText) _nextText.Append(c); }
 
     /// <summary>At the start of the frame: apply the collected events for this frame.</summary>

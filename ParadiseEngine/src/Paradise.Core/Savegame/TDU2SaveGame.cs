@@ -312,6 +312,7 @@ namespace Paradise.Core.Savegame
                 SetVar(env, "U3D_StoryAvatar", s.storyAvatar ?? "");
                 SetVar(env, "U3D_StoryGave", s.storyGaveCar ? "1" : "0");
                 SetVar(env, "U3D_NewsSeen", s.newsSeen.ToString(ic) + "," + s.updatesSeen.ToString(ic));
+                SetVar(env, "U3D_ReleasesSeen", s.releasesSeen ?? "");   // TDU Media Updates/Packs: gelesene GitHub-Releases
                 SetVar(env, "U3D_RaceCin", Join(s.raceCinSeen, x => new[] { x }));
                 SetVar(env, "U3D_Racing", Join(s.racing, e => new[] { e.k, e.v }));
                 SetVar(env, "U3D_Wrecks", Join(s.foundWrecks, e => new[] { e.island, string.Join(",", e.indices) }));
@@ -714,6 +715,7 @@ namespace Paradise.Core.Savegame
                 if (p.Length > 0 && int.TryParse(p[0], NumberStyles.Integer, ic, out int ns)) s.newsSeen = ns;
                 if (p.Length > 1 && int.TryParse(p[1], NumberStyles.Integer, ic, out int us)) s.updatesSeen = us;
             }
+            if (vars.TryGetValue("U3D_ReleasesSeen", out string vrs)) s.releasesSeen = vrs;
             if (vars.TryGetValue("U3D_RaceCin", out string vrc)) foreach (var f in Split(vrc)) if (f.Length > 0 && f[0].Length > 0) s.raceCinSeen.Add(f[0]);
             if (vars.TryGetValue("U3D_Racing", out string vrr)) foreach (var f in Split(vrr)) if (f.Length > 1) s.racing.Add(new HouseEntry { k = f[0], v = f[1] });
             // Wracks: 0-basierte XMB-Indizes je Insel (das Original speichert FoundWrecks[island] als uint-Vektor)
