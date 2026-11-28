@@ -6,7 +6,7 @@ namespace Paradise.Game.Gamemodes;
 /// <summary>
 /// Pausemenü (ESC, main.bnk) – Unity TDU2PauseMenu als eigener Spielmodus. Der pausierte Modus bleibt im Hintergrund stehen
 /// (Fahrzeug eingefroren, seine Oberflächen wie das HUD sichtbar); beim Schließen geht es dorthin zurück.
-/// Öffnen/Schließen über <see cref="IGameModeContext.Paused"/> (ESC in <see cref="GameModeHandler.HandlePauseKey"/>).
+/// Öffnen/Schließen über <see cref="IGameModeContext.Paused"/> (ESC global in ScreenModule Update, wie Unity TDU2PauseMenu).
 /// Die Logik des Menüs (Optionen, Steuerung, Spielerlisten, Beenden) liegt in Screens/PauseMenu.
 /// </summary>
 public class GAME_MODE_PAUSE : GameModeHandler

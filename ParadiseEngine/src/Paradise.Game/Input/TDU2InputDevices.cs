@@ -411,13 +411,19 @@ public static class TDU2InputDevices
         }
     }
 
-    /// <summary>Laufen (Avatar) mit dem Gerät: x = rechts, y = vorwärts (Profil AVT_MOVE_*, sonst linker Stick).</summary>
+    /// <summary>Laufen (Avatar) mit dem Gerät: x = rechts, y = vorwärts (nur echte AVT_MOVE_*-Achsen).</summary>
     public static System.Numerics.Vector2 Move
     {
         get
         {
             Poll();
             if (!Use) return System.Numerics.Vector2.Zero;
+            // Alle Lenkradprofile binden AVT_MOVE_* auf Tastatur (DevType 0) – LoadProfile verwirft diese Einträge.
+            // Der alte Fallback griff dann auf STICK_0_* zurück: beim T500 RS ist STICK_0_UP die Bremse, das Rad
+            // steht am Anschlag -> der Avatar lief ohne Eingabe los. Mit Lenkrad gilt nur die walkmode-Tastatur (WASD).
+            if (IsWheel && !_map.ContainsKey("AVT_MOVE_FORWARD") && !_map.ContainsKey("AVT_MOVE_BACKWARD") &&
+                !_map.ContainsKey("AVT_MOVE_LEFT") && !_map.ContainsKey("AVT_MOVE_RIGHT"))
+                return System.Numerics.Vector2.Zero;
             float A(string act, string fallback)
             {
                 if (_map.TryGetValue(act, out var c)) return Amount(c);
@@ -425,7 +431,7 @@ public static class TDU2InputDevices
             }
             var v = new System.Numerics.Vector2(A("AVT_MOVE_RIGHT", "STICK_0_RIGHT") - A("AVT_MOVE_LEFT", "STICK_0_LEFT"),
                                                 A("AVT_MOVE_FORWARD", "STICK_0_UP") - A("AVT_MOVE_BACKWARD", "STICK_0_DOWN"));
-            float dz = MathF.Max(0.15f, DeadZone);
+            float dz = MathF.Max(0.20f, DeadZone);   // Stick-Drift soll den Avatar nicht losschicken
             return v.Length() < dz ? System.Numerics.Vector2.Zero : v;
         }
     }

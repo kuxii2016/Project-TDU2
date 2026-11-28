@@ -131,6 +131,7 @@ public sealed class PauseMenu
     public static PauseMenu? MenuInstance { get; private set; }
     public Options? Settings => _options;
     bool _open, _pendingDialog;
+    long _openFrame = -10;
     float _clock, _escAt = -1f;
     int _clockShown = -1, _clockDay = -1;
     public bool IsOpen => _open;
@@ -703,6 +704,7 @@ public sealed class PauseMenu
         var ui = _ui;
         if (ui == null || _open) return;
         _open = true;
+        _openFrame = Paradise.Core.Platform.Joysticks.Frame;   // ESC, mit dem das Menü geöffnet wurde, nicht sofort als Zurück werten
         _clockShown = -1; _clockDay = -1;
         _raceMode = FindRace(out _raceRestart, out _raceQuit);
         ui.SetValue("/:WhatGameMode", _raceMode ? 2 : 1);   // 1 Freie Fahrt, 2 Rennen (Fortsetzen/Neu starten/…/Beenden)
@@ -799,7 +801,8 @@ public sealed class PauseMenu
         // Texteingabe: wie Unity Return/KeypadEnter/JoystickButton0 (Buchstaben gehören dem Textfeld),
         // sonst die belegbare Bestätigungstaste inkl. Pad A (Unity TDU2PauseMenu.cs).
         if (typing ? TDU2Controls.RawConfirmPressed() : TDU2Controls.ConfirmPressed()) FlashNav.Send(ui, FlashKey.Confirm);
-        bool esc = _ctx.Pressed(VK_ESCAPE);
+        // Wie Unity: die Taste, die das Menü geöffnet hat, gehört nicht zur nächsten Zurück-Aktion.
+        bool esc = Paradise.Core.Platform.Joysticks.Frame > _openFrame && _ctx.Pressed(VK_ESCAPE);
         bool back = !typing && TDU2Controls.BackPressed();
         if (esc || back)
         {

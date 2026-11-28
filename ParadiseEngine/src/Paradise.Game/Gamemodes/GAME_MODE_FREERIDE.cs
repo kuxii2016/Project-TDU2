@@ -24,7 +24,7 @@ namespace Paradise.Game.Gamemodes
 
         public override void Run(IGameModeContext ctx, in GameTime time)
         {
-            if (!Story.BlocksPauseMenu) HandlePauseKey(ctx);   // Unity TDU2PauseMenu: gesperrt während Kino/Laufmodus der Geschichte
+            // Unity TDU2PauseMenu prüft die Menütaste global in ScreenModule (vor jedem Modus).
             if (ctx.Paused) return;
             var veh = ctx.Vehicles; var vm = veh?.Manager;
             // Minimap ein/aus (Unity TDU2VehicleManager.HandleKeys "minimap")

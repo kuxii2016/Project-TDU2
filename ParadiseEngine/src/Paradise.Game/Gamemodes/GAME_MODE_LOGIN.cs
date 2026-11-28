@@ -8,6 +8,7 @@ using Paradise.Core.Savegame;
 using Paradise.Core.Vehicles;
 using Paradise.Core.World;
 using Paradise.Game.Config;
+using Paradise.Game.Input;
 using Paradise.Game.Online;
 using Paradise.Game.Screens;
 using System.Globalization;
@@ -111,8 +112,10 @@ public class GAME_MODE_LOGIN : GameModeHandler
                 else if (Ready) OpenProfiles();
                 break;
             case St.PressStart:
-                if (ctx.Pressed(VK_R)) TitleScene.Next();   // OpenTDU2: nächstes Kino
-                if (Ready && (ctx.Pressed(VK_RETURN) | ctx.Pressed(VK_SPACE) | FlashInput.GetMouseButtonDown(0)))
+                if (TDU2Controls.RawKeyPressed(VK_R)) TitleScene.Next();   // OpenTDU2: nächstes Kino
+                // Unity TDU2Login: ConfirmPressed + direktes GetKeyDown(Space)/GetMouseButtonDown, nicht durch
+                // TDU2Controls.Blocked/ChatTyping filtern (das Popup hat beim Tippen selbst die Tastatur).
+                if (Ready && (TDU2Controls.ConfirmPressed() | TDU2Controls.RawKeyPressed(VK_SPACE) | FlashInput.GetMouseButtonDown(0)))
                 {
                     _intro!.GotoLabel("/", "next", true);
                     _st = St.PressStartOut; _t = _clock;
@@ -324,13 +327,16 @@ public class GAME_MODE_LOGIN : GameModeHandler
     {
         var ui = _ui!;
         if (_openNewNext) { _openNewNext = false; OpenNewProfile(false, "", HasServer && _cfg.NewProfileOnlineWithServer); return; }
-        if (_ctx.Pressed(VK_UP) | _ctx.Pressed(VK_W)) MoveProfile(-1);
-        if (_ctx.Pressed(VK_DOWN) | _ctx.Pressed(VK_S)) MoveProfile(1);
-        if (_ctx.Pressed(VK_RETURN)) ui.Input("A");
-        if (_ctx.Pressed(VK_X) | _ctx.Pressed(VK_INSERT) | _ctx.Pressed(VK_N)) ui.Input("X");
-        if (_ctx.Pressed(VK_Y)) ui.Input("Y");   // Original: Y = Neues Spiel (FSCommand ngam) für das gewählte Profil
-        if (_ctx.Pressed(VK_ESCAPE) | _ctx.Pressed(VK_BACK)) ui.Input("B");
-        if (_ctx.Pressed(VK_DELETE)) RemoveProfile(CurLine() - 1);
+        // Exakt wie Unity TDU2Login.UpdateProfiles: TDU2Nav (Pfeile/Pad) oder rohe GetKeyDown-Tasten.
+        // Früher lief das über _ctx.Pressed -> TDU2Controls.KeyPressed und blieb bei gesperrter Eingabe
+        // (DevMenü/Chat/Textfeld) komplett tot. Bestätigung bleibt TDU2Controls.ConfirmPressed (wie im Original).
+        if (TDU2Nav.Up() | TDU2Controls.RawKeyPressed(VK_W)) MoveProfile(-1);
+        if (TDU2Nav.Down() | TDU2Controls.RawKeyPressed(VK_S)) MoveProfile(1);
+        if (TDU2Controls.ConfirmPressed()) ui.Input("A");
+        if (TDU2Nav.X() | TDU2Controls.RawKeyPressed(VK_INSERT) | TDU2Controls.RawKeyPressed(VK_N)) ui.Input("X");
+        if (TDU2Nav.Y()) ui.Input("Y");   // Original: Y = Neues Spiel (FSCommand ngam) für das gewählte Profil
+        if (TDU2Nav.Back()) ui.Input("B");
+        if (TDU2Controls.RawKeyPressed(VK_DELETE)) RemoveProfile(CurLine() - 1);
     }
 
     void MoveProfile(int delta)
@@ -522,13 +528,15 @@ public class GAME_MODE_LOGIN : GameModeHandler
 
     void UpdateNewProfile()
     {
-        if (_ctx.Pressed(VK_ESCAPE)) { CancelNewProfile(); return; }
-        if (_ctx.Pressed(VK_INSERT) && !_editPassOnly) { TogglePopupOnline(); return; }
+        // Wie Unity TDU2Login.UpdateNewProfile: das Popup tippt selbst – Escape/Tab/Return/Pfeile sind Roh-Tasten,
+        // TDU2Controls.Blocked darf sie nicht verschlucken (sonst ist das Profilmenü "tot").
+        if (TDU2Controls.RawKeyPressed(VK_ESCAPE)) { CancelNewProfile(); return; }
+        if (TDU2Controls.RawKeyPressed(VK_INSERT) && !_editPassOnly) { TogglePopupOnline(); return; }
         if (SyncPopupMode()) RenderFields();
         if (_fields.Count == 0) return;
-        if (_ctx.Pressed(VK_TAB) | _ctx.Pressed(VK_DOWN)) _focus = (_focus + 1) % _fields.Count;
-        if (_ctx.Pressed(VK_UP)) _focus = (_focus + _fields.Count - 1) % _fields.Count;
-        if (_ctx.Pressed(VK_RETURN))
+        if (TDU2Controls.RawKeyPressed(VK_TAB) | TDU2Nav.Down()) _focus = (_focus + 1) % _fields.Count;
+        if (TDU2Nav.Up()) _focus = (_focus + _fields.Count - 1) % _fields.Count;
+        if (TDU2Controls.RawKeyPressed(VK_RETURN))
         {
             if (_focus < _fields.Count - 1 && string.IsNullOrEmpty(Value(_fields[_focus + 1]))) _focus++;   // erst alle Felder ausfüllen
             else { SubmitNewProfile(); return; }

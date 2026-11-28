@@ -1,4 +1,5 @@
 using Paradise.Core.Diagnostics;
+using Paradise.Game.Screens;
 
 namespace Paradise.Game.Gamemodes;
 
@@ -13,6 +14,14 @@ public abstract partial class InteriorUtils
     internal enum MenuLayer { None, Media, GarageList, DealerCar, DealerWindow, Dealer, LifePhoto, LifeText, MyLife, Diary, HouseEditor, House }
     /// <summary>Menü offen: ESC/Rücktaste gehören dem Film (GAME_MODE_LIVING.Run).</summary>
     internal static bool MenuOpen => _dealerMenu || GAME_MODE_LIVING.HomeMenuOpen || GAME_MODE_GARAGE.GarageListOpen;
+
+    /// <summary>
+    /// Unity TDU2Interiors.EscOwned: ESC gehört gerade einem Interieur-Menü (oder einem der Läden),
+    /// dann darf TDU2PauseMenu es nicht öffnen.
+    /// </summary>
+    internal static bool EscOwned => MenuOpen || TopMenuLayer() != MenuLayer.None ||
+        GameMode.Current is Gamemode.GAME_MODE_STICKERS or Gamemode.GAME_MODE_GOODIES or
+                            Gamemode.GAME_MODE_DRESSING or Gamemode.GAME_MODE_HAIRDRESSER;
 
     internal static MenuLayer TopMenuLayer()
     {

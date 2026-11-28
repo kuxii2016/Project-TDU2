@@ -172,13 +172,14 @@ public class GAME_MODE_LIVING : InteriorUtils
         DiaryWatchdog();
         if (_time - _diaryOpenedAt < 0.2f) return;   // Taste, mit der geöffnet wurde
         if (UpdateMyLife()) return;   // MyTDULife: Texteingabe hat die Tastatur
-        if (TDU2Controls.Pressed("menu_up")) _ui.Input("Move", "up");
-        if (TDU2Controls.Pressed("menu_down")) _ui.Input("Move", "down");
-        if (TDU2Controls.Pressed("menu_left")) _ui.Input("Move", "left");
-        if (TDU2Controls.Pressed("menu_right")) _ui.Input("Move", "right");
+        // Wie Unity TDU2Interiors.UpdateDiary: TDU2Nav + rohe WASD, nicht die geblockte Aktionsabfrage.
+        if (TDU2Nav.Up() || TDU2Controls.RawKeyPressed(0x57)) _ui.Input("Move", "up");
+        if (TDU2Nav.Down() || TDU2Controls.RawKeyPressed(0x53)) _ui.Input("Move", "down");
+        if (TDU2Nav.Left() || TDU2Controls.RawKeyPressed(0x41)) _ui.Input("Move", "left");
+        if (TDU2Nav.Right() || TDU2Controls.RawKeyPressed(0x44)) _ui.Input("Move", "right");
         if (TDU2Controls.ConfirmPressed()) _ui.Input("A");
-        if (TDU2Controls.Pressed("menu_opt2")) _ui.Input("Y");
-        if (TDU2Controls.Pressed("menu_opt1")) _ui.Input("X");
+        if (TDU2Nav.Y()) _ui.Input("Y");
+        if (TDU2Nav.X()) _ui.Input("X");
         // ESC/Rücktaste: MenuBack (GAME_MODE_LIVING.Run)
     }
 
@@ -1595,12 +1596,13 @@ public class GAME_MODE_LIVING : InteriorUtils
         {
             _ui.MouseEnabled = !_housePreview;
             if (_time - _houseModeAt < 0.25f) return true;
-            if (TDU2Controls.Pressed("menu_left")) _ui.Input("Move", "left");
-            if (TDU2Controls.Pressed("menu_right")) _ui.Input("Move", "right");
-            if (TDU2Controls.Pressed("menu_up")) _ui.Input("Move", "up");
-            if (TDU2Controls.Pressed("menu_down")) _ui.Input("Move", "down");
+            // Unity TDU2MyHouse.UpdateHouse: TDU2Nav + rohe WASD, Vorschau mit X oder P.
+            if (TDU2Nav.Left() || TDU2Controls.RawKeyPressed(0x41)) _ui.Input("Move", "left");
+            if (TDU2Nav.Right() || TDU2Controls.RawKeyPressed(0x44)) _ui.Input("Move", "right");
+            if (TDU2Nav.Up() || TDU2Controls.RawKeyPressed(0x57)) _ui.Input("Move", "up");
+            if (TDU2Nav.Down() || TDU2Controls.RawKeyPressed(0x53)) _ui.Input("Move", "down");
             if (TDU2Controls.ConfirmPressed()) _ui.Input("A");
-            if (TDU2Controls.Pressed("menu_opt1") || TDU2Controls.KeyPressed(0x50)) _ui.Input("myhsPreview");   // Vorschau (X bzw. P)
+            if (TDU2Nav.X() || TDU2Controls.RawKeyPressed(0x50)) _ui.Input("myhsPreview");   // Vorschau (X bzw. P)
         }
         return true;
     }
@@ -2272,10 +2274,12 @@ public class GAME_MODE_LIVING : InteriorUtils
             if (l == "close" || l == "default") CloseMedia();
         }
         if (_time - _mediaOpenedAt < 0.2f) return;   // Taste, mit der geöffnet wurde
-        if (TDU2Controls.Pressed("menu_up")) _media.Input("Move", "up");
-        if (TDU2Controls.Pressed("menu_down")) _media.Input("Move", "down");
-        if (TDU2Controls.Pressed("menu_left")) _media.Input("Move", "left");
-        if (TDU2Controls.Pressed("menu_right")) _media.Input("Move", "right");
+        // Unity TDU2TDUMedia.Update: TDU2Nav + direkte WASD – der Fernseher darf nicht an
+        // TDU2Controls.Blocked/ChatTyping hängen (sonst reagiert "Videos" nicht mehr).
+        if (TDU2Nav.Up() || TDU2Controls.RawKeyPressed(0x57)) _media.Input("Move", "up");
+        if (TDU2Nav.Down() || TDU2Controls.RawKeyPressed(0x53)) _media.Input("Move", "down");
+        if (TDU2Nav.Left() || TDU2Controls.RawKeyPressed(0x41)) _media.Input("Move", "left");
+        if (TDU2Nav.Right() || TDU2Controls.RawKeyPressed(0x44)) _media.Input("Move", "right");
         bool confirm = TDU2Controls.ConfirmPressed();
         bool dlcChannel = _updatesMode && string.Equals(_media.GetVariable("/:CurrentChannel"), "dlc", StringComparison.OrdinalIgnoreCase);
         if (confirm && dlcChannel && _newsList != null && _newsList.Selected >= 0 && _newsList.Selected < _news.Count

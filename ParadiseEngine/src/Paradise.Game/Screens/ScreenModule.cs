@@ -45,8 +45,6 @@ public sealed class ScreenModule : GameModule, IGameModeContext
     static readonly ProfilerMarker s_mOverlays = new("GeneralOverlay / LoadingScreen", ProfilerCategory.UI);
 
     // Test-Umschalter F5/F6/F7 (KeyConfig "dev_*"), bis Login/Pausemenü/Karte als Abläufe portiert sind
-    readonly bool[] _was = new bool[256];
-
     public ScreenModule(IGameWindow window, LaunchOptions opts, TerrainModule? terrain, VehicleModule? vehicles, Action? quit)
     {
         _window = window; _opts = opts; _terrain = terrain; _vehicles = vehicles; _quit = quit;
@@ -128,6 +126,8 @@ public sealed class ScreenModule : GameModule, IGameModeContext
             Chat.Update(this, time.DeltaTime);
         // Bestätigungsbox (general.bnk /dialog_box) – unabhängig vom Modus, solange offen
         Gamemodes.FlashDialog.Update();
+        // Unity TDU2PauseMenu.Update: die Menütaste wird global geprüft, nicht nur in wenigen Spielmodi.
+        UpdatePauseMenuKey();
         var active = _active;
         if (active != null)
             using (active.RunMarker.Auto())   // Profiler: "GAME_MODE_X.Run"
@@ -225,6 +225,33 @@ public sealed class ScreenModule : GameModule, IGameModeContext
         _active.Enter(this, old);
     }
 
+    /// <summary>
+    /// Unity TDU2PauseMenu.cs: ESC (im Interieur auch P) bzw. Gamepad Start öffnet das Pausemenü in JEDEM Modus.
+    /// Die Blocker sind exakt die aus TDU2PauseMenu.Update: Login, Chat, eigenes Interieur-Menü, Zubehörmenü,
+    /// große Karte, Story-Kino, TDU Media, Waschanlage und Rennschul-Menü/Ergebnis.
+    /// </summary>
+    void UpdatePauseMenuKey()
+    {
+        if (Paused || Chat.ChatTyping || GameMode.Current == Gamemode.GAME_MODE_LOGIN) return;
+        const int VK_ESCAPE = 0x1B, VK_P = 0x50;
+        bool inside = InteriorUtils.Inside;
+        bool menuKey = TDU2Controls.KeyPressed(VK_ESCAPE) || (inside && TDU2Controls.KeyPressed(VK_P)) || TDU2Nav.StartPressed();
+        if (!menuKey) return;
+        if ((inside && InteriorUtils.EscOwned) || AccessoryMenu.OwnsEscape)
+        {
+            menuKey = false;   // ESC gehört dem Film (Interieur/Zubehör)
+        }
+        bool mapOpen = GameModes.Get(Gamemode.GAME_MODE_MAP) is GAME_MODE_MAP map && map.IsOpen;
+        if (mapOpen || GAME_MODE_LIVING._mediaOpen || GAME_MODE_CAR_WASH.Active ||
+            Story.BlocksPauseMenu || GAME_MODE_SCHOOL.BlocksPauseMenu)
+        {
+            Log.Info("Pausemenü gesperrt: " + (mapOpen ? "Karte offen" : GAME_MODE_LIVING._mediaOpen ? "TDU Media offen" :
+                GAME_MODE_CAR_WASH.Active ? "Waschanlage" : Story.BlocksPauseMenu ? "Story" : "Rennschule"));
+            return;
+        }
+        if (menuKey) Paused = true;
+    }
+
     // ---- IGameModeContext ----
 
     /// <summary>Pausemenü (main.bnk) offen? Eigener Spielmodus GAME_MODE_PAUSE (Gamemodes/GAME_MODE_PAUSE.cs).</summary>
@@ -285,9 +312,8 @@ public sealed class ScreenModule : GameModule, IGameModeContext
 
     public bool Pressed(int vk)
     {
-        bool down = _window.Input.IsKeyDown(vk);
-        bool r = down && !_was[vk];
-        _was[vk] = down;
-        return r && !Chat.ChatTyping;   // Chat hat die Tastatur (Enter/Esc gehören ihm, Unity TDU2GameData.ChatTyping)
+        // Unity Input.GetKeyDown: der Snapshot aus EarlyUpdate gilt für ALLE Aufrufer im selben Bild.
+        // Ein eigener Edge-Cache im Modul "verbrauchte" Tasten (ESC/Pfeile), je nachdem wer zuerst fragte.
+        return TDU2Controls.KeyPressed(vk) && !Chat.ChatTyping;   // Chat hat die Tastatur (Unity TDU2GameData.ChatTyping)
     }
 }

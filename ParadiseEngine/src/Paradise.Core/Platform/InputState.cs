@@ -28,6 +28,8 @@ public sealed class InputState
 
     // --- vom Fenster aufgerufen ---
     public void SetKey(int vk, bool down) { if (vk >= 0 && vk < 256) _keys[vk] = down; }
+    /// <summary>Fokusverlust: gedrückte Tasten nach Alt-Tab nicht „hängen“ lassen (sonst läuft der Avatar weiter).</summary>
+    public void ResetKeys() => System.Array.Clear(_keys, 0, _keys.Length);
     public void SetRightMouse(bool down) => RightMouseDown = down;
     public void SetLeftMouse(bool down) { if (down && !LeftMouseDown) LeftMousePressed = true; LeftMouseDown = down; }
 

@@ -25,6 +25,10 @@ public sealed class GrassRenderer : IDisposable
     public float Density = 0.7f;
     public float BushChance = 0.03f;
     public float SizeScale = 1f;
+    /// <summary>Unity TDU2/Grass: mindestens 30 % reine Grasfarbe gegen die Bodenfarbe.
+    /// Der Original-Shader nimmt dafür oT3.x (Vertex-Alpha); der Wert wird deshalb beim Erzeugen der
+    /// Vertizes gebacken, damit der Shader unverändert bleiben kann.</summary>
+    public float GroundTipMix = 0.3f;
     public int MaxChunksPerFrame = 6;
     public float SectorSize = WorldLayout.SectorSize;
     public int Seed;
@@ -43,6 +47,32 @@ public sealed class GrassRenderer : IDisposable
     private bool _pending;
 
     public int ChunkCount => _chunks.Count;
+
+    /// <summary>Neue Größe (z.B. aus dem DevMenü) und Chunks damit sofort neu bauen.</summary>
+    public void SetSizeScale(float scale)
+    {
+        if (System.MathF.Abs(SizeScale - scale) < 0.001f) return;
+        SizeScale = scale;
+        Invalidate();
+    }
+
+    /// <summary>Bodenfarben-Anteil live ändern (0 = dunkel, 1 = reine Grasfarbe).</summary>
+    public void SetGroundTipMix(float mix)
+    {
+        mix = System.Math.Clamp(mix, 0f, 1f);
+        if (System.MathF.Abs(GroundTipMix - mix) < 0.001f) return;
+        GroundTipMix = mix;
+        Invalidate();
+    }
+
+    /// <summary>Alle Chunks verwerfen; Update baut die Stücke um den Betrachter wieder auf.</summary>
+    public void Invalidate()
+    {
+        foreach (var ch in _chunks.Values) { ch.Grass?.Dispose(); ch.Bush?.Dispose(); }
+        _chunks.Clear();
+        _pending = false;
+        _nextCheck = 0;
+    }
 
     /// <summary>Per frame viewerGame = camera in game coordinates.</summary>
     public void Update(IRenderer r, Vector3 viewerGame, double time)
@@ -140,7 +170,7 @@ public sealed class GrassRenderer : IDisposable
                 {
                     float s = 1f + (Hash01(gx, gz, seed + 4) - 0.5f) * 2f * t.Bush.SizeDelta;
                     float bh = t.Bush.Height * s * SizeScale;
-                    BlendMix(t.Bush.BlendMode, out byte bRoot, out byte bTip);
+                    BlendMix(t.Bush.BlendMode, GroundTipMix, out byte bRoot, out byte bTip);
                     AddClump(bushV, bushI, new Vector3(x, y, z), bh * CellAspect(BushAtlas, BushAtlasCells), bh, yaw, t.Bush.BitmapIndex, BushAtlasCells, r0, ext, bRoot, bTip);
                     continue;
                 }
@@ -162,7 +192,7 @@ public sealed class GrassRenderer : IDisposable
                 // exe Kartenpaket: Hebel = Höhe·scale/2, Basis-Y = r -> Kartenhöhe = Höhe·scale + 2r
                 float gh = (g.Height * scale + 2f * rnd) * SizeScale;
                 if (gh <= 0.01f) continue;
-                BlendMix(g.BlendMode, out byte gRoot, out byte gTip);
+                BlendMix(g.BlendMode, GroundTipMix, out byte gRoot, out byte gTip);
                 // Breite aus dem Seitenverhältnis der Atlas-Zelle
                 AddClump(grassV, grassI, new Vector3(x, y, z), gh * CellAspect(GrassAtlas, GrassAtlasCells), gh, yaw, g.BitmapIndex, GrassAtlasCells, r1, ext, gRoot, gTip);
             }
@@ -180,13 +210,15 @@ public sealed class GrassRenderer : IDisposable
         return System.Math.Clamp((float)t.Width / cells / t.Height, 0.25f, 4f);
     }
 
-    /// <summary>TD_TallGrass oT3.x per corner (exe table 0xc68dd8): Proportion of pure grass color; 0 = entirely ground color.</summary>
-    static void BlendMix(int mode, out byte root, out byte tip)
+    /// <summary>TD_TallGrass oT3.x per corner (exe table 0xc68dd8): Anteil reiner Grasfarbe; 0 = nur Bodenfarbe.
+    /// Unitys Korrektur hebt den dunklen Anteil auf _GroundTipMix (0,3) an, ohne den originalen Shader zu ändern.</summary>
+    static void BlendMix(int mode, float minMix, out byte root, out byte tip)
     {
+        byte min = (byte)System.Math.Clamp(minMix * 255f, 0f, 255f);
         switch (mode)
         {
-            case 1: root = 0; tip = 0; break;
-            case 2: root = 0; tip = 255; break;
+            case 1: root = min; tip = min; break;
+            case 2: root = min; tip = 255; break;
             default: root = 255; tip = 255; break;
         }
     }

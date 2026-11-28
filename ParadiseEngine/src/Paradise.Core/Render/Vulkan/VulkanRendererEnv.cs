@@ -379,7 +379,7 @@ public sealed unsafe partial class VulkanRenderer
             u.Probe = Vector4.Zero;
             int si = _currentFrame * EnvSlots;
             *(FrameUbo*)_envUboMem[si].Mapped = u;
-            EnvPass(cmd, _plFb, _plW, _plH, _envSets[si], view, _proj, skipCars: false);
+            EnvPass(cmd, _plFb, _plW, _plH, _envSets[si], view, _proj, skipCars: false, skipGrass: true);
             _planarActive = true;
         }
         // ---- Meer-Spiegelbild (TD_Ocean SEAREF_N): gleiche Spiegelkamera, ohne Himmel, gelöscht mit ocean_reflectionColor;
@@ -395,7 +395,7 @@ public sealed unsafe partial class VulkanRenderer
             u.Probe = Vector4.Zero;
             int si = _currentFrame * EnvSlots;
             *(FrameUbo*)_envUboMem[si].Mapped = u;
-            EnvPass(cmd, _plFb, _plW, _plH, _envSets[si], view, _proj, skipCars: false, clear: RenderFx.OceanClear, sky: false);
+            EnvPass(cmd, _plFb, _plW, _plH, _envSets[si], view, _proj, skipCars: false, skipGrass: true, clear: RenderFx.OceanClear, sky: false);
             _oceanPlanar = true;
         }
 
@@ -448,7 +448,7 @@ public sealed unsafe partial class VulkanRenderer
         SetViewProj(keepVP);
     }
 
-    private void EnvPass(CommandBuffer cmd, Framebuffer fb, uint w, uint h, DescriptorSet set, Matrix4x4 view, Matrix4x4 proj, bool skipCars, float farLimit = 0f, Vector3? clear = null, bool sky = true)
+    private void EnvPass(CommandBuffer cmd, Framebuffer fb, uint w, uint h, DescriptorSet set, Matrix4x4 view, Matrix4x4 proj, bool skipCars, bool skipGrass = false, float farLimit = 0f, Vector3? clear = null, bool sky = true)
     {
         var clears = stackalloc ClearValue[3];
         var cc = clear ?? new Vector3(ClearColor[0], ClearColor[1], ClearColor[2]);
@@ -490,6 +490,9 @@ public sealed unsafe partial class VulkanRenderer
         {
             var (mesh, mat, model) = opaque[k];
             if (skipCars && mat.Kind == MaterialKind.Car) continue;   // Unity cullingMask: das eigene Auto nicht mitspiegeln
+            // Gras hat (wie der Original-Shader) keine Clip-Ebene an der Spiegelfläche: Halme unter Wasser/über der
+            // Interior-Ebene würden sonst als Umrisse im Spiegelbild erscheinen. Deshalb nur im Hauptbild zeichnen.
+            if (skipGrass && mat.Kind == MaterialKind.Grass) continue;
             var s = _envSpheres[k];
             if (s.W >= 0f)
             {

@@ -273,6 +273,19 @@ public sealed class DevMenu : GameModule
 
 	private static readonly uint CLine = ObjectVertex.PackColor(30, 36, 42, byte.MaxValue);
 
+	// Unity TDU2InputOverlay: Farben der Balken und des Hintergrunds.
+	private static readonly uint COverlayBack = ObjectVertex.PackColor(0, 0, 0, 184);
+	private static readonly uint CDevice = ObjectVertex.PackColor(255, 217, 77, byte.MaxValue);
+	private static readonly uint CBarBack = ObjectVertex.PackColor(255, 255, 255, 31);
+	private static readonly uint CBarSteer = ObjectVertex.PackColor(102, 204, 255, byte.MaxValue);
+	private static readonly uint CBarGas = ObjectVertex.PackColor(89, 230, 77, byte.MaxValue);
+	private static readonly uint CBarBrake = ObjectVertex.PackColor(255, 77, 64, byte.MaxValue);
+	private static readonly uint CBarClutch = ObjectVertex.PackColor(255, 179, 51, byte.MaxValue);
+	private static readonly uint CBarAxis = ObjectVertex.PackColor(230, 230, 230, byte.MaxValue);
+	private static readonly uint CBarDim = ObjectVertex.PackColor(128, 128, 128, byte.MaxValue);
+	private static readonly uint CCenterTick = ObjectVertex.PackColor(255, 255, 255, 153);
+	private static readonly uint CBarVib = ObjectVertex.PackColor(204, 128, 255, byte.MaxValue);
+
 	private readonly IRenderer _r;
 
 	private readonly IGameWindow _window;
@@ -460,6 +473,9 @@ public sealed class DevMenu : GameModule
 	private Traffic? Traffic => _vehicles.Traffic;
 
 	public bool IsOpen => _open;
+
+	/// <summary>Unity TDU2InputOverlay: Achsen/Pedale/Knöpfe/Vibration als Balken, solange das DevMenü zu ist.</summary>
+	public static bool InputOverlayVisible;
 
 	private static AvatarConfig Cfg => AvatarConfigs.Local;
 
@@ -2459,7 +2475,7 @@ public sealed class DevMenu : GameModule
 	public override void Render(in GameTime time)
 	{
 		RenderTools();
-		bool flag = DebugLines.Labels.Count > 0 || TrafficConfig.ShowDebug;
+		bool flag = DebugLines.Labels.Count > 0 || TrafficConfig.ShowDebug || InputOverlayVisible;
 		if (!_open && !flag && (_toast == null || _time > _toastUntil))
 		{
 			return;
@@ -2478,6 +2494,7 @@ public sealed class DevMenu : GameModule
 		_v.Clear();
 		_i.Clear();
 		RenderWorldDebug(fontAtlas, cw, num4, num5, num);
+		if (InputOverlayVisible && !_open) RenderInputOverlay(fontAtlas, cw, num4, num5, num);
 		if (!_open)
 		{
 			if (_toast != null && !(_time > _toastUntil))
@@ -2584,6 +2601,112 @@ public sealed class DevMenu : GameModule
 		{
 			_r.DrawOverlayTop(CollectionsMarshal.AsSpan(_v), CollectionsMarshal.AsSpan(_i), fontAtlas.Material);
 		}
+	}
+
+	/// <summary>
+	/// Port von Unity TDU2InputOverlay: Ergebnis nach Totzone/Kurve, alle Rohachsen, gedrückte Knöpfe und
+	/// Vibration als Balken. Wird angezeigt, solange das DevMenü geschlossen ist (wie im Original).
+	/// </summary>
+	private void RenderInputOverlay(FontAtlas f, float cw, float ch, float lh, float k)
+	{
+		// Unity TDU2InputOverlay nutzt 14 px bei 1080p, mindestens 0,6-fach, und 1,3-fache Zeilenhöhe.
+		k = MathF.Max(0.6f, k);
+		float fontPx = 14f * k;
+		float fontScale = fontPx / Math.Max(1f, f.LineHeight);
+		cw = f.CellW * fontScale;
+		ch = fontPx;
+		lh = fontPx * 1.3f;
+		float pad = 8f * k, barW = 150f * k, barH = lh * 0.6f;
+		float w = 330f * k;
+		int count = 7 + TDU2InputDevices.AxisCount + 2 + 5 + 2;   // low, high, impact, modern channels (2 lines) + wheel + device
+		float h = pad * 2f + lh * count;
+		float x0 = _r.Width - w - 16f * k;
+		float y0 = 90f * k;
+		float x = x0 + pad, y = y0 + pad, bx = x0 + w - pad - barW;
+		float maxX = x0 + w - pad;
+		Quad(x0, y0, x0 + w, y0 + h, 0f, 0f, 0f, 0f, COverlayBack);
+
+		string dev = TDU2InputDevices.HasDevice
+			? TDU2InputDevices.DeviceName + " (J" + TDU2InputDevices.DeviceJoy + ") " + (TDU2InputDevices.IsWheel ? "Wheel" : "Pad")
+			: "no device";
+		Text(f, x, y, dev, CDevice, maxX, cw, ch); y += lh;
+
+		float steer = TDU2InputDevices.Steer;
+		Text(f, x, y, "Steering " + steer.ToString("+0.00;-0.00", Inv), CText, bx - 4f, cw, ch);
+		InputCenter(bx, y, barW, barH, steer, CBarSteer); y += lh;
+		Text(f, x, y, "Throttle " + TDU2InputDevices.Throttle.ToString("0.00", Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, TDU2InputDevices.Throttle, CBarGas); y += lh;
+		Text(f, x, y, "Brake " + TDU2InputDevices.Brake.ToString("0.00", Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, TDU2InputDevices.Brake, CBarBrake); y += lh;
+		Text(f, x, y, "Clutch " + TDU2InputDevices.Clutch.ToString("0.00", Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, TDU2InputDevices.Clutch, CBarClutch); y += lh;
+		int g = TDU2InputDevices.HGear;
+		Text(f, x, y, "H-gear: " + (g < 0 ? "R" : g == 0 ? "N / -" : g.ToString(Inv)) +
+			(TDU2InputDevices.IsWheel ? "   gain " + TDU2InputDevices.WheelSteerGain.ToString("0.00", Inv) : ""), CText, maxX, cw, ch); y += lh;
+
+		Text(f, x, y, "Raw axes J" + TDU2InputDevices.DeviceJoy, CTextDim, maxX, cw, ch); y += lh;
+		for (int i = 1; i <= TDU2InputDevices.AxisCount; i++)
+		{
+			float v = TDU2InputDevices.RawAxis(i);
+			Text(f, x, y, "Axis " + i.ToString(Inv).PadLeft(2) + "  " +
+				v.ToString("+0.00;-0.00", Inv) + (TDU2InputDevices.IsHatAxis(i) ? "  (hat)" : ""), CText, bx - 4f, cw, ch);
+			InputCenter(bx, y, barW, barH, v, MathF.Abs(v) > 0.05f ? CBarAxis : CBarDim); y += lh;
+		}
+
+		var sb = new StringBuilder("Buttons: ");
+		int nb = 0;
+		for (int j = 1; j <= Math.Min(8, Joysticks.MaxJoysticks); j++)
+			for (int b = 0; b < Joysticks.MaxButtons; b++)
+				if (Joysticks.Button(j, b))
+				{
+					if (nb++ > 0) sb.Append(' ');
+					sb.Append('J').Append(j).Append(':').Append(b);
+				}
+		if (nb == 0) sb.Append('-');
+		Text(f, x, y, sb.ToString(), CTextDim, maxX, cw, ch); y += lh;
+		string shift = TDU2InputDevices.ShifterJoy > 0 ? TDU2InputDevices.ShifterName + " (J" + TDU2InputDevices.ShifterJoy + ")" : "-";
+		Text(f, x, y, "Shifter: " + shift, CTextDim, maxX, cw, ch); y += lh;
+
+		float low = TDU2ForceFeedback.LastPadLow;
+		Text(f, x, y, "Low vibration " + low.ToString("0.00", Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, low, CBarVib); y += lh;
+		float high = TDU2ForceFeedback.LastPadHigh;
+		Text(f, x, y, "High vibration " + high.ToString("0.00", Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, high, CBarVib); y += lh;
+		Text(f, x, y, "Impact " + TDU2ForceFeedback.Impact.ToString("0.00", Inv) + "   " +
+			(TDU2ForceFeedback.LastOffPaved ? "Dirt / off-road" : "Asphalt"), CTextDim, maxX, cw, ch); y += lh;
+		Text(f, x, y, "Slip " + TDU2ForceFeedback.LastSlip.ToString("0.00", Inv) +
+			"  ABS " + TDU2ForceFeedback.LastAbs.ToString("0.00", Inv) +
+			"  Bump " + TDU2ForceFeedback.LastBump.ToString("0.00", Inv), CTextDim, maxX, cw, ch); y += lh;
+		Text(f, x, y, "Understeer " + TDU2ForceFeedback.LastUndersteer.ToString("0.00", Inv) +
+			"  Spin " + TDU2ForceFeedback.LastWheelspin.ToString("0.00", Inv) +
+			"  Lock " + TDU2ForceFeedback.LastLock.ToString("0.00", Inv) +
+			"  Surf " + TDU2ForceFeedback.LastRoughWheels.ToString(Inv), CTextDim, maxX, cw, ch); y += lh;
+		int wheelRumble = Math.Clamp(TDU2ForceFeedback.LastRoadRumble + TDU2ForceFeedback.LastRpmRumble, 0, 100);
+		Text(f, x, y, "Wheel align " + TDU2ForceFeedback.LastWheelAlign.ToString(Inv) +
+			"  rumble " + TDU2ForceFeedback.LastWheelRumble.ToString(Inv) +
+			"  road " + TDU2ForceFeedback.LastRoadType.ToString(Inv), CText, bx - 4f, cw, ch);
+		InputBar(bx, y, barW, barH, wheelRumble / 100f, CBarVib); y += lh;
+		string ffDevice = TDU2ForceFeedback.WheelDevice;
+		Text(f, x, y, "FFB device " + (string.IsNullOrEmpty(ffDevice) ? "none" : ffDevice) +
+			"  mode " + TDU2InputDevices.Mode, CTextDim, maxX, cw, ch);
+	}
+
+	private void InputBar(float x, float y, float w, float h, float v, uint col)
+	{
+		float yy = y + h * 0.35f;
+		Quad(x, yy, x + w, yy + h, 0f, 0f, 0f, 0f, CBarBack);
+		float q = Math.Clamp(v, 0f, 1f);
+		if (q > 0f) Quad(x, yy, x + w * q, yy + h, 0f, 0f, 0f, 0f, col);
+	}
+
+	private void InputCenter(float x, float y, float w, float h, float v, uint col)
+	{
+		float yy = y + h * 0.35f, mid = x + w * 0.5f, len = w * 0.5f * Math.Clamp(v, -1f, 1f);
+		Quad(x, yy, x + w, yy + h, 0f, 0f, 0f, 0f, CBarBack);
+		if (len >= 0f) { if (len > 0f) Quad(mid, yy, mid + len, yy + h, 0f, 0f, 0f, 0f, col); }
+		else Quad(mid + len, yy, mid, yy + h, 0f, 0f, 0f, 0f, col);
+		Quad(mid - 1f, yy - 2f, mid + 1f, yy + h + 2f, 0f, 0f, 0f, 0f, CCenterTick);
 	}
 
 	private static string Safe(Func<string> f)
@@ -3833,8 +3956,16 @@ public sealed class DevMenu : GameModule
 		list.Add(Info("Profile", () => (!string.IsNullOrEmpty(TDU2InputDevices.ProfileName)) ? TDU2InputDevices.ProfileName : "-"));
 		list.Add(Info("Option 'Device'", () => TDU2InputDevices.Mode.ToString()));
 		list.Add(Info("Separate shifter", () => (TDU2InputDevices.ShifterJoy <= 0) ? "none" : (TDU2InputDevices.ShifterName + "" + TDU2InputDevices.ShifterJoy + "")));
+		list.Add(Head("ALL DEVICES (Unity joystick number)"));
+		string[] names = Joysticks.Names;
+		for (int j = 1; j <= Math.Min(TDU2InputDevices.JoyCount, names.Length); j++)
+		{
+			int joy = j;
+			string name = string.IsNullOrEmpty(names[j - 1]) ? "-" : names[j - 1];
+			list.Add(Info("J" + joy, () => name + " / " + Safe(() => TDU2InputDevices.RawAxis(joy, 1).ToString("+0.0;-0.0", Inv))));
+		}
 		list.Add(Head("RAW AXES"));
-		for (int i = 1; i <= 8; i++)
+		for (int i = 1; i <= TDU2InputDevices.AxisCount; i++)
 		{
 			int ax = i;
 			list.Add(Info("Axis " + ax + (TDU2InputDevices.IsHatAxis(ax) ? "" : ""), () => TDU2InputDevices.RawAxis(ax).ToString("+0.000;-0.000", Inv)));
@@ -3859,6 +3990,11 @@ public sealed class DevMenu : GameModule
 		list.Add(Info("Steering sensitivity / dead zone", () => TDU2InputDevices.SteerLinearity.ToString("0.00", Inv) + " / " + TDU2InputDevices.DeadZone.ToString("0.00", Inv)));
 		list.Add(Info("Throttle / brake / clutch linearity", () => TDU2InputDevices.ThrottleLinearity.ToString("0.00", Inv) + " / " + TDU2InputDevices.BrakeLinearity.ToString("0.00", Inv) + " / " + TDU2InputDevices.ClutchLinearity.ToString("0.00", Inv)));
 		list.Add(Info("Mouse sensitivity / invert", () => TDU2InputDevices.MouseSensitivity.ToString("0.00", Inv) + " / " + (TDU2InputDevices.MouseInvert ? "yes" : "no")));
+		list.Add(Head("DEBUG VIEW"));
+		list.Add(Bool("Input overlay (axes, pedals, buttons)", () => InputOverlayVisible, delegate(bool v)
+		{
+			InputOverlayVisible = v;
+		}, def: false));
 		return list;
 	}
 
@@ -5397,7 +5533,10 @@ public sealed class DevMenu : GameModule
 			Menu("Controls / input devices", ControlsMenu),
 			Head("INPUT"),
 			Bool("Toggle Control: drive with the menu open " + ToggleKeyName() + "", () => _drive, SetDrive, def: false),
-			PhBool("Input overlay", def: false)
+			Bool("Input overlay (axes, pedals, buttons)", () => InputOverlayVisible, delegate(bool v)
+			{
+				InputOverlayVisible = v;
+			}, def: false)
 		};
 	}
 
@@ -5668,6 +5807,15 @@ public sealed class DevMenu : GameModule
 		{
 			s.GrassDensity = v;
 		}, 0.05f, 0f, 2f, 0.9f, "0.00"));
+		list.Add(Float("Grass size", () => s.EffectiveGrassSizeScale, delegate(float v)
+		{
+			s.SetGrassSizeScale(v);
+		}, 0.1f, 0.25f, 4f, s.EffectiveGrassSizeScale, "0.00", "x"));
+		list.Add(Info("Grass size active", () => s.EffectiveGrassSizeScale.ToString("0.00", CultureInfo.InvariantCulture) + "x · " + (s.IsHawaii ? "Hawaii" : s.Island)));
+		list.Add(Float("Grass ground mix", () => s.GrassGroundTipMix, delegate(float v)
+		{
+			s.SetGrassGroundTipMix(v);
+		}, 0.05f, 0f, 1f, 0.3f, "0.00"));
 		return list;
 	}
 

@@ -280,7 +280,7 @@ public class GAME_MODE_MAP : GameModeHandler
     public float SpotScale = 0.65f;
     public int MaxSpots = 160;
     /// <summary>Spot auf der Karte: normaler Spot, Meisterschaft (cup = Index) oder – im Wettbewerbsmodus – deren Rennen (race).</summary>
-    sealed class MapSpot { public Spot spot = null!; public string label = ""; public int bookmark = -1; public int cup = -1, race = -1; }
+    sealed class MapSpot { public Spot spot = null!; public string label = ""; public int bookmark = -1; public int cup = -1, race = -1; public bool gps; }
     readonly List<MapSpot> _spots = new();
     readonly Dictionary<int, string> _slotLabel = new();
     int _pointChar, _pointDepth0 = 1000, _hover = -1;
@@ -298,6 +298,8 @@ public class GAME_MODE_MAP : GameModeHandler
     Vector3? _cursorWorld, _menuWorld;
     bool _menuTargetPresent;             // Ziel liegt am Punkt des Menüs (Eintrag "Ziel entfernen")
     Vector2 _downMouseR;
+    // Gamepad-Cursor wie Unity TDU2BigMap: linker Stick bewegt den Cursor, rechter Stick/D-Pad schiebt die Karte.
+    bool _padCursor; Vector2 _padCur = new(-1f, -1f), _lastMousePos;
     bool _gpsMarkerShown; Vector3 _gpsMarkerFor;   // Render-Raum (Meereshöhe): Punkt unter dem Cursor bzw. des Mini-Menüs/gewählten Spots
     readonly Dictionary<string, FlashTexture?> _pics = new();
     string[]? _spotPicFiles;
@@ -572,7 +574,7 @@ public class GAME_MODE_MAP : GameModeHandler
             if (lp.HasValue) { ui.SetVisible("/player", true); ui.SetPosition("/player", lp.Value); }
             else ui.SetVisible("/player", false);
         }
-        var mouse = MousePixel();
+        var mouse = Pointer();
         var cl = ui.GuiToLocal("/", F(mouse));
         if (cl.HasValue) ui.SetPosition("/curseur", cl.Value);
         UpdateGpsMarker();
@@ -605,6 +607,7 @@ public class GAME_MODE_MAP : GameModeHandler
             string label = _spots[idx].label;
             var gpsI = Gps.Instance;
             bool tgt = gpsI != null && gpsI.HasTarget && gpsI.IsTargetNear(_spots[idx].spot.Position, 40f);
+            _spots[idx].gps = tgt;
             string key = label + "|" + idx + (tgt ? "|T" : "");
             if (!_slotLabel.TryGetValue(slot, out var cur) || cur != key)
             {
@@ -1153,23 +1156,25 @@ public class GAME_MODE_MAP : GameModeHandler
         Vector3 move = Vector3.Zero;
         if (_extended || _miniMenu)
         {
-            // ausgeklappter Tooltip / Mini-Menü: Pfeile gehören dem Film (Blättern der Liste, Menüauswahl) statt der Kamera
-            if (TDU2Controls.Pressed("menu_left")) ui.Input("Move", "left");
-            if (TDU2Controls.Pressed("menu_right")) ui.Input("Move", "right");
-            if (TDU2Controls.Pressed("menu_up")) { if (!MenuCall("Move", "up")) ui.Input("Move", "up"); }
-            if (TDU2Controls.Pressed("menu_down")) { if (!MenuCall("Move", "down")) ui.Input("Move", "down"); }
+            // ausgeklappter Tooltip / Mini-Menü: Pfeile/A,D gehören dem Film, nicht der Kamera – wie Unity TDU2BigMap.
+            if (TDU2Nav.Left() || TDU2Controls.RawKeyPressed(0x41)) ui.Input("Move", "left");
+            if (TDU2Nav.Right() || TDU2Controls.RawKeyPressed(0x44)) ui.Input("Move", "right");
+            if (TDU2Nav.Up() || TDU2Controls.RawKeyPressed(0x57)) { if (!MenuCall("Move", "up")) ui.Input("Move", "up"); }
+            if (TDU2Nav.Down() || TDU2Controls.RawKeyPressed(0x53)) { if (!MenuCall("Move", "down")) ui.Input("Move", "down"); }
+            if (TDU2Nav.Stick != Vector2.Zero || TDU2InputDevices.Look != Vector2.Zero) _padCursor = true;
         }
         else
         {
-            if (TDU2Controls.Held("menu_up")) move += north;
-            if (TDU2Controls.Held("menu_down")) move -= north;
-            if (TDU2Controls.Held("menu_right")) move += east;
-            if (TDU2Controls.Held("menu_left")) move -= east;
+            if (TDU2Controls.RawKeyDown(0x57) || TDU2Nav.UpHeld()) move += north;
+            if (TDU2Controls.RawKeyDown(0x53) || TDU2Nav.DownHeld()) move -= north;
+            if (TDU2Controls.RawKeyDown(0x44) || TDU2Nav.RightHeld()) move += east;
+            if (TDU2Controls.RawKeyDown(0x41) || TDU2Nav.LeftHeld()) move -= east;
+            move += PadMapInput(north, east, dt);   // linker Stick = Cursor, rechter Stick/D-Pad = Karte schieben
         }
         _view.Pan(move, dt, IsDown(0x10));   // Umschalt = schneller
 
-        // Ziehen mit der Maus (Weltpunkt unter der Maus bleibt unter der Maus)
-        var mp = MousePixel();
+        // Ziehen mit der Maus (Weltpunkt unter der Maus bleibt unter der Maus); Pointer = Maus oder Pad-Cursor
+        var mp = Pointer();
         if (FlashInput.GetMouseButtonDown(0) && !((_extended || _miniMenu) && ui.MouseOverButton)) { _dragging = true; _lastMouse = mp; }
         if (FlashInput.GetMouseButtonDown(1) || FlashInput.GetMouseButtonDown(2)) { _dragging = true; _lastMouse = mp; }
         if (!FlashInput.GetMouseButton(0) && !FlashInput.GetMouseButton(1) && !FlashInput.GetMouseButton(2)) _dragging = false;
@@ -1179,17 +1184,21 @@ public class GAME_MODE_MAP : GameModeHandler
             _lastMouse = mp;
         }
 
-        // Zoom über den Film (Animationen von Cursor/Spots wie im Spiel): Mausrad, Bild↑/↓, +/-, E/Q
+        // Zoom über den Film (Animationen von Cursor/Spots wie im Spiel): Mausrad, Bild↑/↓, +/-, E/Q, LT/RT
         float wheel = FlashInput.mouseScrollDelta;
-        bool zin = wheel > 0.1f || _ctx.Pressed(0x21) || _ctx.Pressed(0x6B) || _ctx.Pressed(0xBB) || _ctx.Pressed(0x45);
-        bool zout = wheel < -0.1f || _ctx.Pressed(0x22) || _ctx.Pressed(0x6D) || _ctx.Pressed(0xBD) || _ctx.Pressed(0x51);
+        bool zin = wheel > 0.1f || TDU2InputDevices.ButtonPressed("map_zoomin") ||
+                   TDU2Controls.RawKeyPressed(0x21) || TDU2Controls.RawKeyPressed(0x6B) ||
+                   TDU2Controls.RawKeyPressed(0xBB) || TDU2Controls.RawKeyPressed(0x45);
+        bool zout = wheel < -0.1f || TDU2InputDevices.ButtonPressed("map_zoomout") ||
+                    TDU2Controls.RawKeyPressed(0x22) || TDU2Controls.RawKeyPressed(0x6D) ||
+                    TDU2Controls.RawKeyPressed(0xBD) || TDU2Controls.RawKeyPressed(0x51);
         // an den Grenzen nicht an den Film geben (weiter rauszoomen startet dort den Abspann)
         if (zin && _view.Zoom > 1) { if (!ui.CallClip("/navigator", "setZoom", "in")) SetZoom(_view.Zoom - 1); }
         if (zout && _view.Zoom < 4) { if (!ui.CallClip("/navigator", "setZoom", "out")) SetZoom(_view.Zoom + 1); }
 
         // Leertaste: zum Fahrzeug
         var vm = _ctx.Vehicles?.Manager; var s = _ctx.Terrain?.Streamer;
-        if (_ctx.Pressed(0x20) && vm?.Current != null && s != null) { _view.Target = s.GameToRender(vm.PositionGame); _view.Target.Y = SeaY(); }
+        if (TDU2Controls.RawKeyPressed(0x20) && vm?.Current != null && s != null) { _view.Target = s.GameToRender(vm.PositionGame); _view.Target.Y = SeaY(); }
 
         // A wie im Spiel: auf einem Spot -> Tooltip mit Infos; auf freier Fläche -> Mini-Menü. Klick ohne Ziehen; über Knöpfen
         // des ausgeklappten Tooltips und über den Leisten des Films gehört der Klick dem Film.
@@ -1200,7 +1209,7 @@ public class GAME_MODE_MAP : GameModeHandler
         if (FlashInput.GetMouseButtonUp(1) && (mp - _downMouseR).LengthSquared() < 36f && !_extended && !_miniMenu)
         {
             var gw = GroundPoint(mp); var sm = _ctx.Terrain?.Streamer;
-            if (_hover >= 0 && _hover < _spots.Count) ToggleGpsTarget(_spots[_hover].spot.Position);
+            if (_hover >= 0 && _hover < _spots.Count && !_spots[_hover].gps) ToggleGpsTarget(_spots[_hover].spot.Position);
             else if (gw.HasValue && sm != null) ToggleGpsTarget(sm.RenderToGame(gw.Value));
         }
         if (_miniMenu && click) click = false;   // Mini-Menü offen: Klicks gehören dem Film; schließen mit rechts/Esc
@@ -1241,9 +1250,77 @@ public class GAME_MODE_MAP : GameModeHandler
             }
         }
 
-        // Filterleiste: Tab / Umschalt+Tab (wie die Pfeile im Film)
-        if (_ctx.Pressed(0x09) && _contestCup < 0 && !_extended && !_miniMenu) ui.CallClip("/presets", "Move", IsDown(0x10) ? "left" : "right");
+        // Filterleiste: LB/RB bzw. Tab/Umschalt+Tab (wie die Pfeile im Film, braucht /:Input)
+        bool tabR = TDU2Nav.RB() || PadButtonDown(5) ||
+                    (TDU2Controls.RawKeyPressed(0x09) && !IsDown(0xA0) && !IsDown(0xA1));
+        bool tabL = TDU2Nav.LB() || PadButtonDown(4) ||
+                    (TDU2Controls.RawKeyPressed(0x09) && (IsDown(0xA0) || IsDown(0xA1)));
+        if ((tabR || tabL) && _contestCup < 0 && !_extended && !_miniMenu) ui.CallClip("/presets", "Move", tabR ? "right" : "left");
+        if (TDU2Nav.X()) ui.Input("X");
+        if (TDU2Nav.Y()) ui.Input("Y");
+        // T = direkt an die Cursorposition (bzw. Mitspieler/Rennen) teleportieren
+        if (TDU2Controls.RawKeyPressed(0x54))
+        {
+            if (_hoverPlayer >= 0) { TeleportToPlayer(_hoverPlayer); Close(); return; }
+            if (_contestCup >= 0 && _hover >= 0 && _spots[_hover].race >= 0)
+            {
+                _pendingStart = (_spots[_hover].cup, _spots[_hover].race); Close(); return;
+            }
+            _cursorWorld = GroundPoint(mp);
+            if (_hover >= 0) { TeleportToSpot(_spots[_hover].spot); Close(); }
+            else if (OnRoad(out _)) { TeleportToCursor(); Close(); }
+            else FrontendSounds.Play("wrong");
+        }
         ClampTarget();
+    }
+
+    /// <summary>Zeigeposition: echte Maus oder (nach Stick-Benutzung) der Gamepad-Cursor – Unity TDU2BigMap.Pointer().</summary>
+    Vector2 Pointer()
+    {
+        var m = MousePixel();
+        if ((m - _lastMousePos).LengthSquared() > 4f || FlashInput.GetMouseButtonDown(0) || FlashInput.GetMouseButtonDown(1))
+        {
+            _padCursor = false;
+            _padCur = new Vector2(m.X, FlashScreen.height - m.Y);   // Flash: oben links, Pad: unten links
+        }
+        _lastMousePos = m;
+        if (!_padCursor) return m;
+        if (_padCur.X < 0f) _padCur = new Vector2(FlashScreen.width * 0.5f, FlashScreen.height * 0.5f);
+        return new Vector2(_padCur.X, FlashScreen.height - _padCur.Y);
+    }
+
+    /// <summary>Unity TDU2BigMap.PadMapInput: Cursor am Rand schiebt die Karte, rechter Stick/D-Pad schiebt direkt.</summary>
+    Vector3 PadMapInput(Vector3 north, Vector3 east, float dt)
+    {
+        var st = TDU2Nav.Stick;
+        var look = TDU2InputDevices.Look;
+        Vector3 move = Vector3.Zero;
+        if (st != Vector2.Zero || look != Vector2.Zero)
+        {
+            if (!_padCursor) { _padCursor = true; _padCur = new Vector2(FlashScreen.width * 0.5f, FlashScreen.height * 0.5f); }
+        }
+        if (!_padCursor) return move;
+        _padCur += st * FlashScreen.height * 0.75f * dt;
+        float mx = FlashScreen.width * 0.08f, my = FlashScreen.height * 0.12f;
+        var push = Vector2.Zero;
+        if (_padCur.X < mx) { push.X = -1f; _padCur.X = mx; }
+        else if (_padCur.X > FlashScreen.width - mx) { push.X = 1f; _padCur.X = FlashScreen.width - mx; }
+        if (_padCur.Y < my) { push.Y = -1f; _padCur.Y = my; }
+        else if (_padCur.Y > FlashScreen.height - my) { push.Y = 1f; _padCur.Y = FlashScreen.height - my; }
+        var pan = look + push;
+        if (TDU2Nav.PadUpHeld() && st == Vector2.Zero) pan.Y += 1f;
+        if (TDU2Nav.PadDownHeld() && st == Vector2.Zero) pan.Y -= 1f;
+        if (TDU2Nav.PadRightHeld() && st == Vector2.Zero) pan.X += 1f;
+        if (TDU2Nav.PadLeftHeld() && st == Vector2.Zero) pan.X -= 1f;
+        move += north * pan.Y + east * pan.X;
+        return move;
+    }
+
+    static bool PadButtonDown(int button)
+    {
+        for (int j = 1; j <= Paradise.Core.Platform.Joysticks.MaxJoysticks; j++)
+            if (Paradise.Core.Platform.Joysticks.ButtonDown(j, button)) return true;
+        return false;
     }
 
     static bool IsDown(int vk) => TDU2Controls.KeyDown(vk);
@@ -1300,7 +1377,7 @@ public class GAME_MODE_MAP : GameModeHandler
     {
         var gps = Gps.Instance;
         if (gps == null || !game.HasValue) { if (sound) FrontendSounds.Play("wrong"); return; }
-        bool under = _selected < 0 && GpsTargetUnderMouse(MousePixel());
+        bool under = _selected < 0 && GpsTargetUnderMouse(Pointer());
         bool remove = present ?? (gps.HasTarget && (gps.IsTargetNear(game.Value, 40f) || under));
         if (remove && gps.HasTarget) gps.ClearTarget();
         else gps.SetTarget(game.Value);

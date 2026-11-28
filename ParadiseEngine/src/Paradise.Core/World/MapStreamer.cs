@@ -117,9 +117,10 @@ public sealed partial class MapStreamer : IDisposable
     public float SeaLevel = 0f;
     /// <summary>Höhe der Meeresfläche relativ zu SeaLevel (Unity-Projekt: −1,5 m; Original-Spiel: 0).</summary>
     public float WaterOffset = -0.15f;
+    public bool IsHawaii => (_index?.IslandName ?? Island ?? "").StartsWith("hawai", StringComparison.OrdinalIgnoreCase);
     /// <summary>Wasserhöhe der Insel wie im Original (unpacked.exe 0xcb36a0: Insel-ID 1 = HAWAI → −1,8, sonst 0;
     /// Inseltabelle IBIZA/HAWAI/CASINO bei .data 0x164a820). Die Sektor-Meer-Meshes von Hawaii liegen bereits auf −1,8 (BBox im -o.3dd).</summary>
-    public float IslandWaterHeight => (_index?.IslandName ?? Island ?? "").StartsWith("hawai", StringComparison.OrdinalIgnoreCase) ? -1.8f : 0f;
+    public float IslandWaterHeight => IsHawaii ? -1.8f : 0f;
     /// <summary>Höhe der großen Meeresfläche und der Spiegelebene.</summary>
     public float WaterLevel => SeaLevel + IslandWaterHeight + WaterOffset;
     public bool LoadGrass = true;
@@ -127,6 +128,29 @@ public sealed partial class MapStreamer : IDisposable
     public float GrassRadius = 120f;
     public float GrassDensity = 0.9f;
     public float GrassSpacing = 1.2f;
+    /// <summary>Größenhebel für Gras/Büsche (1 = Höhen aus grasstypes.xml). Wert aus dem DevMenü überschreibt den Insel-Default.</summary>
+    public float GrassSizeScale = 1f;
+    public bool GrassSizeAuto = true;
+    /// <summary>Hawaii-Gras aus den XML-Daten war nur etwa halb so hoch wie im Unity-Projekt.</summary>
+    public float GrassHawaiiSizeScale = 1.9f;
+    public float EffectiveGrassSizeScale => GrassSizeAuto && IsHawaii ? GrassHawaiiSizeScale : GrassSizeScale;
+    /// <summary>Mindestanteil reiner Grasfarbe gegen die Bodenfarbe (Unity: 0,3). Wird in die Vertex-Alpha gebacken.</summary>
+    public float GrassGroundTipMix = 0.3f;
+
+    /// <summary>Größe live ändern: gespeicherte Gras-Chunks verwerfen, damit sie mit dem neuen Maß neu gebaut werden.</summary>
+    public void SetGrassSizeScale(float scale)
+    {
+        GrassSizeAuto = false;
+        GrassSizeScale = scale;
+        foreach (var st in _sectors.Values) st.Grass?.SetSizeScale(scale);
+    }
+
+    /// <summary>Helligkeit live ändern: Gras-Chunks mit neuem Bodenfarben-Anteil neu bauen.</summary>
+    public void SetGrassGroundTipMix(float mix)
+    {
+        GrassGroundTipMix = System.Math.Clamp(mix, 0f, 1f);
+        foreach (var st in _sectors.Values) st.Grass?.SetGroundTipMix(GrassGroundTipMix);
+    }
     public bool LoadInteriors = true;
     public bool CenterWorld = true;
     public bool StartFromGamePc = true;
@@ -1066,6 +1090,8 @@ public sealed partial class MapStreamer : IDisposable
                 Radius = GrassRadius,
                 Density = GrassDensity,
                 Spacing = GrassSpacing,
+                SizeScale = EffectiveGrassSizeScale,
+                GroundTipMix = GrassGroundTipMix,
                 Seed = HashCode.Combine(st.Key.GetHashCode(), 0x6A55),
                 Noise = _grassNoise,
             };

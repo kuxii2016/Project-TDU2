@@ -72,12 +72,18 @@ public abstract partial class InteriorUtils
                 if (phys.Raycast(Feet + Vector3.UnitY * EyeHeight, -Vector3.UnitY, EyeHeight + 0.05f, out var top) && top.Distance < EyeHeight)
                     Feet.Y = Feet.Y + EyeHeight - top.Distance;
             }
+            float invert = TDU2InputDevices.MouseInvert ? -1f : 1f;
             if (LookEnabled)
             {
-                // Unity: Input.GetAxis("Mouse X/Y") ≈ Pixel x 0,1
-                float ms = MouseSensitivity * 0.1f;
-                _yaw += input.MouseDeltaX * ms;   // Unity TDU2FirstPerson: _yaw += Input.GetAxis("Mouse X") * ms
-                _pitch = Math.Clamp(_pitch + input.MouseDeltaY * ms, -75f, 75f);
+                // Unity TDU2FirstPerson: Input.GetAxis("Mouse X/Y") ≈ Pixel · 0,1, dazu der globale Options-Multiplikator
+                float ms = MouseSensitivity * TDU2InputDevices.MouseSensitivity * 0.1f;
+                _yaw += input.MouseDeltaX * ms;
+                // Unity: my = GetAxis("Mouse Y") · (Invert ? -1 : 1); _pitch -= my · ms. MouseDeltaY ist Bildschirm-y (unten +).
+                _pitch = Math.Clamp(_pitch - (-input.MouseDeltaY * invert) * ms, -75f, 75f);
+                // rechter Stick (Unity TDU2InputDevices.Look): Umsehen wie im Original
+                var look = TDU2InputDevices.Look;
+                _yaw += look.X * 150f * dt;
+                _pitch = Math.Clamp(_pitch - look.Y * 100f * invert * dt, -75f, 75f);
                 if (TDU2Controls.Held("walk_turnl")) _yaw -= 120f * dt;
                 if (TDU2Controls.Held("walk_turnr")) _yaw += 120f * dt;
             }
@@ -86,6 +92,12 @@ public abstract partial class InteriorUtils
             if (TDU2Controls.Held("walk_back")) f -= 1f;
             if (TDU2Controls.Held("walk_right")) s += 1f;
             if (TDU2Controls.Held("walk_left")) s -= 1f;
+            // Unity TDU2FirstPerson: ohne gedrückte Lauf-Tasten übernimmt der linke Stick das Gehen.
+            if (MathF.Abs(f) < 0.01f && MathF.Abs(s) < 0.01f && TDU2InputDevices.HasDevice)
+            {
+                var mv = TDU2InputDevices.Move;
+                s = mv.X; f = mv.Y;
+            }
             float speed = TDU2Controls.Held("walk_run") ? RunSpeed : WalkSpeed;
             if (!LookEnabled) { f = 0f; s = 0f; }
             float yr = _yaw * MathF.PI / 180f;

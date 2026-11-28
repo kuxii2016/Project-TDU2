@@ -323,8 +323,7 @@ public sealed class GAME_MODE_CHAMPIONSHIP : GameModeHandler
         if (_phase == Phase.BackToHub) { UpdateBackToHub(ctx); return; }
         if (_phase == Phase.Results) { UpdateResults(ctx, dt); return; }
 
-        // Fahren wie in der Freifahrt
-        HandlePauseKey(ctx);
+        // Fahren wie in der Freifahrt (Menütaste global in ScreenModule)
         if (ctx.Paused) return;
         var veh = ctx.Vehicles; var vm = veh?.Manager;
         if (TDU2Controls.Pressed("minimap") && vm?.Minimap != null && vm.Current != null && !veh!.Suspended && !veh.Frozen)

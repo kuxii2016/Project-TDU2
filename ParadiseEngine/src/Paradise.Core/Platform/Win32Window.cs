@@ -227,9 +227,10 @@ public sealed class Win32Window : IGameWindow
             case WM_KILLFOCUS:
             case WM_CANCELMODE:
                 Flash.FlashInput.ResetMouseButtons();
+                Input.ResetKeys();
                 return 0;
             case WM_ACTIVATEAPP:
-                if (wParam == 0) Flash.FlashInput.ResetMouseButtons();
+                if (wParam == 0) { Flash.FlashInput.ResetMouseButtons(); Input.ResetKeys(); }
                 break;
             case WM_MOUSEMOVE:
                 Input.OnMouseMove((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));

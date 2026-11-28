@@ -771,7 +771,7 @@ void main() {
     //  binding 0 _MainTex (Atlas), 1 _GroundTex (Colormap, UV1), 2 _SplatTex (UV1)
     //  color = _Color
     //  p0: _Cutoff, _Wind, _GroundOn, _GroundBoost
-    //  p1: (_GroundTipMix ungenutzt – Mischung je Ecke in vColor.a), _UseSplat, _ShadowStrength
+    //  p1: _GroundTipMix, _UseSplat, _ShadowStrength
     public const string GrassVert = Common + ObjectInputs + ObjectMat + @"
 layout(location = 0) out vec2 vUv;
 layout(location = 1) out vec2 vUvGround;
@@ -806,8 +806,7 @@ layout(location = 0) out vec4 outColor;
 void main() {
     vec4 c = texture(mainTex, vUv) * m.color;
     if (c.a < m.p0.x) discard;                             // alphatest:_Cutoff
-    // wie TD_TallGrass ps_0: Grastextur x lerp(Bodenfarbe, 1, oT3.x) x gebackener Schatten;
-    // oT3.x je Ecke aus BlendMode (exe 0xc68dd8) steht in der Vertex-Alpha
+    // wie Unity TDU2/Grass + TD_TallGrass ps_0: Grastextur x lerp(Bodenfarbe, 1, oT3.x) x gebackener Schatten.
     vec3 ground = m.p0.z > 0.5 ? mix(clamp(texture(groundTex, vUvGround).rgb * m.p0.w, 0.0, 1.0), vec3(1.0), vColor.a) : vec3(1.0);
     float sh = m.p1.y > 0.5 ? mix(1.0, texture(splatTex, vUvGround).r, m.p1.z) : 1.0;
     vec3 albedo = c.rgb * vColor.rgb * ground * sh;

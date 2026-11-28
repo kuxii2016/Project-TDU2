@@ -43,10 +43,12 @@ public abstract partial class InteriorUtils : GameModeHandler
         bool ready = _t != null;
         if (ready && MenuOpen && !ctx.Paused)
         {
-            if (ctx.Pressed(VK_ESCAPE)) MenuBack(true);
-            else if (TDU2Controls.BackPressed()) MenuBack(false);
+            // Unity TDU2MenuFlow.UpdateMenuFlow: ESC/PadBack oder Rücktaste (nicht im Textfeld) gehören dem Film.
+            // Roh-Tasten wie im Original – ein hängendes TDU2Controls.Blocked darf Menüs nicht "tot" machen.
+            if (TDU2Controls.RawKeyPressed(VK_ESCAPE) || TDU2Nav.PadBack()) MenuBack(true);
+            else if (TDU2Controls.RawKeyPressed(0x08) && TopMenuLayer() != MenuLayer.LifeText) MenuBack(false);
         }
-        else HandlePauseKey(ctx);
+        // Pausemenü: globale Menütaste in ScreenModule (Unity TDU2PauseMenu), inkl. der Interieur-Blocker.
         if (!ready || !UpdateInside(time.DeltaTime, ctx.Paused))
         {
             // Interieur verlassen: Testfahrt läuft draußen im eigenen Modus, sonst Freifahrt

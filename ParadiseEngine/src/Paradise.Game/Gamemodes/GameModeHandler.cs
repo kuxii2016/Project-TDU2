@@ -54,7 +54,10 @@ public abstract class GameModeHandler
     internal ProfilerMarker RunMarker => _runMarker ??= ProfilerMarker.Get(GetType().Name + ".Run", ProfilerCategory.Scripts);
     internal ProfilerMarker RenderMarker => _renderMarker ??= ProfilerMarker.Get(GetType().Name + ".Render", ProfilerCategory.Rendering);
 
-    /// <summary>ESC: Pausemenü öffnen (Wechsel nach GAME_MODE_PAUSE) – wie TDU2PauseMenu. Offen gehört ESC dem Film (Zurück/Schließen).</summary>
+    /// <summary>
+    /// ESC: Pausemenü öffnen – heute global in ScreenModule.Update (Unity TDU2PauseMenu). Hier nur noch für Modusse,
+    /// die es extern aufrufen; offen gehört ESC dem Film (Zurück/Schließen).
+    /// </summary>
     protected static void HandlePauseKey(IGameModeContext ctx)
     {
         if (ctx.Paused) return;

@@ -191,8 +191,8 @@ public class GAME_MODE_SCHOOL : InteriorUtils
 
         if (InTest || _race.State == RaceState.Finished || _phase != Phase.None)
         {
-            // Fahren wie in der Freifahrt (Unity: Rennschule läuft über der normalen Fahrzeugsteuerung)
-            HandlePauseKey(ctx);
+            // Fahren wie in der Freifahrt (Unity: Rennschule läuft über der normalen Fahrzeugsteuerung);
+            // Menütaste global in ScreenModule, dort mit BlocksPauseMenu als Blocker.
             if (ctx.Paused) return;
             var veh = ctx.Vehicles; var vm = veh?.Manager;
             if (TDU2Controls.Pressed("minimap") && vm?.Minimap != null && vm.Current != null && !veh!.Suspended && !veh.Frozen)

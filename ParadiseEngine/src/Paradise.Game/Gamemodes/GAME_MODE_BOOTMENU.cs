@@ -6,6 +6,7 @@ using Paradise.Core.Formats;
 using Paradise.Core.Render;
 using Paradise.Core.Video;
 using Paradise.Game.Config;
+using Paradise.Game.Input;
 using Paradise.Game.Screens;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
@@ -138,9 +139,9 @@ namespace Paradise.Game.Gamemodes
 
         static bool AnyInput(IGameModeContext ctx)
         {
-            bool any = FlashInput.GetMouseButtonDown(0) || FlashInput.GetMouseButtonDown(1);
-            for (int vk = 0x08; vk < 0xFF; vk++) if (ctx.Pressed(vk)) any = true;   // alle abfragen (Flankenspeicher aktuell halten)
-            return any;
+            // Roh-Eingaben (wie Unity Input.GetKeyDown in den Kinos): Maus, alle Tasten und Joystick-Knöpfe.
+            // ctx.Pressed hätte Tasten während einer Text-/DevMenü-Sperre verschluckt – die Videos reagierten nicht.
+            return FlashInput.GetMouseButtonDown(0) || FlashInput.GetMouseButtonDown(1) || TDU2Controls.AnyKeyDown() != 0;
         }
 
         /// <summary>Bild bildschirmfüllend mit Seitenverhältnis (schwarze Ränder).</summary>
